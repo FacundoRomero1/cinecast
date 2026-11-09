@@ -1,0 +1,6 @@
+{
+  "name": "CineCast - Streaming & Control Remoto TV",
+  "description": "Plataforma de streaming estilo Netflix con control remoto sincronizado para PC y Smart TV desde el móvil, ecualizador de audio y reproducción inteligente.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

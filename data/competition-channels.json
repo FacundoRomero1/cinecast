@@ -1,0 +1,32 @@
+{
+  "arg.1": {
+    "name": "Liga Profesional Argentina",
+    "country": "AR",
+    "primaryChannels": ["ESPN Premium", "TNT Sports", "TV Pública"],
+    "channelKeywords": ["espn premium", "tnt sports", "tv publica", "fox sports"]
+  },
+  "arg.copa": {
+    "name": "Copa Argentina",
+    "country": "AR",
+    "primaryChannels": ["TyC Sports"],
+    "channelKeywords": ["tyc sports", "tyc"]
+  },
+  "conmebol.libertadores": {
+    "name": "Copa CONMEBOL Libertadores",
+    "country": "CONMEBOL",
+    "primaryChannels": ["Fox Sports", "ESPN", "ESPN 2", "Telefe"],
+    "channelKeywords": ["fox sports", "espn", "telefe"]
+  },
+  "conmebol.sudamericana": {
+    "name": "Copa CONMEBOL Sudamericana",
+    "country": "CONMEBOL",
+    "primaryChannels": ["DSports", "ESPN", "ESPN 2"],
+    "channelKeywords": ["dsports", "espn"]
+  },
+  "uefa.champions": {
+    "name": "UEFA Champions League",
+    "country": "INT",
+    "primaryChannels": ["ESPN", "Fox Sports"],
+    "channelKeywords": ["espn", "fox sports"]
+  }
+}

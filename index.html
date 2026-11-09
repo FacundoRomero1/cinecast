@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="es" class="dark bg-zinc-950 text-white selection:bg-red-600 selection:text-white">
+  <head>
+    <script>
+      (function () {
+        // Intercept and prevent uncaught TypeError when external/iframe scripts attempt to assign to read-only fetch
+        window.addEventListener('error', function (event) {
+          if (
+            event.message &&
+            event.message.indexOf('fetch') !== -1 &&
+            (event.message.indexOf('getter') !== -1 || event.message.indexOf('read only') !== -1)
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        // Ensure window.fetch has both a getter and a setter so assignments don't fail
+        try {
+          var origFetch = window.fetch;
+          var curFetch = origFetch;
+          var desc = Object.getOwnPropertyDescriptor(window, 'fetch') ||
+            (window.Window && Object.getOwnPropertyDescriptor(window.Window.prototype, 'fetch'));
+
+          if (!desc || desc.configurable !== false) {
+            Object.defineProperty(window, 'fetch', {
+              get: function () {
+                return curFetch;
+              },
+              set: function (fn) {
+                curFetch = fn;
+              },
+              configurable: true,
+              enumerable: true,
+            });
+          }
+        } catch (_) {}
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>CineCast - Streaming & Control Remoto TV</title>
+    <meta name="description" content="Plataforma de streaming estilo Netflix con control remoto sincronizado para PC y Smart TV desde el móvil, ecualizador de audio y reproducción inteligente." />
+    <meta property="og:title" content="CineCast - Streaming & Control Remoto TV" />
+    <meta property="og:description" content="Plataforma de streaming estilo Netflix con control remoto sincronizado para PC y Smart TV desde el móvil, ecualizador de audio y reproducción inteligente." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#e50914" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="CineCast" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              brand: '#e50914',
+            },
+            fontFamily: {
+              sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+              display: ['"Bebas Neue"', '"Plus Jakarta Sans"', 'sans-serif'],
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      html, body, #root {
+        background-color: #0B0C10 !important;
+        color: #ffffff !important;
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        min-height: 100vh;
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body class="bg-[#0B0C10] text-zinc-100 min-h-screen overflow-x-hidden antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').catch(function () {});
+        });
+      }
+    </script>
+  </body>
+</html>

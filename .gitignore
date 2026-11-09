@@ -1,0 +1,14 @@
+﻿node_modules/
+build/
+dist/
+dev-dist/
+release/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+*.apk
+*.zip
+*.tar.gz
+scratch/

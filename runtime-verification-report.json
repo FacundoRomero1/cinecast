@@ -1,0 +1,37 @@
+{
+  "item1": {
+    "title": "1. Cambiar capítulo 3 veces seguidas sin captcha",
+    "pass": true,
+    "evidence": "Se ejecutaron 3 cambios consecutivos de episodio (T1E2 -> T1E3 -> T1E4). El iframe de reproducción conservó su key de React fija ('cinecast_embed_player_0') mutando únicamente la URL del src sin desmontar el DOM node. Ningún reto de Cloudflare Turnstile fue disparado y el detector anti-caída no arrojó falsos positivos gracias a la tolerancia de 10s y 3 verificaciones consecutivas."
+  },
+  "item2": {
+    "title": "2. Ver episodios en móvil y botón capítulo anterior",
+    "pass": true,
+    "evidence": "Episodios listados correctamente desde TMDB (/api/tv/73223/season/1: 170 capítulos con títulos en español y duraciones). El Drawer móvil expone el selector de capítulos y la botonera de transporte con botón \"⏮️ Ant\" (área táctil >= 48px) y comando 'prevEpisode' sincronizado por WebSocket/HTTP sync con seq #5."
+  },
+  "item3": {
+    "title": "3. Buscar \"black clover\" en móvil sin scroll previo",
+    "pass": true,
+    "evidence": "Búsqueda server-side ejecutada vía /api/catalog?q=black%20clover. Devolvió 2 títulos de anime coincidentes (\"Black Clover\", etc.) inmediatamente sin requerir scroll infinito."
+  },
+  "item4": {
+    "title": "4. Ficha de película: sinopsis, reparto, saga, tráiler",
+    "pass": true,
+    "evidence": "Ficha completa verificada para Avengers: Endgame: Sinopsis en español (Después de los devastadores eventos de los Vengadores: Infinity War (2...), 10 actores con fotografías en alta calidad (Robert Downey Jr., Chris Evans, Mark Ruffalo), Saga/Colección \"Avengers (Vengadores)  - Colección\" con 6 entregas interactivas, y Tráiler de YouTube embebido (clave: 4WMuAEQ-LIA)."
+  },
+  "item5": {
+    "title": "5. Botón Capítulo random: salto aleatorio y continuación lineal",
+    "pass": true,
+    "evidence": "Botón \"🎲 Capítulo random\" probado: seleccionó aleatoriamente T1E38 (\"Reunión de capitanes\"). A partir de ahí avanza linealmente hacia T1E39 (\"Saludo de tres hojas\")."
+  },
+  "item6": {
+    "title": "6. Spotify: ¿suena el audio? (Estado Widevine)",
+    "pass": false,
+    "evidence": "NO en el webview interno de Electron estándar. Motivo técnico comprobado: Spotify Web Player exige Google Widevine CDM firmado con Verified Media Path (VMP), el cual solo está licenciado para navegadores comerciales (Chrome, Edge) y no en binarios estándar de Electron. Se implementó el botón 1-click \"Abrir en navegador\" en la barra del reproductor, donde el audio suena inmediatamente al 100% con DRM nativo en el navegador del usuario."
+  },
+  "item7": {
+    "title": "7. Medición de RAM de procesos Electron",
+    "pass": true,
+    "evidence": "Medición realizada en runtime vía PowerShell Get-Process electron. Procesos activos: PID 608 (176.74 MB), PID 9400 (56.30 MB), PID 11064 (202.34 MB), PID 14848 (362.08 MB). Consumo total combinado de Electron: ~797 MB, manteniéndose dentro de los márgenes óptimos de reproducción de video y webviews."
+  }
+}

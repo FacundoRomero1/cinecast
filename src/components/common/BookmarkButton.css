@@ -1,0 +1,85 @@
+/* ==========================================================================
+   BOOKMARK BUTTON COMPONENT STYLES
+   ========================================================================== */
+
+.bookmark-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  background: rgba(18, 21, 30, 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition-normal);
+  user-select: none;
+}
+
+.bookmark-btn:hover {
+  color: var(--text-primary);
+  background: rgba(30, 35, 48, 0.9);
+  border-color: var(--border-medium);
+  transform: translateY(-1px);
+}
+
+.bookmark-btn:active {
+  transform: scale(0.95);
+}
+
+/* Icon-only variant */
+.bookmark-btn--icon {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+}
+
+.bookmark-btn--icon .bookmark-icon {
+  width: 19px;
+  height: 19px;
+}
+
+/* Pill / Label variant */
+.bookmark-btn--pill {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.bookmark-btn--pill .bookmark-icon {
+  width: 17px;
+  height: 17px;
+}
+
+/* Active State (Saved) */
+.bookmark-btn.is-active {
+  color: var(--accent-red);
+  background: rgba(229, 9, 20, 0.15);
+  border-color: rgba(229, 9, 20, 0.5);
+  box-shadow: 0 0 16px var(--accent-red-glow);
+}
+
+.bookmark-btn.is-active:hover {
+  background: rgba(229, 9, 20, 0.25);
+  border-color: var(--accent-red);
+}
+
+/* Pop Animation on Toggle */
+.bookmark-btn.animate-pop .bookmark-icon {
+  animation: bookmarkPop 380ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes bookmarkPop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35) rotate(-6deg);
+  }
+  75% {
+    transform: scale(0.9) rotate(3deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}

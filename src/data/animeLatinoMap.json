@@ -1,0 +1,34 @@
+{
+  "73223": {
+    "title": "Black Clover",
+    "hasLatino": true,
+    "slug": "black-clover-latino",
+    "provider": "Latanime",
+    "verifiedServer": {
+      "name": "Anime Latino (verificado)",
+      "url": "https://ok.ru/videoembed/8409369873118",
+      "episodePattern": "https://latanime.org/ver/black-clover-latino-episodio-{episode}",
+      "type": "iframe",
+      "language": "🇲🇽 Latino verificado"
+    },
+    "notes": "Audio doblado al español latino oficial verificado en Latanime (reproductor Ok.ru / Filemoon)."
+  },
+  "85937": {
+    "title": "Demon Slayer: Kimetsu no Yaiba",
+    "hasLatino": false,
+    "verifiedServer": null,
+    "notes": "Audio original japonés con subtítulos en español."
+  },
+  "1429": {
+    "title": "Attack on Titan",
+    "hasLatino": false,
+    "verifiedServer": null,
+    "notes": "Audio original japonés con subtítulos en español."
+  },
+  "30984": {
+    "title": "Bleach",
+    "hasLatino": false,
+    "verifiedServer": null,
+    "notes": "Audio original japonés con subtítulos en español."
+  }
+}
