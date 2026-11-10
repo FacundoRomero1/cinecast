@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { HashRouter, Routes, Route } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { Search as SearchIcon, Sparkles, ArrowLeft } from 'lucide-react';
 import { localCatalogProvider } from '../providers/localCatalogProvider';
 import type { CardItem, GenreCountItem, HomeRow } from '../providers/types';
 import { watchHistoryService, type WatchProgressItem } from '../services/watchHistoryService';
+import { AppRuntimeProvider, useAppRuntime, type HubType } from '../app/AppRuntime';
 import { AppShell } from './AppShell';
 import { Hero } from './Hero';
 import { Row } from './Row';
@@ -423,6 +424,61 @@ const PlaceholderView: React.FC<PlaceholderViewProps> = ({
   </div>
 );
 
+const HubRouteSynchronizer: React.FC = () => {
+  const { activeHub, setActiveHub } = useAppRuntime();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const prevHubRef = useRef<HubType>(activeHub);
+  const prevPathRef = useRef<string>(location.pathname);
+
+  // Cuando cambia la ruta por navegación del usuario -> actualizar activeHub
+  useEffect(() => {
+    if (location.pathname === prevPathRef.current) return;
+    prevPathRef.current = location.pathname;
+
+    let targetHub: HubType = 'cinecast';
+    if (location.pathname.startsWith('/musica')) {
+      targetHub = 'spotify';
+    } else if (location.pathname.startsWith('/youtube')) {
+      targetHub = 'youtube';
+    } else if (location.pathname.startsWith('/deportes')) {
+      targetHub = 'sports';
+    }
+
+    if (activeHub !== targetHub) {
+      prevHubRef.current = targetHub;
+      setActiveHub(targetHub);
+    }
+  }, [location.pathname, activeHub, setActiveHub]);
+
+  // Cuando un comando remoto cambia activeHub -> navegar a /musica, /youtube, /deportes o /
+  useEffect(() => {
+    if (activeHub === prevHubRef.current) return;
+    prevHubRef.current = activeHub;
+
+    if (activeHub === 'spotify' && !location.pathname.startsWith('/musica')) {
+      prevPathRef.current = '/musica';
+      navigate('/musica');
+    } else if (activeHub === 'youtube' && !location.pathname.startsWith('/youtube')) {
+      prevPathRef.current = '/youtube';
+      navigate('/youtube');
+    } else if (activeHub === 'sports' && !location.pathname.startsWith('/deportes')) {
+      prevPathRef.current = '/deportes';
+      navigate('/deportes');
+    } else if (
+      activeHub === 'cinecast' &&
+      (location.pathname.startsWith('/musica') ||
+        location.pathname.startsWith('/youtube') ||
+        location.pathname.startsWith('/deportes'))
+    ) {
+      prevPathRef.current = '/';
+      navigate('/');
+    }
+  }, [activeHub, location.pathname, navigate]);
+
+  return null;
+};
+
 export const NewApp: React.FC<NewAppProps> = ({ onDisableV2 }) => {
   const [selectedItem, setSelectedItem] = useState<CardItem | null>(null);
 
@@ -441,61 +497,64 @@ export const NewApp: React.FC<NewAppProps> = ({ onDisableV2 }) => {
 
   return (
     <HashRouter>
-      <AppShell>
-        <Routes>
-          <Route path="/" element={<HomeView onSelectItem={setSelectedItem} />} />
-          <Route path="/explorar" element={<ExploreView onSelectItem={setSelectedItem} />} />
-          <Route path="/buscar" element={<SearchView onSelectItem={setSelectedItem} />} />
-          <Route
-            path="/lista"
-            element={
-              <PlaceholderView sectionName="Mi lista" onSwitchToClassic={handleSwitchToClassic} />
-            }
-          />
-          <Route
-            path="/deportes"
-            element={
-              <PlaceholderView sectionName="Deportes" onSwitchToClassic={handleSwitchToClassic} />
-            }
-          />
-          <Route
-            path="/canales"
-            element={
-              <PlaceholderView sectionName="Canales" onSwitchToClassic={handleSwitchToClassic} />
-            }
-          />
-          <Route
-            path="/musica"
-            element={
-              <PlaceholderView sectionName="Música" onSwitchToClassic={handleSwitchToClassic} />
-            }
-          />
-          <Route
-            path="/youtube"
-            element={
-              <PlaceholderView sectionName="YouTube" onSwitchToClassic={handleSwitchToClassic} />
-            }
-          />
-          <Route
-            path="/ajustes"
-            element={
-              <PlaceholderView sectionName="Ajustes" onSwitchToClassic={handleSwitchToClassic} />
-            }
-          />
-          <Route
-            path="/control"
-            element={
-              <PlaceholderView sectionName="Control" onSwitchToClassic={handleSwitchToClassic} />
-            }
-          />
-        </Routes>
+      <AppRuntimeProvider>
+        <HubRouteSynchronizer />
+        <AppShell>
+          <Routes>
+            <Route path="/" element={<HomeView onSelectItem={setSelectedItem} />} />
+            <Route path="/explorar" element={<ExploreView onSelectItem={setSelectedItem} />} />
+            <Route path="/buscar" element={<SearchView onSelectItem={setSelectedItem} />} />
+            <Route
+              path="/lista"
+              element={
+                <PlaceholderView sectionName="Mi lista" onSwitchToClassic={handleSwitchToClassic} />
+              }
+            />
+            <Route
+              path="/deportes"
+              element={
+                <PlaceholderView sectionName="Deportes" onSwitchToClassic={handleSwitchToClassic} />
+              }
+            />
+            <Route
+              path="/canales"
+              element={
+                <PlaceholderView sectionName="Canales" onSwitchToClassic={handleSwitchToClassic} />
+              }
+            />
+            <Route
+              path="/musica"
+              element={
+                <PlaceholderView sectionName="Música" onSwitchToClassic={handleSwitchToClassic} />
+              }
+            />
+            <Route
+              path="/youtube"
+              element={
+                <PlaceholderView sectionName="YouTube" onSwitchToClassic={handleSwitchToClassic} />
+              }
+            />
+            <Route
+              path="/ajustes"
+              element={
+                <PlaceholderView sectionName="Ajustes" onSwitchToClassic={handleSwitchToClassic} />
+              }
+            />
+            <Route
+              path="/control"
+              element={
+                <PlaceholderView sectionName="Control" onSwitchToClassic={handleSwitchToClassic} />
+              }
+            />
+          </Routes>
 
-        <TitleSheet
-          item={selectedItem}
-          onClose={() => setSelectedItem(null)}
-          onSwitchToClassic={handleSwitchToClassic}
-        />
-      </AppShell>
+          <TitleSheet
+            item={selectedItem}
+            onClose={() => setSelectedItem(null)}
+            onSwitchToClassic={handleSwitchToClassic}
+          />
+        </AppShell>
+      </AppRuntimeProvider>
     </HashRouter>
   );
 };
