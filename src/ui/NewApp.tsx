@@ -40,6 +40,7 @@ import { GuestShareModal } from '../components/GuestShareModal';
 import { DualScreenSimulator } from '../components/DualScreenSimulator';
 import { ContinueRow } from './ContinueRow';
 import { MiniRemote } from './MiniRemote';
+import { RemotePanel } from './RemotePanel';
 import { SportsMatchesTab } from '../components/SportsMatchesTab';
 import { SportsLiveGrid } from '../components/SportsLiveGrid';
 import { SpotifyHub } from '../components/SpotifyHub';
@@ -946,6 +947,7 @@ const TitleDetailRouteView: React.FC = () => {
 };
 
 const ControlView: React.FC = () => {
+  const navigate = useNavigate();
   const {
     remotePlaybackState,
     remoteMediaItem,
@@ -958,23 +960,22 @@ const ControlView: React.FC = () => {
   } = useAppRuntime();
 
   return (
-    <div className="p-4 sm:p-8 pb-44">
-      <h1 className="text-xl sm:text-2xl font-extrabold text-white mb-2">Control Remoto</h1>
-      <p className="text-xs text-zinc-400 mb-4">
+    <div className="p-2 sm:p-6 pb-40 max-w-xl mx-auto">
+      <h1 className="text-xl sm:text-2xl font-extrabold text-white mb-1 px-2">Control Remoto</h1>
+      <p className="text-xs text-zinc-400 mb-4 px-2">
         Controlando pantalla: <strong className="text-zinc-200">{connectedScreenName}</strong>
       </p>
-      <div className="[&>div]:!static [&>div]:!rounded-2xl [&>div]:!border [&>div]:!border-zinc-800">
-        <RemoteControlSheet
-          playbackState={remotePlaybackState}
-          currentMedia={remoteMediaItem}
-          currentEpisode={remoteEpisodeItem}
-          connectedScreenName={connectedScreenName}
-          onSendCommand={sendRemoteCommand}
-          onOpenAudioModal={() => setIsAudioModalOpen(true)}
-          onOpenCastModal={() => setIsCastModalOpen(true)}
-          onOpenGuestModal={() => setIsGuestModalOpen(true)}
-        />
-      </div>
+      <RemotePanel
+        playbackState={remotePlaybackState}
+        currentMedia={remoteMediaItem}
+        currentEpisode={remoteEpisodeItem}
+        connectedScreenName={connectedScreenName}
+        onSendCommand={sendRemoteCommand}
+        onOpenAudioModal={() => setIsAudioModalOpen(true)}
+        onOpenCastModal={() => setIsCastModalOpen(true)}
+        onOpenGuestModal={() => setIsGuestModalOpen(true)}
+        onNavigateToCatalog={() => navigate('/explorar')}
+      />
     </div>
   );
 };

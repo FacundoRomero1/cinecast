@@ -424,7 +424,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isPlayingLocally && activeHub === 'cinecast') {
       const playerHandledActions = [
         'togglePlay', 'play', 'pause', 'seek', 'seekRelative',
-        'toggleSubtitles', 'changeServer', 'nextEpisode', 'prevEpisode', 'jumpToEpisode'
+        'toggleSubtitles', 'changeServer', 'selectServer', 'nextEpisode', 'prevEpisode', 'jumpToEpisode'
       ];
       if (playerHandledActions.includes(cmd.action)) {
         return;
@@ -518,6 +518,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             isIntroActive: false,
             isRecapActive: false,
             nextEpisodeCountdown: null,
+            servers: mediaItem.servers?.map((s) => ({ name: s.name, language: s.language })),
+            activeServerIndex: 0,
           };
           deviceSync.broadcastPlaybackState(fullState);
           setRemotePlaybackState(fullState);
@@ -651,6 +653,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (targetHub === 'youtube' || targetHub === 'spotify' || targetHub === 'sports') {
           setIsPlayingLocally(false);
         }
+        const stateUpdate: PlaybackState = {
+          ...remotePlaybackState,
+          activeHub: targetHub,
+          isStandby: false,
+          isPlaying: false,
+        };
+        deviceSync.broadcastPlaybackState(stateUpdate);
+        setRemotePlaybackState(stateUpdate);
         const label = targetHub === 'cinecast' ? '🎬 Pelis/Series' : targetHub === 'youtube' ? '▶️ YouTube' : targetHub === 'spotify' ? '🎵 Spotify' : '⚽ Fútbol';
         triggerNotification(`📱 Pantalla cambiada a: ${label}`);
         if (typeof window !== 'undefined' && window.electronAPI) {
@@ -1020,6 +1030,21 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setActiveMedia(media);
     setActiveEpisode(targetEp);
 
+    const srvs =
+      media.servers && media.servers.length > 0
+        ? media.servers
+        : generateServersForMedia({
+            tmdbId: media.tmdbId,
+            type:
+              media.category === 'live_tv'
+                ? 'live_tv'
+                : media.type === 'series'
+                ? 'series'
+                : 'movie',
+            season: targetEp?.seasonNumber || 1,
+            episode: targetEp?.episodeNumber || 1,
+          });
+
     // Update optimistic state on the phone so remote control bar immediately reflects the cast media
     setRemotePlaybackState((prev) => ({
       ...prev,
@@ -1035,12 +1060,16 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       episodeItem: targetEp || undefined,
       isPlaying: true,
       isStandby: false,
+      servers: srvs.map((s) => ({ name: s.name, language: s.language })),
+      activeServerIndex: 0,
+      activeHub: 'cinecast',
     }));
 
     deviceSync.sendCommand({
       action: 'playDiscoveredMovie',
       payload: {
         ...media,
+        servers: srvs,
         episode: targetEp || undefined,
         selectedEpisode: targetEp || undefined,
         seasonNumber: targetEp?.seasonNumber || 1,
@@ -1090,6 +1119,21 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setIsScreenInStandby(false);
 
     // Broadcast full media details to all remotes immediately
+    const srvs =
+      media.servers && media.servers.length > 0
+        ? media.servers
+        : generateServersForMedia({
+            tmdbId: media.tmdbId,
+            type:
+              media.category === 'live_tv'
+                ? 'live_tv'
+                : media.type === 'series'
+                ? 'series'
+                : 'movie',
+            season: ep?.seasonNumber || 1,
+            episode: ep?.episodeNumber || 1,
+          });
+
     const fullState: PlaybackState = {
       mediaId: media.id,
       episodeId: ep?.id || null,
@@ -1107,6 +1151,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       buffered: 0,
       isStandby: false,
       screenDeviceName: deviceSync.getDeviceName(),
+      activeHub: 'cinecast',
+      servers: srvs.map((s) => ({ name: s.name, language: s.language })),
+      activeServerIndex: 0,
       audioSettings,
       playbackSettings,
       isIntroActive: false,
@@ -1127,31 +1174,36 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           ? isYouTubePlaying
           : isPlayingLocally;
 
-      const fullState: PlaybackState = {
-        mediaId: activeMedia?.id || null,
-        episodeId: activeEpisode?.id || null,
-        mediaTitle: activeMedia?.title,
-        mediaPoster: activeMedia?.posterUrl,
-        mediaYear: activeMedia?.year,
-        seasonNumber: activeEpisode?.seasonNumber || 1,
-        episodeNumber: activeEpisode?.episodeNumber || 1,
-        episodeTitle: activeEpisode?.title || '',
-        mediaItem: activeMedia || undefined,
-        episodeItem: activeEpisode || undefined,
-        isPlaying: effectivePlaying,
-        currentTime: 0,
-        duration: 0,
-        buffered: 0,
-        isStandby: isScreenInStandby,
-        screenDeviceName: deviceSync.getDeviceName(),
-        audioSettings,
-        playbackSettings,
-        isIntroActive: false,
-        isRecapActive: false,
-        nextEpisodeCountdown: null,
-        ...stateUpdate,
-      };
-      deviceSync.broadcastPlaybackState(fullState);
+      setRemotePlaybackState((prev) => {
+        const fullState: PlaybackState = {
+          ...prev,
+          mediaId: activeMedia?.id || prev.mediaId || null,
+          episodeId: activeEpisode?.id || prev.episodeId || null,
+          mediaTitle: activeMedia?.title || prev.mediaTitle,
+          mediaPoster: activeMedia?.posterUrl || prev.mediaPoster,
+          mediaYear: activeMedia?.year || prev.mediaYear,
+          seasonNumber: activeEpisode?.seasonNumber || prev.seasonNumber || 1,
+          episodeNumber: activeEpisode?.episodeNumber || prev.episodeNumber || 1,
+          episodeTitle: activeEpisode?.title || prev.episodeTitle || '',
+          mediaItem: activeMedia || prev.mediaItem || undefined,
+          episodeItem: activeEpisode || prev.episodeItem || undefined,
+          isPlaying: effectivePlaying,
+          currentTime: 0,
+          duration: 0,
+          buffered: 0,
+          isStandby: isScreenInStandby,
+          screenDeviceName: deviceSync.getDeviceName(),
+          activeHub,
+          audioSettings,
+          playbackSettings,
+          isIntroActive: false,
+          isRecapActive: false,
+          nextEpisodeCountdown: null,
+          ...stateUpdate,
+        };
+        deviceSync.broadcastPlaybackState(fullState);
+        return fullState;
+      });
     }
   }, [activeMedia, activeEpisode, isPlayingLocally, isSpotifyPlaying, isYouTubePlaying, activeHub, isScreenInStandby, audioSettings, playbackSettings, deviceRole]);
 

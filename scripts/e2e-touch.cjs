@@ -1018,11 +1018,10 @@ app.whenReady().then(async () => {
     await winA.webContents.executeJavaScript(`window.location.hash = '#/titulo/series/tmdb-tv-1396';`);
     await waitForCondition(winA, `
       (function() {
-        const loading = document.body.innerText.includes('Cargando');
         const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
-        return !loading && rows.length >= 5;
+        return rows.some(r => /E5:|Episodio 5|Materia gris/i.test(r.innerText || ''));
       })()
-    `, 10000);
+    `, 12000);
 
     const playEp5PC = await winA.webContents.executeJavaScript(`
       (function() {
@@ -1084,6 +1083,193 @@ app.whenReady().then(async () => {
     }
   } catch (err) {
     results.push({ id: '10c', name: 'Breaking Bad T1:E5 -> PC directo', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (11a): Ir a YouTube desde la fila "Ir a" del control remoto
+  // =========================================================================
+  try {
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/control';`);
+    await waitForCondition(winB, `Boolean(document.querySelector('nav[aria-label="Accesos rápidos Ir a"]'))`, 8000);
+
+    const touchYouTube = await checkAndTouch(
+      winB,
+      `() => {
+        const nav = document.querySelector('nav[aria-label="Accesos rápidos Ir a"]');
+        if (!nav) return null;
+        const btns = Array.from(nav.querySelectorAll('button'));
+        return btns.find(b => /YouTube/i.test(b.innerText || ''));
+      }`,
+      'botón YouTube en fila Ir a'
+    );
+
+    if (!touchYouTube.ok) {
+      results.push({ id: '11a', name: 'Ir a YouTube en PC', pass: false, detail: touchYouTube.error });
+    } else {
+      const pcHashYouTube = await waitForCondition(winA, `
+        window.location.hash.startsWith('#/youtube') ? window.location.hash : null
+      `, 8000);
+
+      results.push({
+        id: '11a',
+        name: 'Ir a YouTube en PC',
+        pass: Boolean(pcHashYouTube),
+        detail: `PC hash tras toque YouTube: ${pcHashYouTube || 'NO CAMBIO'}`,
+      });
+    }
+  } catch (err) {
+    results.push({ id: '11a', name: 'Ir a YouTube en PC', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (11b): Volver a películas desde aviso YouTube en control remoto
+  // =========================================================================
+  try {
+    await waitForCondition(winB, `
+      Boolean(Array.from(document.querySelectorAll('button')).find(b => /Volver a pel/i.test(b.innerText || '')))
+    `, 8000);
+
+    const touchBackMovies = await checkAndTouch(
+      winB,
+      `() => Array.from(document.querySelectorAll('button')).find(b => /Volver a pel/i.test(b.innerText || ''))`,
+      'botón Volver a películas'
+    );
+
+    if (!touchBackMovies.ok) {
+      results.push({ id: '11b', name: 'Volver a películas en PC', pass: false, detail: touchBackMovies.error });
+    } else {
+      const pcHashHome = await waitForCondition(winA, `
+        (window.location.hash === '#/' || window.location.hash === '' || window.location.hash === '#') ? window.location.hash : null
+      `, 8000);
+
+      results.push({
+        id: '11b',
+        name: 'Volver a películas en PC',
+        pass: Boolean(pcHashHome !== null),
+        detail: `PC hash tras Volver a películas: ${pcHashHome ?? 'NO VOLVIO'}`,
+      });
+    }
+  } catch (err) {
+    results.push({ id: '11b', name: 'Volver a películas en PC', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (12): Reproduciendo en PC, tocar -10s desde celular -> PC recibe seekRelative
+  // =========================================================================
+  try {
+    // Iniciar reproducción en PC mediante casteo de Black Clover
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/titulo/anime/tmdb-tv-73223';`);
+    await waitForCondition(winB, `
+      Boolean(document.querySelector('button') && !document.body.innerText.includes('Cargando'))
+    `, 8000);
+    await wait(600);
+
+    await checkAndTouch(
+      winB,
+      `() => {
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        const row = rows[0];
+        if (!row) return null;
+        return Array.from(row.querySelectorAll('button')).find(b => /PC/i.test(b.innerText || ''));
+      }`,
+      'botón PC en Black Clover E1'
+    );
+
+    // Esperar a que VideoPlayer monte en PC
+    await waitForCondition(winA, `Boolean(document.querySelector('select'))`, 10000);
+
+    // Celular entra a #/control
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/control';`);
+    await waitForCondition(winB, `Boolean(document.querySelector('button[aria-label="Retroceder 10 segundos"]'))`, 10000);
+
+    const seqBeforeSeek = (await pollServerCommands(baseUrl, roomId, 0)).length;
+
+    const touchMinus10 = await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Retroceder 10 segundos"]')`,
+      'botón -10s en control remoto'
+    );
+
+    if (!touchMinus10.ok) {
+      results.push({ id: 12, name: 'Control remoto -10s seekRelative', pass: false, detail: touchMinus10.error });
+    } else {
+      await wait(1500);
+      const cmdsAfterSeek = await pollServerCommands(baseUrl, roomId, 0);
+      const newSeekCmds = cmdsAfterSeek.slice(seqBeforeSeek);
+      const seekCmd = newSeekCmds.find(
+        (c) =>
+          c.command?.action === 'seekRelative' &&
+          (c.command?.payload === -10 || c.command?.payload?.delta === -10)
+      );
+
+      results.push({
+        id: 12,
+        name: 'Control remoto -10s seekRelative',
+        pass: Boolean(seekCmd),
+        detail: seekCmd
+          ? `Comando seekRelative recibido en PC (payload: ${JSON.stringify(seekCmd.command.payload)})`
+          : `No se registró comando seekRelative (nuevos comandos: ${newSeekCmds.length})`,
+      });
+    }
+  } catch (err) {
+    results.push({ id: 12, name: 'Control remoto -10s seekRelative', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (13): Servidores desde control remoto: cambiar a servidor 2
+  // =========================================================================
+  try {
+    // Abrir sección Servidores en RemotePanel si está colapsada y esperar a que monten los botones
+    await waitForCondition(winB, `
+      (function() {
+        const btn = Array.from(document.querySelectorAll('button')).find(b => /Servidores/i.test(b.innerText || ''));
+        if (btn && !document.querySelector('div[class*="max-h-48"]')) {
+          btn.click();
+        }
+        return Boolean(document.querySelector('div[class*="max-h-48"] button'));
+      })()
+    `, 8000);
+    await wait(400);
+
+    const seqBeforeSrv = (await pollServerCommands(baseUrl, roomId, 0)).length;
+
+    const touchServer2 = await checkAndTouch(
+      winB,
+      `() => {
+        const serverBtns = Array.from(document.querySelectorAll('div[class*="max-h-48"] button'));
+        return serverBtns[1] || serverBtns[0];
+      }`,
+      'segundo servidor en lista de RemotePanel'
+    );
+
+    if (!touchServer2.ok) {
+      results.push({ id: 13, name: 'Seleccionar servidor remoto', pass: false, detail: touchServer2.error });
+    } else {
+      await wait(1500);
+      const cmdsAfterSrv = await pollServerCommands(baseUrl, roomId, 0);
+      const newSrvCmds = cmdsAfterSrv.slice(seqBeforeSrv);
+      const selectSrvCmd = newSrvCmds.find((c) => c.command?.action === 'selectServer');
+
+      results.push({
+        id: 13,
+        name: 'Seleccionar servidor remoto',
+        pass: Boolean(selectSrvCmd),
+        detail: selectSrvCmd
+          ? `Comando selectServer recibido en PC (payload: ${JSON.stringify(selectSrvCmd.command.payload)})`
+          : `No se registró comando selectServer (nuevos comandos: ${newSrvCmds.length})`,
+      });
+
+      // Cerrar VideoPlayer en PC
+      await winA.webContents.executeJavaScript(`
+        (function() {
+          const btn = document.querySelector('button[title="Volver atrás"]');
+          if (btn) btn.click();
+        })()
+      `);
+      await wait(1000);
+    }
+  } catch (err) {
+    results.push({ id: 13, name: 'Seleccionar servidor remoto', pass: false, detail: err.message });
   }
 
   // =========================================================================

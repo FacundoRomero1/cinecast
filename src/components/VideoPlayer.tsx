@@ -1157,8 +1157,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       isPlaying: playing,
       isIntroActive: introStart !== undefined && introEnd !== undefined && time >= introStart && time <= introEnd,
       isRecapActive: recapStart !== undefined && recapEnd !== undefined && time >= recapStart && time <= recapEnd,
-      servers: availableServersRef.current,
+      servers: availableServersRef.current.map((s) => ({ name: s.name, language: s.language })),
       activeServerIndex: activeServerIndexRef.current,
+      serversExhausted: fallbackActive,
       activeServerName: activeServer?.name || '',
       activeServerType: activeServer?.type || 'iframe',
       subtitlesEnabled: subtitlesEnabledRef.current,
@@ -1436,6 +1437,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         break;
       }
       case 'toggleFullscreen': toggleFullscreen(); break;
+      case 'selectServer': {
+        const idx = typeof cmd.payload === 'number' ? cmd.payload : Number(cmd.payload?.index);
+        if (Number.isFinite(idx) && availableServersRef.current[idx]) {
+          handleSelectServer(idx);
+        }
+        break;
+      }
     }
   }, [remoteCommandTrigger, isIframeMode, isPlaying, audioSettings, broadcastImmediate, isEpisodic, onNextEpisode, onPrevEpisode, handleSelectServer, attemptSmartPlay, subtitlesEnabled, onBroadcastState]);
 

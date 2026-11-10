@@ -177,6 +177,8 @@ export interface PlaybackSettings {
   nextEpisodeDelay: number; // seconds
 }
 
+export type HubType = 'cinecast' | 'spotify' | 'youtube' | 'sports';
+
 export interface PlaybackState {
   mediaId: string | null;
   episodeId: string | null;
@@ -194,6 +196,7 @@ export interface PlaybackState {
   buffered: number;
   isStandby: boolean; // Screen in standby/ambient mode waiting for phone
   screenDeviceName: string;
+  activeHub?: HubType;
   audioSettings: AudioSettings;
   playbackSettings: PlaybackSettings;
   isIntroActive: boolean;
@@ -202,7 +205,8 @@ export interface PlaybackState {
   activeServerIndex?: number;
   activeServerName?: string;
   activeServerType?: 'mp4' | 'iframe' | 'hls';
-  servers?: StreamServer[];
+  servers?: { name: string; language?: string; quality?: string; url?: string }[];
+  serversExhausted?: boolean;
   subtitlesEnabled?: boolean;
   playbackMeta?: {
     title: string;
@@ -244,6 +248,7 @@ export type RemoteCommandAction =
   | 'prevTrack'
   | 'toggleFullscreen'
   | 'changeServer'
+  | 'selectServer'
   | 'addCustomStream'
   | 'switchHub'
   | 'playYouTube'
