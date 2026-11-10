@@ -14,3 +14,4 @@ coverage/
 scratch/
 electron/core.cjs
 .cinecast-data/
+public/data/watch_history.json
