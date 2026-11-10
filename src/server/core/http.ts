@@ -12,6 +12,7 @@ import { createArchiveRouter } from './routes/archive.js';
 import { createAccountsRouter, type AccountsOptions } from './routes/accounts.js';
 import { createAuthRouter, type AuthRouterOptions } from './routes/auth.js';
 import { createYouTubeRouter } from './routes/youtube.js';
+import { createClientLogRouter } from './routes/clientlog.js';
 
 export interface CreateAppOptions {
   baseDir?: string | undefined;
@@ -116,6 +117,7 @@ export function createApp(options: CreateAppOptions): Express {
   app.use('/api', createArchiveRouter());
   app.use('/api', createAccountsRouter(accountsOpts));
   app.use('/api', createYouTubeRouter());
+  app.use('/api', createClientLogRouter());
 
   if (options.auth) {
     app.use('/', createAuthRouter(options.auth));

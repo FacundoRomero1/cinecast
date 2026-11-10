@@ -369,7 +369,48 @@ try {
     `[Prueba j] formatSeasonEpisodes (normalización en origen para DetailModal y servidor clásico): ${passJ ? 'PASA' : 'FALLA'} (caso 1 TMDB original=${passJ1}, caso 2 legacy augmented=${passJ2})`
   );
 
-  if (!(passA && passB && passC && hasFacets && passE && passF && passG && passH && passI && passJ)) {
+  // (k) routes/clientlog.ts: POST /api/client-log y GET /api/client-log
+  // 1. POST con datos de prueba desde IP local (privada)
+  const postLogRes = await fetch(`${baseUrl}/api/client-log`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      { type: 'env', userAgent: 'test-agent', isSecureContext: true },
+      { type: 'touch', event: 'touchstart', x: 100, y: 200 },
+    ]),
+  });
+  const postLogData = postLogRes.ok ? await postLogRes.json() : null;
+  const passK1 = postLogRes.status === 200 && postLogData?.ok === true && postLogData?.added === 2;
+
+  // 2. GET /api/client-log (desde loopback)
+  const getLogRes = await fetch(`${baseUrl}/api/client-log`);
+  const getLogData = getLogRes.ok ? await getLogRes.json() : null;
+  const passK2 = getLogRes.status === 200 && Array.isArray(getLogData?.entries) && getLogData.entries.some((e) => e.type === 'env');
+
+  // 3. GET /api/client-log?html=1
+  const getHtmlRes = await fetch(`${baseUrl}/api/client-log?html=1`);
+  const htmlText = getHtmlRes.ok ? await getHtmlRes.text() : '';
+  const passK3 = getHtmlRes.status === 200 && htmlText.includes('<!DOCTYPE html>') && htmlText.includes('test-agent');
+
+  // 4. POST con IP pública simulada -> debe rechazar con 403
+  const publicIpRes = await fetch(`${baseUrl}/api/client-log`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '8.8.8.8' },
+    body: JSON.stringify([{ type: 'test' }]),
+  });
+  const passK4 = publicIpRes.status === 403;
+
+  // 5. GET /api/client-log?clear=1 -> vacía registros
+  const clearRes = await fetch(`${baseUrl}/api/client-log?clear=1`);
+  const clearData = clearRes.ok ? await clearRes.json() : null;
+  const passK5 = clearRes.status === 200 && clearData?.cleared === true && clearData?.total === 0;
+
+  const passK = passK1 && passK2 && passK3 && passK4 && passK5;
+  console.log(
+    `[Prueba k] clientlog (POST/GET /api/client-log, IP privada, HTML y clear): ${passK ? 'PASA' : 'FALLA'} (post=${passK1}, get=${passK2}, html=${passK3}, rejectPublic=${passK4}, clear=${passK5})`
+  );
+
+  if (!(passA && passB && passC && hasFacets && passE && passF && passG && passH && passI && passJ && passK)) {
     process.exitCode = 1;
   }
 } finally {

@@ -3,6 +3,178 @@
   <head>
     <script>
       (function () {
+        if (typeof window === 'undefined') return;
+
+        var queue = [];
+        var maxTouchEvents = 25;
+        var touchEventCount = 0;
+        var lastFlush = 0;
+        var flushTimer = null;
+        var endpoint = '/api/client-log';
+
+        function safeString(val) {
+          try {
+            return String(val || '');
+          } catch (_) {
+            return '';
+          }
+        }
+
+        function enqueue(item) {
+          try {
+            item.t = Date.now();
+            queue.push(item);
+            scheduleFlush();
+          } catch (_) {}
+        }
+
+        function scheduleFlush() {
+          if (flushTimer) return;
+          var now = Date.now();
+          var delay = Math.max(0, 1000 - (now - lastFlush));
+          flushTimer = setTimeout(function () {
+            flushTimer = null;
+            flush();
+          }, delay);
+        }
+
+        function flush() {
+          if (queue.length === 0) return;
+          lastFlush = Date.now();
+          var batch = queue.splice(0, queue.length);
+          var payload;
+          try {
+            payload = JSON.stringify(batch);
+          } catch (_) {
+            return;
+          }
+
+          try {
+            if (navigator.sendBeacon) {
+              var blob = new Blob([payload], { type: 'application/json' });
+              var sent = navigator.sendBeacon(endpoint, blob);
+              if (sent) return;
+            }
+          } catch (_) {}
+
+          try {
+            if (window.fetch) {
+              window.fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payload,
+                keepalive: true,
+              })['catch'](function () {});
+            }
+          } catch (_) {}
+        }
+
+        // 1. Entrada inicial "env"
+        try {
+          var envData = {
+            type: 'env',
+            userAgent: safeString(navigator.userAgent),
+            isSecureContext: Boolean(window.isSecureContext),
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            devicePixelRatio: window.devicePixelRatio || 1,
+            href: safeString(window.location.href),
+            buildId: typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : '',
+          };
+          enqueue(envData);
+        } catch (_) {}
+
+        // 2. window.onerror y unhandledrejection
+        window.addEventListener(
+          'error',
+          function (e) {
+            try {
+              enqueue({
+                type: 'error',
+                message: safeString(e.message),
+                filename: safeString(e.filename),
+                lineno: e.lineno,
+                colno: e.colno,
+              });
+            } catch (_) {}
+          },
+          true
+        );
+
+        window.addEventListener('unhandledrejection', function (e) {
+          try {
+            var reason = e.reason;
+            var msg = reason && reason.message ? reason.message : safeString(reason);
+            enqueue({
+              type: 'error',
+              message: 'Unhandled Promise: ' + msg,
+            });
+          } catch (_) {}
+        });
+
+        // 3. Interceptar console.error y console.warn
+        try {
+          var origErr = console.error;
+          console.error = function () {
+            try {
+              var args = Array.prototype.slice.call(arguments);
+              enqueue({ type: 'console.error', message: safeString(args.join(' ')) });
+            } catch (_) {}
+            if (origErr) origErr.apply(console, arguments);
+          };
+
+          var origWarn = console.warn;
+          console.warn = function () {
+            try {
+              var args = Array.prototype.slice.call(arguments);
+              enqueue({ type: 'console.warn', message: safeString(args.join(' ')) });
+            } catch (_) {}
+            if (origWarn) origWarn.apply(console, arguments);
+          };
+        } catch (_) {}
+
+        // 4. Primeros 25 eventos touchstart/touchend/click
+        function recordInteraction(e) {
+          if (touchEventCount >= maxTouchEvents) return;
+          touchEventCount++;
+
+          try {
+            var point = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+            var x = point ? Math.floor(point.clientX) : 0;
+            var y = point ? Math.floor(point.clientY) : 0;
+            var target = e.target;
+            var targetTag = target ? safeString(target.tagName).toLowerCase() : '';
+            var targetClass = target ? safeString(target.className) : '';
+            var targetText = target
+              ? safeString(target.innerText || target.textContent).slice(0, 50).replace(/\s+/g, ' ')
+              : '';
+
+            var hit =
+              document.elementFromPoint && x >= 0 && y >= 0
+                ? document.elementFromPoint(x, y)
+                : null;
+            var hitTag = hit ? safeString(hit.tagName).toLowerCase() : '';
+            var hitClass = hit ? safeString(hit.className) : '';
+
+            enqueue({
+              type: 'touch',
+              event: e.type,
+              x: x,
+              y: y,
+              target: { tag: targetTag, className: targetClass, text: targetText },
+              hit: { tag: hitTag, className: hitClass },
+              defaultPrevented: Boolean(e.defaultPrevented),
+            });
+          } catch (_) {}
+        }
+
+        window.addEventListener('touchstart', recordInteraction, { capture: true, passive: true });
+        window.addEventListener('touchend', recordInteraction, { capture: true, passive: true });
+        window.addEventListener('click', recordInteraction, { capture: true, passive: true });
+      })();
+    </script>
+    <script>
+      (function () {
         // Intercept and prevent uncaught TypeError when external/iframe scripts attempt to assign to read-only fetch
         window.addEventListener('error', function (event) {
           if (

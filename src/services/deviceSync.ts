@@ -204,20 +204,25 @@ class DeviceSyncService {
   }
 
   public async requestWakeLock() {
-    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
-      try {
+    try {
+      if (
+        typeof navigator !== 'undefined' &&
+        'wakeLock' in navigator &&
+        (navigator as any).wakeLock &&
+        typeof (navigator as any).wakeLock.request === 'function'
+      ) {
         this.wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
   }
 
   public releaseWakeLock() {
-    if (this.wakeLockSentinel) {
-      try {
+    try {
+      if (this.wakeLockSentinel && typeof this.wakeLockSentinel.release === 'function') {
         this.wakeLockSentinel.release();
-      } catch (_) {}
-      this.wakeLockSentinel = null;
-    }
+      }
+    } catch (_) {}
+    this.wakeLockSentinel = null;
   }
 
   public getCachedPlaybackState(): PlaybackState | null {
