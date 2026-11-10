@@ -11,7 +11,6 @@ import { VirtuosoGrid } from 'react-virtuoso';
 import QRCode from 'qrcode';
 import {
   Search as SearchIcon,
-  Sparkles,
   ArrowLeft,
   Smartphone,
   Bookmark,
@@ -38,6 +37,8 @@ import { CastModal } from '../components/CastModal';
 import { GuestShareModal } from '../components/GuestShareModal';
 import { DualScreenSimulator } from '../components/DualScreenSimulator';
 import { ContinueWatchingRow } from '../components/ContinueWatchingRow';
+import { SportsMatchesTab } from '../components/SportsMatchesTab';
+import { SportsLiveGrid } from '../components/SportsLiveGrid';
 import { AppRuntimeProvider, useAppRuntime, type HubType } from '../app/AppRuntime';
 import { toMediaItem } from '../app/toMediaItem';
 import type { AudioSettings, MediaItem, PlaybackSettings } from '../types';
@@ -1031,37 +1032,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
   );
 };
 
-interface PlaceholderViewProps {
-  sectionName: string;
-  onSwitchToClassic: () => void;
-}
-
-const PlaceholderView: React.FC<PlaceholderViewProps> = ({
-  sectionName,
-  onSwitchToClassic,
-}) => (
-  <div className="p-6 sm:p-12 flex items-center justify-center min-h-[70vh]">
-    <div className="max-w-md w-full rounded-2xl bg-zinc-900/70 border border-zinc-800 p-8 text-center space-y-4">
-      <div className="w-12 h-12 rounded-2xl bg-red-600/20 border border-red-500/30 flex items-center justify-center mx-auto text-red-400">
-        <Sparkles className="w-6 h-6" />
-      </div>
-      <h1 className="text-xl font-extrabold text-white">{sectionName} — Próximamente</h1>
-      <p className="text-xs text-zinc-400 leading-relaxed">
-        Esta sección todavía está en migración al nuevo diseño. Puedes abrir la vista clásica en cualquier momento.
-      </p>
-      <button
-        type="button"
-        tabIndex={0}
-        onClick={onSwitchToClassic}
-        className="min-h-[44px] min-w-[44px] px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center gap-2 shadow-lg transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        <span>Abrir vista clásica</span>
-      </button>
-    </div>
-  </div>
-);
-
 const HubRouteSynchronizer: React.FC = () => {
   const { activeHub, setActiveHub } = useAppRuntime();
   const location = useLocation();
@@ -1070,6 +1040,8 @@ const HubRouteSynchronizer: React.FC = () => {
   const prevPathRef = useRef<string>(location.pathname);
 
   // Cuando cambia la ruta por navegación del usuario -> actualizar activeHub
+  // Nota: /deportes y /canales mantienen activeHub === 'cinecast' para que
+  // al elegir un partido o canal en vivo, VideoPlayer se abra a pantalla completa.
   useEffect(() => {
     if (location.pathname === prevPathRef.current) return;
     prevPathRef.current = location.pathname;
@@ -1079,8 +1051,6 @@ const HubRouteSynchronizer: React.FC = () => {
       targetHub = 'spotify';
     } else if (location.pathname.startsWith('/youtube')) {
       targetHub = 'youtube';
-    } else if (location.pathname.startsWith('/deportes')) {
-      targetHub = 'sports';
     }
 
     if (activeHub !== targetHub) {
@@ -1105,9 +1075,7 @@ const HubRouteSynchronizer: React.FC = () => {
       navigate('/deportes');
     } else if (
       activeHub === 'cinecast' &&
-      (location.pathname.startsWith('/musica') ||
-        location.pathname.startsWith('/youtube') ||
-        location.pathname.startsWith('/deportes'))
+      (location.pathname.startsWith('/musica') || location.pathname.startsWith('/youtube'))
     ) {
       prevPathRef.current = '/';
       navigate('/');
@@ -1317,13 +1285,24 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             <Route
               path="/deportes"
               element={
-                <PlaceholderView sectionName="Deportes" onSwitchToClassic={onSwitchToClassic} />
+                <div className="p-4 sm:p-8">
+                  <SportsMatchesTab
+                    onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
+                    onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
+                  />
+                </div>
               }
             />
             <Route
               path="/canales"
               element={
-                <PlaceholderView sectionName="Canales" onSwitchToClassic={onSwitchToClassic} />
+                <div className="p-4 sm:p-8">
+                  <SportsLiveGrid
+                    onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
+                    onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
+                    connectedScreenName={connectedScreenName}
+                  />
+                </div>
               }
             />
             <Route path="/musica" element={null} />
