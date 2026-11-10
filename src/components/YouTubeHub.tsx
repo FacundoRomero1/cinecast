@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -7,10 +7,8 @@ import {
   LogOut,
   ExternalLink,
   Youtube,
-  Cast,
-  Globe,
-  Radio,
-  Search,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { YouTubeVideo } from '../data/youtubeCatalog';
 import { RemoteCommand } from '../types';
@@ -53,11 +51,88 @@ export const YouTubeHub: React.FC<YouTubeHubProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState<number>(0);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [showExitBtn, setShowExitBtn] = useState<boolean>(false);
 
   const webviewRef = useRef<any>(null);
+  const isFullscreenRef = useRef<boolean>(false);
+  const hideExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    isFullscreenRef.current = isFullscreen;
+  }, [isFullscreen]);
 
   const targetUrl = isTvMode ? 'https://www.youtube.com/tv' : 'https://www.youtube.com';
   const targetUA = isTvMode ? LEANBACK_TV_UA : DESKTOP_UA;
+
+  const enterHubFullscreen = useCallback(async () => {
+    setIsFullscreen(true);
+    setShowExitBtn(true);
+    if (hideExitTimerRef.current) clearTimeout(hideExitTimerRef.current);
+    hideExitTimerRef.current = setTimeout(() => setShowExitBtn(false), 2500);
+    if (window.electronAPI?.toggleFullscreen) {
+      try {
+        await window.electronAPI.toggleFullscreen(true);
+      } catch (_) {}
+    }
+  }, []);
+
+  const exitHubFullscreen = useCallback(async () => {
+    setIsFullscreen(false);
+    setShowExitBtn(false);
+    if (hideExitTimerRef.current) {
+      clearTimeout(hideExitTimerRef.current);
+      hideExitTimerRef.current = null;
+    }
+    if (window.electronAPI?.toggleFullscreen) {
+      try {
+        await window.electronAPI.toggleFullscreen(false);
+      } catch (_) {}
+    }
+  }, []);
+
+  const toggleHubFullscreen = useCallback(() => {
+    if (isFullscreenRef.current) {
+      exitHubFullscreen();
+    } else {
+      enterHubFullscreen();
+    }
+  }, [enterHubFullscreen, exitHubFullscreen]);
+
+  const handleMouseMoveInFullscreen = useCallback(() => {
+    if (!isFullscreenRef.current) return;
+    setShowExitBtn(true);
+    if (hideExitTimerRef.current) clearTimeout(hideExitTimerRef.current);
+    hideExitTimerRef.current = setTimeout(() => setShowExitBtn(false), 2500);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F11') {
+        e.preventDefault();
+        toggleHubFullscreen();
+      } else if (e.key === 'Escape' && isFullscreenRef.current) {
+        e.preventDefault();
+        exitHubFullscreen();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [toggleHubFullscreen, exitHubFullscreen]);
+
+  // Limpiar estado de pantalla completa al desmontar el componente
+  useEffect(() => {
+    return () => {
+      if (hideExitTimerRef.current) {
+        clearTimeout(hideExitTimerRef.current);
+      }
+      if (isFullscreenRef.current && window.electronAPI?.toggleFullscreen) {
+        window.electronAPI.toggleFullscreen(false).catch(() => {});
+      }
+    };
+  }, []);
 
   const toggleTvMode = () => {
     setIsTvMode((prev) => {
@@ -124,93 +199,127 @@ export const YouTubeHub: React.FC<YouTubeHubProps> = ({
   return (
     <div className="pt-20 px-4 sm:px-12 max-w-7xl mx-auto pb-16">
       {/* Toast de estado */}
-      {statusMsg && (
+      {statusMsg && !isFullscreen && (
         <div className="fixed top-8 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-2xl bg-zinc-900 border border-red-500/80 text-white text-xs font-bold shadow-2xl flex items-center gap-2 animate-bounce">
           <span>{statusMsg}</span>
         </div>
       )}
 
-      {/* Barra de Navegación Mínima de YouTube (TAREA 7) */}
-      <div className="bg-zinc-950/90 border border-zinc-800 rounded-2xl p-3 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-xl backdrop-blur-md">
-        <div className="flex items-center gap-2">
-          {/* Botón Atrás */}
-          <button
-            onClick={handleGoBack}
-            disabled={!canGoBack}
-            className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 disabled:opacity-40 transition"
-            title="Atrás"
-          >
-            <ChevronLeft size={16} />
-          </button>
+      {/* Barra de Navegación Mínima de YouTube (oculta en pantalla completa) */}
+      {!isFullscreen && (
+        <div className="bg-zinc-950/90 border border-zinc-800 rounded-2xl p-3 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-xl backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            {/* Botón Atrás */}
+            <button
+              onClick={handleGoBack}
+              disabled={!canGoBack}
+              className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 disabled:opacity-40 transition"
+              title="Atrás"
+            >
+              <ChevronLeft size={16} />
+            </button>
 
-          {/* Botón Adelante */}
-          <button
-            onClick={handleGoForward}
-            disabled={!canGoForward}
-            className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 disabled:opacity-40 transition"
-            title="Adelante"
-          >
-            <ChevronRight size={16} />
-          </button>
+            {/* Botón Adelante */}
+            <button
+              onClick={handleGoForward}
+              disabled={!canGoForward}
+              className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 disabled:opacity-40 transition"
+              title="Adelante"
+            >
+              <ChevronRight size={16} />
+            </button>
 
-          {/* Botón Recargar */}
-          <button
-            onClick={handleReload}
-            className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 transition"
-            title="Recargar página"
-          >
-            <RefreshCw size={16} className={isLoading ? 'animate-spin text-red-500' : ''} />
-          </button>
+            {/* Botón Recargar */}
+            <button
+              onClick={handleReload}
+              className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 transition"
+              title="Recargar página"
+            >
+              <RefreshCw size={16} className={isLoading ? 'animate-spin text-red-500' : ''} />
+            </button>
 
-          <div className="h-6 w-[1px] bg-zinc-800 mx-1 hidden sm:block" />
+            <div className="h-6 w-[1px] bg-zinc-800 mx-1 hidden sm:block" />
 
-          {/* Indicador de Sesión Persistente */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-zinc-300 font-semibold hidden md:inline">Sesión Persistente:</span>
-            <span className="text-emerald-400 font-bold">Iniciá sesión una sola vez</span>
+            {/* Indicador de Sesión Persistente */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-zinc-300 font-semibold hidden md:inline">Sesión Persistente:</span>
+              <span className="text-emerald-400 font-bold">Iniciá sesión una sola vez</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Botón Pantalla Completa (>= 44 px) */}
+            <button
+              type="button"
+              onClick={toggleHubFullscreen}
+              className="min-h-[44px] min-w-[44px] px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200 hover:text-white text-xs font-bold transition flex items-center gap-1.5"
+              title="Pantalla completa (F11)"
+            >
+              <Maximize2 size={15} />
+              <span>Pantalla completa</span>
+            </button>
+
+            {/* Toggle Modo TV (TAREA 7: normal vs Leanback para vincular por código) */}
+            <button
+              onClick={toggleTvMode}
+              className={`min-h-[44px] px-3 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 ${
+                isTvMode
+                  ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-900/40'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-800'
+              }`}
+              title="Alternar entre YouTube Normal y YouTube TV (para vincular con código de TV desde el móvil)"
+            >
+              <Tv size={14} />
+              <span>{isTvMode ? '📺 Modo TV Activo (Código)' : 'Modo TV'}</span>
+            </button>
+
+            {/* Cerrar Sesión (limpia partición) */}
+            <button
+              onClick={handleClearSession}
+              className="min-h-[44px] px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-red-950/80 border border-zinc-800 hover:border-red-600/60 text-zinc-300 hover:text-red-400 text-xs font-bold transition flex items-center gap-1.5"
+              title="Cerrar sesión y limpiar cookies de YouTube"
+            >
+              <LogOut size={13} />
+              <span>Cerrar sesión</span>
+            </button>
+
+            {/* Abrir en Navegador Externo */}
+            <button
+              onClick={() => window.electronAPI?.openExternal?.(targetUrl)}
+              className="min-h-[44px] px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-bold transition flex items-center gap-1.5"
+              title="Abrir en navegador predeterminado de Windows"
+            >
+              <ExternalLink size={13} />
+              <span className="hidden sm:inline">Navegador</span>
+            </button>
           </div>
         </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Toggle Modo TV (TAREA 7: normal vs Leanback para vincular por código) */}
-          <button
-            onClick={toggleTvMode}
-            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 ${
-              isTvMode
-                ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-900/40'
-                : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-800'
-            }`}
-            title="Alternar entre YouTube Normal y YouTube TV (para vincular con código de TV desde el móvil)"
-          >
-            <Tv size={14} />
-            <span>{isTvMode ? '📺 Modo TV Activo (Código)' : 'Modo TV'}</span>
-          </button>
-
-          {/* Cerrar Sesión (limpia partición) */}
-          <button
-            onClick={handleClearSession}
-            className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-red-950/80 border border-zinc-800 hover:border-red-600/60 text-zinc-300 hover:text-red-400 text-xs font-bold transition flex items-center gap-1.5"
-            title="Cerrar sesión y limpiar cookies de YouTube"
-          >
-            <LogOut size={13} />
-            <span>Cerrar sesión</span>
-          </button>
-
-          {/* Abrir en Navegador Externo */}
-          <button
-            onClick={() => window.electronAPI?.openExternal?.(targetUrl)}
-            className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-bold transition flex items-center gap-1.5"
-            title="Abrir en navegador predeterminado de Windows"
-          >
-            <ExternalLink size={13} />
-            <span className="hidden sm:inline">Navegador</span>
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Contenedor del Webview Persistente */}
-      <div className="w-full h-[78vh] rounded-3xl overflow-hidden bg-black border border-zinc-800 shadow-2xl relative">
+      <div
+        onMouseMove={handleMouseMoveInFullscreen}
+        className={
+          isFullscreen
+            ? 'fixed inset-0 z-[9999] w-screen h-screen bg-black overflow-hidden'
+            : 'w-full h-[78vh] rounded-3xl overflow-hidden bg-black border border-zinc-800 shadow-2xl relative'
+        }
+      >
+        {isFullscreen && (
+          <button
+            type="button"
+            onClick={exitHubFullscreen}
+            className={`fixed top-4 right-4 z-[10000] min-h-[44px] min-w-[44px] px-3.5 py-2 rounded-xl bg-zinc-900/75 hover:bg-zinc-900/95 border border-zinc-700/80 text-zinc-100 text-xs font-bold backdrop-blur-md shadow-xl flex items-center gap-1.5 transition-opacity duration-200 ${
+              showExitBtn ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+            title="Salir de pantalla completa (Esc / F11)"
+          >
+            <Minimize2 size={14} />
+            <span>Salir</span>
+          </button>
+        )}
+
         {window.electronAPI?.isElectron ? (
           <webview
             key={`yt_wv_${reloadKey}_${isTvMode ? 'tv' : 'desktop'}`}
