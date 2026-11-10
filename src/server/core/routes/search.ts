@@ -12,8 +12,8 @@ import { loadServerCatalogFromDisk, type CatalogItem } from './catalog.js';
 export interface SearchOptions {
   baseDir?: string | undefined;
   userAgent?: string | undefined;
-  getCatalogCache?: (() => CatalogItem[] | null) | undefined;
-  setCatalogCache?: ((cache: CatalogItem[]) => void) | undefined;
+  getCatalogCache: () => CatalogItem[] | null;
+  setCatalogCache: (cache: CatalogItem[]) => void;
 }
 
 interface TmdbSearchResultEntry {
@@ -36,20 +36,12 @@ interface TmdbSearchEndpointResponse {
   results?: TmdbSearchResultEntry[];
 }
 
-export function createSearchRouter(options: SearchOptions = {}): Router {
+export function createSearchRouter(options: SearchOptions): Router {
   const router = Router();
   const baseDir = options.baseDir || process.cwd();
-  let localCatalogCache: CatalogItem[] | null = null;
 
   function loadServerCatalog(): CatalogItem[] {
-    return loadServerCatalogFromDisk(
-      baseDir,
-      options.getCatalogCache || (() => localCatalogCache),
-      options.setCatalogCache ||
-        ((c: CatalogItem[]) => {
-          localCatalogCache = c;
-        })
-    );
+    return loadServerCatalogFromDisk(baseDir, options.getCatalogCache, options.setCatalogCache);
   }
 
   router.get('/search', async (req, res) => {

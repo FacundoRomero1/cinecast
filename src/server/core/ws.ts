@@ -11,6 +11,7 @@ import {
   recordAndBroadcastState,
   setLatestRemoteJoin,
   incrementCommandSeq,
+  startPruneTimer,
   type ConnectedClient,
   type PlaybackCommandPayload,
   type PlaybackStatePayload,
@@ -29,7 +30,14 @@ interface IncomingWsMessage {
   state?: PlaybackStatePayload;
 }
 
+let pruneTimerStarted = false;
+
 export function attachWebSocket(server: HttpServer): WebSocketServer {
+  if (!pruneTimerStarted) {
+    startPruneTimer();
+    pruneTimerStarted = true;
+  }
+
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {

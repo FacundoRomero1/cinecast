@@ -1,8 +1,8 @@
-export const TMDB_KEY: string = process.env.TMDB_API_KEY || '2dca580c2a14b55200e784d157207b4d';
+const DEFAULT_TMDB_KEY = '2dca580c2a14b55200e784d157207b4d';
 export const TMDB_URL = 'https://api.themoviedb.org/3';
 
 export function getTmdbKey(): string {
-  return process.env.TMDB_API_KEY || TMDB_KEY;
+  return process.env.TMDB_API_KEY || DEFAULT_TMDB_KEY;
 }
 
 export interface MediaServerEntry {

@@ -68,12 +68,9 @@ export function getOrCreateRoom(roomId: string): Map<string, ConnectedClient> {
 export function getAllActiveDevicesList(): ActiveDeviceSummary[] {
   const now = Date.now();
   const active: ActiveDeviceSummary[] = [];
-  globalDevices.forEach((client, id) => {
+  globalDevices.forEach((client) => {
     const wsOpen = client.ws && client.ws.readyState === WebSocket.OPEN;
     if (!wsOpen && now - client.lastSeen > 45000) {
-      globalDevices.delete(id);
-      const r = rooms.get(client.roomId);
-      r?.delete(id);
       return;
     }
     active.push({
@@ -85,6 +82,35 @@ export function getAllActiveDevicesList(): ActiveDeviceSummary[] {
     });
   });
   return active;
+}
+
+export function prune(): void {
+  const now = Date.now();
+  globalDevices.forEach((client, id) => {
+    const wsOpen = client.ws && client.ws.readyState === WebSocket.OPEN;
+    if (!wsOpen && now - client.lastSeen > 45000) {
+      globalDevices.delete(id);
+      const r = rooms.get(client.roomId);
+      r?.delete(id);
+    }
+  });
+}
+
+let activePruneTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startPruneTimer(): () => void {
+  if (!activePruneTimer) {
+    activePruneTimer = setInterval(prune, 30_000);
+    if (typeof activePruneTimer.unref === 'function') {
+      activePruneTimer.unref();
+    }
+  }
+  return () => {
+    if (activePruneTimer) {
+      clearInterval(activePruneTimer);
+      activePruneTimer = null;
+    }
+  };
 }
 
 export function broadcastRoomDevices(roomId: string): void {
@@ -181,8 +207,4 @@ export function setLatestRemoteJoin(event: RemoteJoinEvent | null): void {
 export function incrementCommandSeq(): number {
   commandSeqCounter += 1;
   return commandSeqCounter;
-}
-
-export function prune(): void {
-  getAllActiveDevicesList();
 }

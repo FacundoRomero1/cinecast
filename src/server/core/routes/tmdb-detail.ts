@@ -7,8 +7,8 @@ import { loadServerCatalogFromDisk, type CatalogItem } from './catalog.js';
 export interface TmdbDetailOptions {
   baseDir?: string | undefined;
   mediaCacheDir: string;
-  getCatalogCache?: (() => CatalogItem[] | null) | undefined;
-  setCatalogCache?: ((cache: CatalogItem[]) => void) | undefined;
+  getCatalogCache: () => CatalogItem[] | null;
+  setCatalogCache: (cache: CatalogItem[]) => void;
 }
 
 interface TmdbGenre {
@@ -117,21 +117,13 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
   const router = Router();
   const baseDir = options.baseDir || process.cwd();
   const mediaCacheDir = options.mediaCacheDir;
-  let localCache: CatalogItem[] | null = null;
 
   try {
     fs.mkdirSync(mediaCacheDir, { recursive: true });
   } catch (_) {}
 
   function loadServerCatalog(): CatalogItem[] {
-    return loadServerCatalogFromDisk(
-      baseDir,
-      options.getCatalogCache || (() => localCache),
-      options.setCatalogCache ||
-        ((c: CatalogItem[]) => {
-          localCache = c;
-        })
-    );
+    return loadServerCatalogFromDisk(baseDir, options.getCatalogCache, options.setCatalogCache);
   }
 
   router.get('/media/:type/:id', async (req, res) => {
@@ -465,4 +457,3 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
 
   return router;
 }
-

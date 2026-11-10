@@ -60,8 +60,8 @@ export interface CatalogRouterOptions {
   baseDir?: string | undefined;
   posterCacheDir: string;
   userAgent?: string | undefined;
-  getCatalogCache?: (() => CatalogItem[] | null) | undefined;
-  setCatalogCache?: ((cache: CatalogItem[]) => void) | undefined;
+  getCatalogCache: () => CatalogItem[] | null;
+  setCatalogCache: (cache: CatalogItem[]) => void;
 }
 
 const DEFAULT_CHROME_UA =
@@ -69,14 +69,12 @@ const DEFAULT_CHROME_UA =
 
 export function loadServerCatalogFromDisk(
   baseDir: string,
-  getCatalogCache?: () => CatalogItem[] | null,
-  setCatalogCache?: (cache: CatalogItem[]) => void
+  getCatalogCache: () => CatalogItem[] | null,
+  setCatalogCache: (cache: CatalogItem[]) => void
 ): CatalogItem[] {
-  if (getCatalogCache) {
-    const cached = getCatalogCache();
-    if (cached && cached.length > 0) {
-      return cached;
-    }
+  const cached = getCatalogCache();
+  if (cached && cached.length > 0) {
+    return cached;
   }
   const candidates = [
     path.join(baseDir, 'public', 'data', 'catalog.json'),
@@ -125,7 +123,7 @@ export function loadServerCatalogFromDisk(
             };
           });
           console.log(`[Catalog Server] Cargados ${mapped.length} títulos compactos en memoria.`);
-          if (setCatalogCache) setCatalogCache(mapped);
+          setCatalogCache(mapped);
           return mapped;
         }
       }
@@ -141,21 +139,13 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
   const baseDir = options.baseDir || process.cwd();
   const posterCacheDir = options.posterCacheDir;
   const userAgent = options.userAgent || DEFAULT_CHROME_UA;
-  let localCache: CatalogItem[] | null = null;
 
   try {
     fs.mkdirSync(posterCacheDir, { recursive: true });
   } catch (_) {}
 
   function loadServerCatalog(): CatalogItem[] {
-    return loadServerCatalogFromDisk(
-      baseDir,
-      options.getCatalogCache || (() => localCache),
-      options.setCatalogCache ||
-        ((c: CatalogItem[]) => {
-          localCache = c;
-        })
-    );
+    return loadServerCatalogFromDisk(baseDir, options.getCatalogCache, options.setCatalogCache);
   }
 
   router.get('/catalog', (req, res) => {
