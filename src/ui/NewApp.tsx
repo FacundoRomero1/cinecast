@@ -1038,6 +1038,8 @@ const HubRouteSynchronizer: React.FC = () => {
   const navigate = useNavigate();
   const prevHubRef = useRef<HubType>(activeHub);
   const prevPathRef = useRef<string>(location.pathname);
+  // Hub pedido por la navegacion que aun no se refleja en activeHub (evita rebote de ruta)
+  const pendingHubFromRouteRef = useRef<HubType | null>(null);
 
   // Cuando cambia la ruta por navegación del usuario -> actualizar activeHub
   // Nota: /deportes y /canales mantienen activeHub === 'cinecast' para que
@@ -1054,13 +1056,21 @@ const HubRouteSynchronizer: React.FC = () => {
     }
 
     if (activeHub !== targetHub) {
-      prevHubRef.current = targetHub;
+      pendingHubFromRouteRef.current = targetHub;
       setActiveHub(targetHub);
     }
   }, [location.pathname, activeHub, setActiveHub]);
 
   // Cuando un comando remoto cambia activeHub -> navegar a /musica, /youtube, /deportes o /
   useEffect(() => {
+    // Un cambio de hub pedido por la propia ruta no debe disparar navegacion de vuelta
+    if (pendingHubFromRouteRef.current !== null) {
+      if (activeHub === pendingHubFromRouteRef.current) {
+        pendingHubFromRouteRef.current = null;
+        prevHubRef.current = activeHub;
+      }
+      return;
+    }
     if (activeHub === prevHubRef.current) return;
     prevHubRef.current = activeHub;
 
