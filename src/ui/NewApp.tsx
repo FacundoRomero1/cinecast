@@ -22,6 +22,7 @@ import {
   Activity,
   Wifi,
 } from 'lucide-react';
+import { ConnectionDiagnosticSection } from './ConnectionDiagnosticSection';
 import { localCatalogProvider } from '../providers/localCatalogProvider';
 import type { CardItem, CatalogSortOption, GenreCountItem, HomeRow } from '../providers/types';
 import { watchHistoryService } from '../services/watchHistoryService';
@@ -1124,6 +1125,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
           </div>
         )}
       </div>
+
+      {/* Diagnóstico de conexión */}
+      <ConnectionDiagnosticSection />
 
       {/* Volver a la vista clásica */}
       <div className="pt-2">

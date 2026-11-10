@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { WebSocket } from 'ws';
 import {
   rooms,
@@ -42,6 +45,27 @@ interface StateBody {
   state?: PlaybackStatePayload;
 }
 
+function getBuildIdFromDisk(): string {
+  const candidates = [
+    path.join(process.cwd(), 'dist', 'build-id.txt'),
+    path.join(process.cwd(), 'cinecast', 'dist', 'build-id.txt'),
+  ];
+  try {
+    const dir = path.dirname(fileURLToPath(import.meta.url));
+    candidates.push(path.resolve(dir, '../../../../dist/build-id.txt'));
+  } catch (_) {}
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const text = fs.readFileSync(p, 'utf8').trim();
+        if (text) return text;
+      }
+    } catch (_) {}
+  }
+  return 'desconocido';
+}
+
 export function createSyncRouter(): Router {
   const router = Router();
 
@@ -49,6 +73,7 @@ export function createSyncRouter(): Router {
     res.json({
       status: 'ok',
       embedded: true,
+      buildId: getBuildIdFromDisk(),
       roomsCount: rooms.size,
       devicesCount: globalDevices.size,
       commandSeq: commandSeqCounter,

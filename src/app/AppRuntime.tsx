@@ -13,6 +13,7 @@ import { MEDIA_CATALOG } from '../data/catalog';
 import { SPOTIFY_TRACKS, SpotifyTrack } from '../data/spotifyCatalog';
 import { YOUTUBE_VIDEOS, YouTubeVideo } from '../data/youtubeCatalog';
 import { deviceSync } from '../services/deviceSync';
+import { recordSentCommand, recordReceivedCommand } from './syncDiagnostic';
 import { watchHistoryService, WatchProgressItem } from '../services/watchHistoryService';
 import { generateServersForMedia, refreshProviderHealth } from '../services/embedService';
 import { authService } from '../services/authService';
@@ -409,6 +410,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // COPIA de App.tsx L385-838; borrar al eliminar la UI clásica
   // Handle incoming commands sent from mobile
   const handleRemoteCommandReceived = (cmd: RemoteCommand, _from?: string) => {
+    recordReceivedCommand(cmd.action);
     // Only execute screen playback actions if this device is a screen (not a remote-only phone)
     if (deviceRole === 'remote') return;
 
@@ -947,6 +949,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // COPIA de App.tsx L920-926; borrar al eliminar la UI clásica
   // Transmit command to screen
   const sendRemoteCommand = (command: RemoteCommand) => {
+    recordSentCommand(command.action);
     if (deviceRole === 'screen') {
       handleRemoteCommandReceived(command);
     }
