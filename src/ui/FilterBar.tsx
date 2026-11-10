@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { SlidersHorizontal, X, RotateCcw } from 'lucide-react';
 import type { CatalogSortOption, GenreCountItem } from '../providers/types';
 
 export interface FilterState {
   category: string;
   genres: string[];
-  decade: number | null;
+  yearFrom: number | null;
+  yearTo: number | null;
+  decade?: number | null;
   minRating: number;
   sort: CatalogSortOption;
 }
@@ -15,6 +17,8 @@ export interface FilterBarProps {
   onChange: (next: FilterState) => void;
   availableGenres: GenreCountItem[];
   totalResults: number;
+  minYear?: number;
+  maxYear?: number;
 }
 
 const DECADES = [2020, 2010, 2000, 1990, 1980, 1970];
@@ -38,8 +42,19 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   onChange,
   availableGenres,
   totalResults,
+  minYear = 1926,
+  maxYear = 2026,
 }) => {
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const currentYear = new Date().getFullYear();
+
+  const allYears = useMemo(() => {
+    const list: number[] = [];
+    for (let y = maxYear; y >= minYear; y--) {
+      list.push(y);
+    }
+    return list;
+  }, [minYear, maxYear]);
 
   const toggleGenre = (genreName: string) => {
     const exists = value.genres.includes(genreName);
@@ -53,6 +68,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     onChange({
       category: 'all',
       genres: [],
+      yearFrom: null,
+      yearTo: null,
       decade: null,
       minRating: 0,
       sort: 'default',
@@ -62,13 +79,13 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   const activeFiltersCount =
     (value.category !== 'all' ? 1 : 0) +
     value.genres.length +
-    (value.decade !== null ? 1 : 0) +
+    (value.yearFrom !== null || value.yearTo !== null || (value.decade !== null && value.decade !== undefined) ? 1 : 0) +
     (value.minRating > 0 ? 1 : 0) +
     (value.sort !== 'default' ? 1 : 0);
 
   const renderControls = () => (
     <div className="space-y-4">
-      {/* Fila 1: Tipo, Década, Puntuación mínima, Orden */}
+      {/* Fila 1: Tipo, Rango de Años (Desde/Hasta/Este año), Puntuación mínima, Orden */}
       <div className="flex flex-wrap items-center gap-3">
         {/* Tipo */}
         <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1 rounded-xl border border-zinc-800">
@@ -92,39 +109,87 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           })}
         </div>
 
-        {/* Décadas */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-zinc-400 font-medium px-1">Década:</span>
+        {/* Filtro por Año: Desde, Hasta, Este año */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Selector Desde */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="cc-filter-year-from" className="text-xs text-zinc-400 font-medium">
+              Desde:
+            </label>
+            <select
+              id="cc-filter-year-from"
+              aria-label="Año desde"
+              tabIndex={0}
+              value={value.yearFrom ?? ''}
+              onChange={(e) => {
+                const val = e.target.value ? parseInt(e.target.value, 10) : null;
+                let nextTo = value.yearTo;
+                if (val !== null && nextTo !== null && val > nextTo) {
+                  nextTo = val;
+                }
+                onChange({ ...value, yearFrom: val, yearTo: nextTo, decade: null });
+              }}
+              className="min-h-[44px] px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-semibold text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            >
+              <option value="">Todos</option>
+              {allYears.map((y) => (
+                <option key={`from-${y}`} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Selector Hasta */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="cc-filter-year-to" className="text-xs text-zinc-400 font-medium">
+              Hasta:
+            </label>
+            <select
+              id="cc-filter-year-to"
+              aria-label="Año hasta"
+              tabIndex={0}
+              value={value.yearTo ?? ''}
+              onChange={(e) => {
+                const val = e.target.value ? parseInt(e.target.value, 10) : null;
+                let nextFrom = value.yearFrom;
+                if (val !== null && nextFrom !== null && val < nextFrom) {
+                  nextFrom = val;
+                }
+                onChange({ ...value, yearFrom: nextFrom, yearTo: val, decade: null });
+              }}
+              className="min-h-[44px] px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-semibold text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            >
+              <option value="">Todos</option>
+              {allYears.map((y) => (
+                <option key={`to-${y}`} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Botón Este año */}
           <button
             type="button"
             tabIndex={0}
-            onClick={() => onChange({ ...value, decade: null })}
+            onClick={() => {
+              const active = value.yearFrom === currentYear && value.yearTo === currentYear;
+              onChange({
+                ...value,
+                yearFrom: active ? null : currentYear,
+                yearTo: active ? null : currentYear,
+                decade: null,
+              });
+            }}
             className={`min-h-[44px] min-w-[44px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
-              value.decade === null
-                ? 'bg-zinc-800 text-white border-zinc-600'
+              value.yearFrom === currentYear && value.yearTo === currentYear
+                ? 'bg-red-600/20 text-red-300 border-red-500/60'
                 : 'bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:text-zinc-200'
             }`}
           >
-            Todas
+            Este año
           </button>
-          {DECADES.map((dec) => {
-            const active = value.decade === dec;
-            return (
-              <button
-                key={dec}
-                type="button"
-                tabIndex={0}
-                onClick={() => onChange({ ...value, decade: active ? null : dec })}
-                className={`min-h-[44px] min-w-[44px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
-                  active
-                    ? 'bg-red-600/20 text-red-300 border-red-500/60'
-                    : 'bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:text-zinc-200'
-                }`}
-              >
-                {dec}s
-              </button>
-            );
-          })}
         </div>
 
         {/* Puntuación mínima */}

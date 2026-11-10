@@ -245,7 +245,9 @@ const ExploreView: React.FC<ExploreViewProps> = ({
           .filter(Boolean)
       : [];
     const yearFromParam = searchParams.get('yearFrom');
-    const decade = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
+    const yearToParam = searchParams.get('yearTo');
+    const yearFrom = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
+    const yearTo = yearToParam ? parseInt(yearToParam, 10) || null : null;
     const ratingParam = searchParams.get('rating');
     const minRating = ratingParam ? parseFloat(ratingParam) || 0 : 0;
     const sortParam = (searchParams.get('sort') || 'default') as CatalogSortOption;
@@ -253,7 +255,8 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     return {
       category: typeParam,
       genres,
-      decade,
+      yearFrom,
+      yearTo,
       minRating,
       sort: sortParam,
     };
@@ -268,9 +271,11 @@ const ExploreView: React.FC<ExploreViewProps> = ({
       const params: Record<string, string> = {};
       if (next.category && next.category !== 'all') params.type = next.category;
       if (next.genres && next.genres.length > 0) params.genre = next.genres.join(',');
-      if (next.decade !== null && next.decade !== undefined) {
-        params.yearFrom = String(next.decade);
-        params.yearTo = String(next.decade + 9);
+      if (next.yearFrom !== null && next.yearFrom !== undefined) {
+        params.yearFrom = String(next.yearFrom);
+      }
+      if (next.yearTo !== null && next.yearTo !== undefined) {
+        params.yearTo = String(next.yearTo);
       }
       if (next.minRating > 0) params.rating = String(next.minRating);
       if (next.sort && next.sort !== 'default') params.sort = next.sort;
@@ -291,7 +296,9 @@ const ExploreView: React.FC<ExploreViewProps> = ({
           .filter(Boolean)
       : [];
     const yearFromParam = searchParams.get('yearFrom');
-    const nextDecade = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
+    const yearToParam = searchParams.get('yearTo');
+    const nextYearFrom = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
+    const nextYearTo = yearToParam ? parseInt(yearToParam, 10) || null : null;
     const ratingParam = searchParams.get('rating');
     const nextRating = ratingParam ? parseFloat(ratingParam) || 0 : 0;
     const sortParam = (searchParams.get('sort') || 'default') as CatalogSortOption;
@@ -299,14 +306,16 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     setFilters((prev) => {
       const sameType = prev.category === typeParam;
       const sameGenres = JSON.stringify(prev.genres) === JSON.stringify(nextGenres);
-      const sameDecade = prev.decade === nextDecade;
+      const sameYearFrom = prev.yearFrom === nextYearFrom;
+      const sameYearTo = prev.yearTo === nextYearTo;
       const sameRating = prev.minRating === nextRating;
       const sameSort = prev.sort === sortParam;
-      if (sameType && sameGenres && sameDecade && sameRating && sameSort) return prev;
+      if (sameType && sameGenres && sameYearFrom && sameYearTo && sameRating && sameSort) return prev;
       return {
         category: typeParam,
         genres: nextGenres,
-        decade: nextDecade,
+        yearFrom: nextYearFrom,
+        yearTo: nextYearTo,
         minRating: nextRating,
         sort: sortParam,
       };
@@ -326,8 +335,8 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     (targetPage: number) => ({
       category: filters.category === 'all' ? undefined : filters.category,
       genre: filters.genres.length > 0 ? filters.genres : undefined,
-      yearFrom: filters.decade !== null ? filters.decade : undefined,
-      yearTo: filters.decade !== null ? filters.decade + 9 : undefined,
+      yearFrom: filters.yearFrom !== null && filters.yearFrom !== undefined ? filters.yearFrom : undefined,
+      yearTo: filters.yearTo !== null && filters.yearTo !== undefined ? filters.yearTo : undefined,
       minRating: filters.minRating > 0 ? filters.minRating : undefined,
       sort: filters.sort,
       page: targetPage,
