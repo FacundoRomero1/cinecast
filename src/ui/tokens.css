@@ -1,0 +1,42 @@
+/* CineCast v2 Design Tokens */
+:root {
+  /* Colores principales */
+  --cc-bg-primary: #09090b;      /* zinc-950 */
+  --cc-bg-surface: #18181b;      /* zinc-900 */
+  --cc-bg-elevated: #27272a;     /* zinc-800 */
+  --cc-border-subtle: rgba(255, 255, 255, 0.08);
+  --cc-border-focus: #ef4444;    /* red-500 */
+
+  /* Acento y estados */
+  --cc-accent: #e50914;
+  --cc-accent-hover: #dc2626;
+  --cc-accent-glow: rgba(229, 9, 20, 0.35);
+  --cc-rating-gold: #facc15;
+  --cc-badge-movie: #059669;
+  --cc-badge-series: #2563eb;
+
+  /* Texto */
+  --cc-text-primary: #fafafa;
+  --cc-text-secondary: #a1a1aa;
+  --cc-text-muted: #71717a;
+
+  /* Radios */
+  --cc-radius-sm: 0.5rem;
+  --cc-radius-md: 0.75rem;
+  --cc-radius-lg: 1rem;
+  --cc-radius-xl: 1.5rem;
+
+  /* Sombras */
+  --cc-shadow-card: 0 10px 25px -5px rgba(0, 0, 0, 0.65);
+  --cc-shadow-elevated: 0 20px 45px -10px rgba(0, 0, 0, 0.85);
+  --cc-shadow-focus: 0 0 0 2px #09090b, 0 0 0 4px #ef4444;
+
+  /* Espaciados y áreas táctiles */
+  --cc-touch-min: 44px;
+  --cc-space-1: 0.25rem;
+  --cc-space-2: 0.5rem;
+  --cc-space-3: 0.75rem;
+  --cc-space-4: 1rem;
+  --cc-space-6: 1.5rem;
+  --cc-space-8: 2rem;
+}

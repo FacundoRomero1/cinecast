@@ -1,4 +1,5 @@
 /* CineCast Styles & Custom Animations */
+@import './ui/tokens.css';
 
 /* Hide scrollbars */
 .no-scrollbar::-webkit-scrollbar {
