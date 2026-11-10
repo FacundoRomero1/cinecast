@@ -15,6 +15,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "lint:core": "tsc -p src/server/tsconfig.json --noEmit",
+    "build:core": "node scripts/build-core.mjs",
     "check:providers": "node scripts/check-providers.mjs",
     "build:win": "npm run build && electron-builder --win --dir",
     "build:installer": "npm run build && electron-builder --win nsis"

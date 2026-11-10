@@ -12,3 +12,5 @@ coverage/
 *.zip
 *.tar.gz
 scratch/
+electron/core.cjs
+.cinecast-data/

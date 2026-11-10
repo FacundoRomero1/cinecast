@@ -82,6 +82,52 @@ const ROUTES = [
     method: 'GET',
     path: '/api/archive/search?q=test',
   },
+  {
+    name: 'GET /api/search?q=batman',
+    method: 'GET',
+    path: '/api/search?q=batman',
+  },
+  {
+    name: 'GET /api/search?q=naruto',
+    method: 'GET',
+    path: '/api/search?q=naruto',
+  },
+  {
+    name: 'GET /api/media/movie/603',
+    method: 'GET',
+    path: '/api/media/movie/603',
+  },
+  {
+    name: 'GET /api/tv/1396',
+    method: 'GET',
+    path: '/api/tv/1396',
+  },
+  {
+    name: 'GET /api/poster?path=/ggFHVNu6YYI5L9pCfOacjizRGt.jpg',
+    method: 'GET',
+    path: '/api/poster?path=/ggFHVNu6YYI5L9pCfOacjizRGt.jpg',
+    binarySizeOnly: true,
+  },
+  {
+    name: 'GET /api/accounts',
+    method: 'GET',
+    path: '/api/accounts',
+  },
+  {
+    name: 'GET /api/auth/status',
+    method: 'GET',
+    path: '/api/auth/status',
+  },
+  {
+    name: 'GET /api/watch-history',
+    method: 'GET',
+    path: '/api/watch-history',
+  },
+  {
+    name: 'GET /api/media-search?q=test',
+    method: 'GET',
+    path: '/api/media-search?q=test',
+  },
 ];
 
 async function runSnapshot() {
@@ -103,6 +149,18 @@ async function runSnapshot() {
       const res = await fetch(url, options);
       const status = res.status;
       const contentType = res.headers.get('content-type') || '';
+
+      if (route.binarySizeOnly) {
+        const buf = await res.arrayBuffer();
+        results[route.name] = {
+          status,
+          contentType,
+          bodySize: buf.byteLength,
+        };
+        console.log(`${route.name} -> status: ${status} (${contentType}, ${buf.byteLength} bytes)`);
+        continue;
+      }
+
       const rawText = await res.text();
 
       let parsedBody = rawText;
@@ -113,8 +171,10 @@ async function runSnapshot() {
           parsedBody = rawText;
         }
       } else {
-        // Si devuelve HTML (por ej. fallback SPA de Vite cuando una ruta no existe), resumir o guardar texto
-        parsedBody = rawText.length > 300 ? `${rawText.slice(0, 300)}... [truncated ${rawText.length} chars]` : rawText;
+        parsedBody =
+          rawText.length > 300
+            ? `${rawText.slice(0, 300)}... [truncated ${rawText.length} chars]`
+            : rawText;
       }
 
       results[route.name] = {
