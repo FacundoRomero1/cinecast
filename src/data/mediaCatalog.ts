@@ -9,12 +9,6 @@ export function createMovieServers(tmdbId: number): StreamServer[] {
       language: '🇲🇽 Latino / Español',
     },
     {
-      name: 'Api4all (Multi / ES)',
-      url: `https://api4all.net/embed/movie/${tmdbId}?lang=es`,
-      type: 'iframe',
-      language: '🌐 Multi / Español',
-    },
-    {
       name: 'Vidsrc Pro (HD / ES)',
       url: `https://vidsrc.pro/embed/movie/${tmdbId}?lang=es`,
       type: 'iframe',
@@ -42,12 +36,6 @@ export function createSeriesServers(tmdbId: number, season = 1, episode = 1): St
       url: `https://vidsrc.cc/embed/tv/${tmdbId}/${season}-${episode}?lang=es`,
       type: 'iframe',
       language: '🇲🇽 Latino / Español',
-    },
-    {
-      name: 'Api4all (Multi / ES)',
-      url: `https://api4all.net/embed/tv/${tmdbId}/${season}/${episode}?lang=es`,
-      type: 'iframe',
-      language: '🌐 Multi / Español',
     },
     {
       name: 'Vidsrc Pro (HD / ES)',

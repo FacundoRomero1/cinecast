@@ -109,9 +109,6 @@ export function createSearchRouter(options: SearchOptions): Router {
             const vidsrcCcUrl = isTV
               ? `https://vidsrc.cc/embed/tv/${item.id}/1-1?lang=es`
               : `https://vidsrc.cc/embed/movie/${item.id}?lang=es`;
-            const api4allUrl = isTV
-              ? `https://api4all.net/embed/tv/${item.id}/1/1?lang=es`
-              : `https://api4all.net/embed/movie/${item.id}?lang=es`;
             const vidsrcProUrl = isTV
               ? `https://vidsrc.pro/embed/tv/${item.id}/1/1?lang=es`
               : `https://vidsrc.pro/embed/movie/${item.id}?lang=es`;
@@ -147,7 +144,6 @@ export function createSearchRouter(options: SearchOptions): Router {
               notInCatalog: true,
               servers: [
                 { name: 'Vidsrc CC (Latino / ES)', url: vidsrcCcUrl, type: 'iframe', language: '🇲🇽 Latino / Español' },
-                { name: 'Api4all (Multi / ES)', url: api4allUrl, type: 'iframe', language: '🌐 Multi / Español' },
                 { name: 'Vidsrc Pro (HD / ES)', url: vidsrcProUrl, type: 'iframe', language: '🌐 Multi / Sub ES' },
                 { name: 'TukiPlay (HD)', url: tukiUrl, type: 'iframe', language: '🇲🇽 Latino' },
                 { name: 'VidEasy (Multi)', url: videasyUrl, type: 'iframe', language: '🌐 Multi / Original' },

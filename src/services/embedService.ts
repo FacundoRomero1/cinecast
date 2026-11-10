@@ -144,17 +144,6 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
       language: '🇲🇽 Latino / Español',
     });
 
-    // ─── PUESTO #2: Api4all (Multi / ES) ───
-    const api4allUrl = isTV
-      ? `https://api4all.net/embed/tv/${tmdbId}/${season}/${episode}?lang=es`
-      : `https://api4all.net/embed/movie/${tmdbId}?lang=es`;
-    servers.push({
-      name: 'Api4all (Multi / ES)',
-      url: api4allUrl,
-      type: 'iframe',
-      language: '🌐 Multi / Español',
-    });
-
     // ─── PUESTO #3: Vidsrc Pro (HD / ES) ───
     const vidsrcProUrl = isTV
       ? `https://vidsrc.pro/embed/tv/${tmdbId}/${season}/${episode}?lang=es`

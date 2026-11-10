@@ -77,7 +77,7 @@ export async function asyncPool<T, R>(
 
 let massCatalogCache: Movie[] | null = null;
 
-// Generador de fuentes de video basado en Api4all / Vidsrc con forzado ?lang=es (Paso 1 - CENSURA)
+// Generador de fuentes de video basado en Vidsrc con forzado ?lang=es (Paso 1 - CENSURA)
 export function getVideoSources(
   tmdbId: number,
   type: 'movie' | 'series' | 'anime' = 'movie',
@@ -94,14 +94,6 @@ export function getVideoSources(
         : `https://vidsrc.cc/embed/movie/${tmdbId}?lang=es`,
       type: 'iframe',
       language: '🇲🇽 Latino / Español',
-    },
-    {
-      name: 'Api4all (Multi / ES)',
-      url: isTV
-        ? `https://api4all.net/embed/tv/${tmdbId}/${season}/${episode}?lang=es`
-        : `https://api4all.net/embed/movie/${tmdbId}?lang=es`,
-      type: 'iframe',
-      language: '🌐 Multi / Español',
     },
     {
       name: 'Vidsrc Pro (HD / ES)',
