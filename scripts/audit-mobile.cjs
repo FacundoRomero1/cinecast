@@ -285,5 +285,5 @@ app.whenReady().then(async () => {
   fs.writeFileSync(reportFile, out, 'utf8');
   console.log(out);
 
-  app.quit();
+  app.exit(0);
 });

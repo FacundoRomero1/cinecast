@@ -52,8 +52,8 @@ export function getMediaKind(item: {
   return 'movie';
 }
 
-export function deduplicateSearchResults<T extends SearchableMediaItem>(items: T[]): T[] {
-  const result: T[] = [];
+export function deduplicateSearchResults(items: SearchableMediaItem[]): SearchableMediaItem[] {
+  const result: SearchableMediaItem[] = [];
   const seenByKindAndTmdb = new Map<string, number>();
   const seenById = new Map<string, number>();
 
@@ -67,9 +67,9 @@ export function deduplicateSearchResults<T extends SearchableMediaItem>(items: T
 
     let existingIdx = -1;
     if (tmdbKey && seenByKindAndTmdb.has(tmdbKey)) {
-      existingIdx = seenByKindAndTmdb.get(tmdbKey)!;
+      existingIdx = seenByKindAndTmdb.get(tmdbKey) ?? -1;
     } else if (idKey && seenById.has(idKey)) {
-      existingIdx = seenById.get(idKey)!;
+      existingIdx = seenById.get(idKey) ?? -1;
     }
 
     if (existingIdx === -1) {
@@ -79,6 +79,7 @@ export function deduplicateSearchResults<T extends SearchableMediaItem>(items: T
       if (idKey) seenById.set(idKey, newIdx);
     } else {
       const existing = result[existingIdx];
+      if (!existing) continue;
       const existingIsLocal = !existing.notInCatalog;
 
       // Preferir ítem del catálogo local frente a TMDB
