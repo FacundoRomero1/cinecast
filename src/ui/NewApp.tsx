@@ -271,7 +271,10 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     (next: FilterState) => {
       setFilters(next);
       const params: Record<string, string> = {};
-      if (next.category && next.category !== 'all') params.category = next.category;
+      if (next.category && next.category !== 'all') {
+        params.category = next.category;
+        params.type = next.category;
+      }
       if (next.genres && next.genres.length > 0) params.genre = next.genres.join(',');
       if (next.yearFrom !== null && next.yearFrom !== undefined) {
         params.yearFrom = String(next.yearFrom);

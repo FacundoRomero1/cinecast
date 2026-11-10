@@ -1,9 +1,9 @@
+import { buildSync } from 'esbuild';
+import fs from 'node:fs';
 import http from 'node:http';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import fs from 'node:fs';
-import { createRequire } from 'node:module';
-import { buildSync } from 'esbuild';
 
 const require = createRequire(import.meta.url);
 const { createApp } = require('../electron/core.cjs');
@@ -20,10 +20,10 @@ const app = createApp({
   accountsFilePath: path.join(tmpDir, 'cinecast-verify-cat-accounts.json'),
   diagnostics: {
     getMode: () => false,
-    setMode: () => {},
+    setMode: () => { },
     getNoCorsFix: () => false,
-    setNoCorsFix: () => {},
-    onChange: () => {},
+    setNoCorsFix: () => { },
+    onChange: () => { },
   },
   auth: {
     userDataPath: path.join(tmpDir, 'cinecast-verify-cat-userdata'),
@@ -182,11 +182,11 @@ try {
   const sameLimit5Ids =
     head0Limit5 &&
     JSON.stringify(curLimit5.items.map((i) => i.id)) ===
-      JSON.stringify(head0Limit5.items.map((i) => i.id));
+    JSON.stringify(head0Limit5.items.map((i) => i.id));
   const sameAnime3Ids =
     head0Anime3 &&
     JSON.stringify(curAnime3.items.map((i) => i.id)) ===
-      JSON.stringify(head0Anime3.items.map((i) => i.id)) &&
+    JSON.stringify(head0Anime3.items.map((i) => i.id)) &&
     curAnime3.total === head0Anime3.total;
 
   const page2Valid =
