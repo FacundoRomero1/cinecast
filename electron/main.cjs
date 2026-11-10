@@ -49,7 +49,6 @@ if (!gotSingleInstanceLock) {
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-site-isolation-trials');
 app.commandLine.appendSwitch('allow-running-insecure-content');
-app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('allow-insecure-localhost');
 app.commandLine.appendSwitch('disable-features', 'PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies,BlockInsecurePrivateNetworkRequests');
 app.commandLine.appendSwitch('disable-webrtc');
@@ -583,12 +582,10 @@ function createWindow() {
   // Sesión persistente para YouTube TV (Leanback UI para Smart TV)
   const ytSession = session.fromPartition('persist:youtube-tv', { cache: true });
   ytSession.setUserAgent(SMART_TV_UA);
-  ytSession.setCertificateVerifyProc((_req, cb) => cb(0));
 
   // Sesión persistente para Spotify Web Player
   const spotifySession = session.fromPartition('persist:spotify', { cache: true });
   spotifySession.setUserAgent(REAL_UA);
-  spotifySession.setCertificateVerifyProc((_req, cb) => cb(0));
 
   // =========================================================================
   // 2. BYPASS DE REFERER / ORIGIN PARA EVITAR PANTALLAS NEGRAS EN IFRAMES
@@ -771,11 +768,6 @@ function createWindow() {
   session.defaultSession.webRequest.onBeforeRequest({ urls: AD_FILTER_PATTERNS }, fakeAdResponse);
   registerCineProtocol(customSession);
   registerCineProtocol(session.defaultSession);
-
-  // Aceptar certificados SSL en ambas sesiones para IPTV y reproductores embed
-  const allowAllCerts = (_request, callback) => callback(0);
-  session.defaultSession.setCertificateVerifyProc(allowAllCerts);
-  customSession.setCertificateVerifyProc(allowAllCerts);
 
   mainWindow = new BrowserWindow({
     width: 1366,
@@ -1426,10 +1418,26 @@ ipcMain.handle('check-embed-providers', async () => {
   return results;
 });
 
-// Ignorar globalmente errores de certificados SSL
-app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {
-  event.preventDefault();
-  callback(true);
+// Control de errores de certificados SSL con lista blanca explícita (CERT_ALLOWLIST)
+const CERT_ALLOWLIST = new Set([]);
+const loggedCertErrors = new Set();
+
+app.on('certificate-error', (event, _wc, url, error, _cert, cb) => {
+  let host = 'unknown';
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch (_) {}
+  const logKey = `${host}|${error}`;
+  if (!loggedCertErrors.has(logKey)) {
+    loggedCertErrors.add(logKey);
+    console.warn(`[cert-error] ${host} ${error}`);
+  }
+  if (CERT_ALLOWLIST.has(host)) {
+    event.preventDefault();
+    cb(true);
+  } else {
+    cb(false);
+  }
 });
 
 // Cabeceras (Referer / User-Agent) por stream IPTV indexadas por HOSTNAME
