@@ -107,7 +107,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       {/* Contenido principal */}
       <main
         className={`flex-1 md:pl-60 min-w-0 ${
-          extraBottomPadding ? 'pb-40 md:pb-24' : 'pb-20 md:pb-10'
+          extraBottomPadding || bottomSlot ? 'pb-48 md:pb-24' : 'pb-28 md:pb-10'
         }`}
       >
         {children}

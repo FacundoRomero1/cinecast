@@ -66,9 +66,9 @@ export const TitleCard: React.FC<TitleCardProps> = ({
                     e.stopPropagation();
                     onPlay(item);
                   }}
-                  className="min-w-[36px] min-h-[36px] p-2 rounded-xl bg-red-600 hover:bg-red-500 text-white shadow-lg flex items-center justify-center transition"
+                  className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white shadow-lg flex items-center justify-center transition"
                 >
-                  <Play className="w-3.5 h-3.5 fill-white" />
+                  <Play className="w-4 h-4 fill-white" />
                 </button>
               )}
 
@@ -81,9 +81,9 @@ export const TitleCard: React.FC<TitleCardProps> = ({
                     e.stopPropagation();
                     onCast(item);
                   }}
-                  className="min-w-[36px] min-h-[36px] p-2 rounded-xl bg-zinc-900/95 hover:bg-zinc-800 text-white border border-zinc-700 shadow-lg flex items-center justify-center transition"
+                  className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-zinc-900/95 hover:bg-zinc-800 text-white border border-zinc-700 shadow-lg flex items-center justify-center transition"
                 >
-                  <Tv className="w-3.5 h-3.5 text-red-400" />
+                  <Tv className="w-4 h-4 text-red-400" />
                 </button>
               )}
             </div>
@@ -97,9 +97,9 @@ export const TitleCard: React.FC<TitleCardProps> = ({
                   e.stopPropagation();
                   onRemove(item);
                 }}
-                className="min-w-[36px] min-h-[36px] p-2 rounded-xl bg-zinc-900/95 hover:bg-red-600 text-zinc-200 hover:text-white border border-zinc-700 shadow-lg flex items-center justify-center transition"
+                className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-zinc-900/95 hover:bg-red-600 text-zinc-200 hover:text-white border border-zinc-700 shadow-lg flex items-center justify-center transition"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="w-4 h-4" />
               </button>
             )}
           </div>
