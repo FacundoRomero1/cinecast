@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { createApp } from './src/server/core/http.js';
 import { attachWebSocket } from './src/server/core/ws.js';
 import { getLocalIpAddress } from './src/server/core/net.js';
+import type { StoredAuthData } from './src/server/core/routes/auth.js';
 
 export { getLocalIpAddress };
 
@@ -16,8 +17,12 @@ const PORT = process.env.PORT || 3000;
 let devDiagnosticMode = false;
 let devNoCorsFix = false;
 
+const devMemoryAuthStore = new Map<string, StoredAuthData>();
+const devUserDataPath = path.join(__dirname, '.cinecast-data');
+
 const app = createApp({
   baseDir: __dirname,
+  userDataPath: devUserDataPath,
   port: PORT,
   diagnostics: {
     getMode: () => devDiagnosticMode,
@@ -29,6 +34,15 @@ const app = createApp({
       devNoCorsFix = val;
     },
     onChange: () => {},
+  },
+  auth: {
+    userDataPath: devUserDataPath,
+    saveSecureAuth: async (provider: string, data: StoredAuthData) => {
+      devMemoryAuthStore.set(provider, { ...data, savedAt: Date.now() });
+    },
+    loadSecureAuth: async (provider: string) => {
+      return devMemoryAuthStore.get(provider) ?? null;
+    },
   },
 });
 
