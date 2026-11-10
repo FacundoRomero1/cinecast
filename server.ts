@@ -16,8 +16,7 @@ const PORT = process.env.PORT || 3000;
 
 let devDiagnosticMode = false;
 let devNoCorsFix = false;
-
-const devMemoryAuthStore = new Map<string, StoredAuthData>();
+const devAuthStore: Record<string, StoredAuthData> = {};
 const devUserDataPath = path.join(__dirname, '.cinecast-data');
 
 const app = createApp({
@@ -38,10 +37,10 @@ const app = createApp({
   auth: {
     userDataPath: devUserDataPath,
     saveSecureAuth: async (provider: string, data: StoredAuthData) => {
-      devMemoryAuthStore.set(provider, { ...data, savedAt: Date.now() });
+      devAuthStore[provider] = { ...data, savedAt: Date.now() };
     },
     loadSecureAuth: async (provider: string) => {
-      return devMemoryAuthStore.get(provider) ?? null;
+      return devAuthStore[provider] || null;
     },
   },
 });
