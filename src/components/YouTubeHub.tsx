@@ -27,6 +27,7 @@ interface YouTubeHubProps {
   onCastVideoToScreen?: (video: YouTubeVideo) => void;
   connectedScreenName?: string;
   isScreenMode?: boolean;
+  isActive?: boolean;
 }
 
 const DESKTOP_UA =
@@ -36,6 +37,7 @@ const LEANBACK_TV_UA =
 
 export const YouTubeHub: React.FC<YouTubeHubProps> = ({
   connectedScreenName = 'PC Dormitorio',
+  isActive = true,
 }) => {
   // Modo TV toggle: normal youtube.com vs youtube.com/tv con UA Leanback
   const [isTvMode, setIsTvMode] = useState<boolean>(() => {
@@ -56,11 +58,16 @@ export const YouTubeHub: React.FC<YouTubeHubProps> = ({
 
   const webviewRef = useRef<any>(null);
   const isFullscreenRef = useRef<boolean>(false);
+  const isActiveRef = useRef<boolean>(isActive);
   const hideExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     isFullscreenRef.current = isFullscreen;
   }, [isFullscreen]);
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
 
   const targetUrl = isTvMode ? 'https://www.youtube.com/tv' : 'https://www.youtube.com';
   const targetUA = isTvMode ? LEANBACK_TV_UA : DESKTOP_UA;
@@ -107,7 +114,14 @@ export const YouTubeHub: React.FC<YouTubeHubProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!isActive && isFullscreenRef.current) {
+      exitHubFullscreen();
+    }
+  }, [isActive, exitHubFullscreen]);
+
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!isActiveRef.current) return;
       if (e.key === 'F11') {
         e.preventDefault();
         toggleHubFullscreen();

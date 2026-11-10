@@ -42,6 +42,7 @@ import { AppRuntimeProvider, useAppRuntime, type HubType } from '../app/AppRunti
 import { toMediaItem } from '../app/toMediaItem';
 import type { AudioSettings, MediaItem, PlaybackSettings } from '../types';
 import { AppShell } from './AppShell';
+import { HubsHost } from './HubsHost';
 import { Hero } from './Hero';
 import { Row } from './Row';
 import { TitleCard } from './TitleCard';
@@ -1270,6 +1271,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             ) : undefined
           }
         >
+          <HubsHost />
           <Routes>
             <Route
               path="/"
@@ -1324,18 +1326,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                 <PlaceholderView sectionName="Canales" onSwitchToClassic={onSwitchToClassic} />
               }
             />
-            <Route
-              path="/musica"
-              element={
-                <PlaceholderView sectionName="Música" onSwitchToClassic={onSwitchToClassic} />
-              }
-            />
-            <Route
-              path="/youtube"
-              element={
-                <PlaceholderView sectionName="YouTube" onSwitchToClassic={onSwitchToClassic} />
-              }
-            />
+            <Route path="/musica" element={null} />
+            <Route path="/youtube" element={null} />
             <Route
               path="/ajustes"
               element={<SettingsView onSwitchToClassic={onSwitchToClassic} />}

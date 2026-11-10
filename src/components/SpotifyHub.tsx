@@ -24,10 +24,12 @@ interface SpotifyHubProps {
   onCastTrackToScreen?: (track: SpotifyTrack) => void;
   connectedScreenName?: string;
   isScreenMode?: boolean;
+  isActive?: boolean;
 }
 
 export const SpotifyHub: React.FC<SpotifyHubProps> = ({
   connectedScreenName = 'PC Dormitorio',
+  isActive = true,
 }) => {
   const [canGoBack, setCanGoBack] = useState<boolean>(false);
   const [canGoForward, setCanGoForward] = useState<boolean>(false);
@@ -39,11 +41,16 @@ export const SpotifyHub: React.FC<SpotifyHubProps> = ({
 
   const webviewRef = useRef<any>(null);
   const isFullscreenRef = useRef<boolean>(false);
+  const isActiveRef = useRef<boolean>(isActive);
   const hideExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     isFullscreenRef.current = isFullscreen;
   }, [isFullscreen]);
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
 
   const enterHubFullscreen = useCallback(async () => {
     setIsFullscreen(true);
@@ -87,7 +94,14 @@ export const SpotifyHub: React.FC<SpotifyHubProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!isActive && isFullscreenRef.current) {
+      exitHubFullscreen();
+    }
+  }, [isActive, exitHubFullscreen]);
+
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!isActiveRef.current) return;
       if (e.key === 'F11') {
         e.preventDefault();
         toggleHubFullscreen();
