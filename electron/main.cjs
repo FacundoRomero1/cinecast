@@ -1729,11 +1729,18 @@ app.whenReady().then(() => {
 
   // Endurecer permisos de todas las sesiones antes de crear ventanas
   const basePerms = new Set(['fullscreen', 'clipboard-sanitized-write']);
-  const spotifyPerms = new Set(['fullscreen', 'clipboard-sanitized-write', 'protected-media-identifier']);
+  const ytPerms = new Set(['fullscreen', 'clipboard-sanitized-write', 'mediaKeySystem']);
+  const spotifyPerms = new Set([
+    'fullscreen',
+    'clipboard-sanitized-write',
+    'protected-media-identifier',
+    'mediaKeySystem',
+  ]);
   hardenSession(session.defaultSession, basePerms);
   hardenSession(session.fromPartition('persist:cinecast-session', { cache: true }), basePerms);
   hardenSession(session.fromPartition('persist:videosession', { cache: true }), basePerms);
-  hardenSession(session.fromPartition('persist:youtube-tv', { cache: true }), basePerms);
+  hardenSession(session.fromPartition('persist:youtube', { cache: true }), ytPerms);
+  hardenSession(session.fromPartition('persist:youtube-tv', { cache: true }), ytPerms);
   hardenSession(session.fromPartition('persist:spotify', { cache: true }), spotifyPerms);
 
   // 0. userData debe ser escribible (cache/quota/cookies viven ahí)
