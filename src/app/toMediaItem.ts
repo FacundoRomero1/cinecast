@@ -2,49 +2,6 @@ import type { CardItem, MediaDetailItem } from '../providers/types';
 import { mediaSync } from '../services/mediaSync';
 import type { MediaItem, Movie, StreamServer } from '../types';
 
-// Interceptor para normalizar la API de temporadas (/api/tv/:id/season/:seasonNumber)
-// asegurando que cada episodio tenga `name`, `episode_number` y `still_path` tal como espera DetailModal.
-if (typeof window !== 'undefined' && !(window as any).__CINECAST_TV_EPISODES_PATCHED__) {
-  (window as any).__CINECAST_TV_EPISODES_PATCHED__ = true;
-  const originalFetch = window.fetch.bind(window);
-  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
-    const response = await originalFetch(input, init);
-    try {
-      const url =
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-          ? input.href
-          : input && typeof input === 'object' && 'url' in input
-          ? (input as any).url
-          : '';
-      if (url.includes('/api/tv/') && url.includes('/season/')) {
-        const cloned = response.clone();
-        const json = await cloned.json();
-        if (json && Array.isArray(json.episodes)) {
-          const normalized = json.episodes.map((ep: any) => ({
-            ...ep,
-            name:
-              ep.name ||
-              ep.title ||
-              (ep.episode || ep.episode_number ? `Episodio ${ep.episode || ep.episode_number}` : 'Episodio'),
-            episode_number: ep.episode_number ?? ep.episode ?? 1,
-            still_path:
-              ep.still_path ||
-              (ep.stillUrl ? ep.stillUrl.replace(/^https?:\/\/image\.tmdb\.org\/t\/p\/w\d+/, '') : null),
-          }));
-          return new Response(JSON.stringify({ ...json, episodes: normalized }), {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers,
-          });
-        }
-      }
-    } catch (_) {}
-    return response;
-  };
-}
-
 function toCategory(
   category: string,
   type: string

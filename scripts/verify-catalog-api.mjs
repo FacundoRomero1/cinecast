@@ -311,7 +311,65 @@ try {
     `[Prueba i] deduplicateSearchResults (unificación aislada): ${passI ? 'PASA' : 'FALLA'} (caso 1 series/anime local preferido=${passI1}, caso 2 tipos distintos preservados=${passI2}, caso 3 id idéntico=${passI3})`
   );
 
-  if (!(passA && passB && passC && hasFacets && passE && passF && passG && passH && passI)) {
+  // (j) formatSeasonEpisodes (normalización en origen para DetailModal y servidor clásico)
+  const tmdbCompiled = buildSync({
+    entryPoints: [path.join(rootDir, 'src/server/core/routes/tmdb-detail.ts')],
+    write: false,
+    format: 'cjs',
+    target: 'node22',
+    platform: 'node',
+    bundle: true,
+    external: ['express', 'fs', 'path', 'url'],
+  });
+  const tmdbMod = { exports: {} };
+  const tmdbFn = new Function('module', 'exports', 'require', tmdbCompiled.outputFiles[0].text);
+  tmdbFn(tmdbMod, tmdbMod.exports, require);
+  const { formatSeasonEpisodes } = tmdbMod.exports;
+
+  const mockRawEpisodes = [
+    {
+      id: 101,
+      name: 'Asta y Yuno',
+      season_number: 1,
+      episode_number: 1,
+      overview: 'Inicio de la aventura mágica',
+      runtime: 24,
+      still_path: '/path_asta.jpg',
+      vote_average: 8.4,
+    },
+    {
+      id: 102,
+      title: 'El juramento del muchacho',
+      season: 1,
+      episode: 2,
+      stillUrl: 'https://image.tmdb.org/t/p/w300/path_yuno.jpg',
+    },
+  ];
+
+  const formatted = formatSeasonEpisodes(mockRawEpisodes, 1);
+  const passJ1 =
+    formatted.length === 2 &&
+    formatted[0].name === 'Asta y Yuno' &&
+    formatted[0].title === 'Asta y Yuno' &&
+    formatted[0].episode_number === 1 &&
+    formatted[0].episode === 1 &&
+    formatted[0].still_path === '/path_asta.jpg' &&
+    formatted[0].stillUrl === 'https://image.tmdb.org/t/p/w300/path_asta.jpg';
+
+  const passJ2 =
+    formatted[1].name === 'El juramento del muchacho' &&
+    formatted[1].title === 'El juramento del muchacho' &&
+    formatted[1].episode_number === 2 &&
+    formatted[1].episode === 2 &&
+    formatted[1].still_path === '/path_yuno.jpg' &&
+    formatted[1].stillUrl === 'https://image.tmdb.org/t/p/w300/path_yuno.jpg';
+
+  const passJ = passJ1 && passJ2;
+  console.log(
+    `[Prueba j] formatSeasonEpisodes (normalización en origen para DetailModal y servidor clásico): ${passJ ? 'PASA' : 'FALLA'} (caso 1 TMDB original=${passJ1}, caso 2 legacy augmented=${passJ2})`
+  );
+
+  if (!(passA && passB && passC && hasFacets && passE && passF && passG && passH && passI && passJ)) {
     process.exitCode = 1;
   }
 } finally {

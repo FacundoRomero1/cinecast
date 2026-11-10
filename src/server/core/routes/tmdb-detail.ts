@@ -113,6 +113,66 @@ interface TmdbSeasonDetailResponse {
   episodes?: TmdbEpisode[];
 }
 
+export interface TvEpisodePayload {
+  id: number | string;
+  season: number;
+  season_number: number;
+  episode: number;
+  episode_number: number;
+  title: string;
+  name: string;
+  overview: string;
+  duration: string;
+  runtime?: number;
+  stillUrl: string | null;
+  still_path: string | null;
+  voteAverage: number;
+}
+
+export function formatSeasonEpisodes(
+  rawEpisodes: Array<{
+    id?: number | string;
+    name?: string;
+    title?: string;
+    season_number?: number;
+    season?: number;
+    episode_number?: number;
+    episode?: number;
+    overview?: string;
+    runtime?: number;
+    still_path?: string | null;
+    stillUrl?: string | null;
+    vote_average?: number;
+    voteAverage?: number;
+  }>,
+  seasonNumber: number = 1
+): TvEpisodePayload[] {
+  return (rawEpisodes || []).map((e) => {
+    const sNum = e.season_number ?? e.season ?? seasonNumber;
+    const epNum = e.episode_number ?? e.episode ?? 1;
+    const epName = e.name || e.title || `Episodio ${epNum}`;
+    const still = e.still_path || (e.stillUrl ? e.stillUrl.replace(/^https?:\/\/image\.tmdb\.org\/t\/p\/w\d+/, '') : null);
+    const stillUrl = e.stillUrl || (e.still_path ? `https://image.tmdb.org/t/p/w300${e.still_path}` : null);
+    const voteAvg = Number((e.vote_average ?? e.voteAverage ?? 7.0).toFixed(1));
+
+    return {
+      id: e.id ?? `ep-${sNum}-${epNum}`,
+      season: sNum,
+      season_number: sNum,
+      episode: epNum,
+      episode_number: epNum,
+      title: epName,
+      name: epName,
+      overview: e.overview || '',
+      duration: e.runtime ? `${e.runtime}m` : '24m',
+      runtime: e.runtime,
+      stillUrl,
+      still_path: still,
+      voteAverage: voteAvg,
+    };
+  });
+}
+
 export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
   const router = Router();
   const baseDir = options.baseDir || process.cwd();
@@ -362,8 +422,15 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
 
     if (fs.existsSync(cacheFile)) {
       try {
-        const cached: unknown = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-        res.json(cached);
+        const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) as {
+          seasonNumber?: number;
+          episodes?: any[];
+        };
+        const normalized = {
+          seasonNumber: cached.seasonNumber ?? sNum,
+          episodes: formatSeasonEpisodes(cached.episodes || [], cached.seasonNumber ?? sNum),
+        };
+        res.json(normalized);
         return;
       } catch (_) {}
     }
@@ -378,16 +445,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
       }
 
       const data = (await epRes.json()) as TmdbSeasonDetailResponse;
-      const episodes = (data.episodes || []).map((e) => ({
-        id: e.id,
-        season: e.season_number,
-        episode: e.episode_number,
-        title: e.name || `Episodio ${e.episode_number ?? 1}`,
-        overview: e.overview || '',
-        duration: e.runtime ? `${e.runtime}m` : '24m',
-        stillUrl: e.still_path ? `https://image.tmdb.org/t/p/w300${e.still_path}` : null,
-        voteAverage: Number((e.vote_average || 7.0).toFixed(1)),
-      }));
+      const episodes = formatSeasonEpisodes(data.episodes || [], sNum);
 
       const result = { seasonNumber: sNum, episodes };
       fs.writeFile(cacheFile, JSON.stringify(result), () => {});
