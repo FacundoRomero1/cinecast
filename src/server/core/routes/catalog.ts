@@ -210,6 +210,45 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
 
   router.get('/catalog', (req, res) => {
     const catalog = loadServerCatalog();
+    const rawIds = typeof req.query.ids === 'string' ? req.query.ids.trim() : '';
+    const fields = typeof req.query.fields === 'string' ? req.query.fields.trim().toLowerCase() : '';
+
+    if (rawIds) {
+      const requestedIds = rawIds
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const byId = new Map<string, CatalogItem>();
+      for (const item of catalog) {
+        byId.set(item.id, item);
+        if (item.tmdbId) {
+          byId.set(String(item.tmdbId), item);
+        }
+      }
+
+      const matched: CatalogItem[] = [];
+      const seen = new Set<string>();
+      for (const id of requestedIds) {
+        const found = byId.get(id);
+        if (found && !seen.has(found.id)) {
+          seen.add(found.id);
+          matched.push(found);
+        }
+      }
+
+      const items = fields === 'card' || !fields ? matched.map(toCatalogCard) : matched;
+      res.setHeader('Cache-Control', 'public, max-age=120');
+      res.json({
+        page: 1,
+        limit: items.length || 1,
+        total: items.length,
+        totalPages: 1,
+        items,
+      });
+      return;
+    }
+
     const rawPage = typeof req.query.page === 'string' ? req.query.page : '1';
     const rawLimit = typeof req.query.limit === 'string' ? req.query.limit : '40';
     const rawQ = typeof req.query.q === 'string' ? req.query.q : '';
@@ -221,7 +260,6 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
     const rawSort = typeof req.query.sort === 'string' ? req.query.sort.trim().toLowerCase() : 'default';
     const includeUpcoming =
       req.query.includeUpcoming === 'true' || req.query.includeUpcoming === '1';
-    const fields = typeof req.query.fields === 'string' ? req.query.fields.trim().toLowerCase() : '';
     const includeFacets = req.query.facets === 'true' || req.query.facets === '1';
 
     const page = Math.max(1, parseInt(rawPage, 10) || 1);

@@ -209,7 +209,26 @@ try {
     `[Prueba g] page, limit, q, category, onlySpanish + comparación HEAD~0: ${passG ? 'PASA' : 'FALLA'} (limit=5 ids iguales=${sameLimit5Ids}, category=anime&limit=3 ids/total iguales=${sameAnime3Ids} [total=${curAnime3.total}], page=2 total=${curPage2.total}, q=batman total=${curQ.total}, onlySpanish=true total=${curEs.total})`
   );
 
-  if (!(passA && passB && passC && hasFacets && passE && passF && passG)) {
+  // (h) ids=a,b,c devuelve esos ítems en formato card e ignora los desconocidos
+  const realTwoIds = curLimit5.items.slice(0, 2).map((i) => i.id);
+  const idsQuery = [realTwoIds[0], 'id-inexistente-xyz-999', realTwoIds[1]].join(',');
+  const idsRes = await getJson(`/api/catalog?ids=${encodeURIComponent(idsQuery)}&fields=card`);
+  const idsItems = idsRes.items || [];
+  const passH =
+    idsItems.length === 2 &&
+    idsItems[0].id === realTwoIds[0] &&
+    idsItems[1].id === realTwoIds[1] &&
+    idsItems.every(
+      (item) =>
+        !('overview' in item) &&
+        !('servers' in item) &&
+        expectedCardKeys.every((k) => k in item)
+    );
+  console.log(
+    `[Prueba h] /api/catalog?ids=a,desconocido,b&fields=card devuelve ítems en card e ignora desconocidos: ${passH ? 'PASA' : 'FALLA'} (pedidos=3 [2 reales + 1 desconocido], devueltos=${idsItems.length}, ids=[${idsItems.map((i) => i.id).join(', ')}])`
+  );
+
+  if (!(passA && passB && passC && hasFacets && passE && passF && passG && passH)) {
     process.exitCode = 1;
   }
 } finally {
