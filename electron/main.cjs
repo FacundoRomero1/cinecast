@@ -371,10 +371,49 @@ function saveAccountsToDisk(data) {
   }
 }
 
+// Validador literal de URL HTTP/HTTPS pública (rechaza localhost, rangos privados y link-local sin consultar DNS)
+function isSafePublicHttpUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!host) return false;
+    if (
+      host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host === '::1' ||
+      host === '0:0:0:0:0:0:0:1' ||
+      host === '0.0.0.0' ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+      /^169\.254\./.test(host)
+    ) {
+      return false;
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function searchYouTubeTracks(query) {
   if (!query || typeof query !== 'string') return [];
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  // Si el query parece una URL, validar que sea pública y segura
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed) && !isSafePublicHttpUrl(trimmed)) {
+    console.warn(`[searchYouTubeTracks] URL rechazada por validación de seguridad: ${trimmed}`);
+    return [];
+  }
   try {
-    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query.trim())}`;
+    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(trimmed)}`;
+    if (!isSafePublicHttpUrl(url)) {
+      console.warn(`[searchYouTubeTracks] URL destino rechazada: ${url}`);
+      return [];
+    }
     const res = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
@@ -1418,6 +1457,11 @@ ipcMain.handle('probe-streams', async (_event, urls) => {
   if (!Array.isArray(urls)) return {};
   const results = {};
   await Promise.allSettled(urls.slice(0, 60).map(async (u) => {
+    if (!isSafePublicHttpUrl(u)) {
+      console.warn(`[probe-streams] URL rechazada por validación de seguridad: ${u}`);
+      results[u] = false;
+      return;
+    }
     try {
       const sh = findStreamHeaders(u);
       const res = await fetch(u, {
@@ -1560,13 +1604,21 @@ ipcMain.handle('get-embed-status', async () => {
   }
 });
 
-// Abrir transmisión en navegador externo limpio
+// Abrir transmisión en navegador externo limpio (solo http:, https: o mailto:)
 ipcMain.handle('open-external', (_event, url) => {
-  if (url && typeof url === 'string') {
-    shell.openExternal(url);
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') {
+      console.warn(`[open-external] Protocolo rechazado: ${parsed.protocol} (${url})`);
+      return false;
+    }
+    shell.openExternal(parsed.toString());
     return true;
+  } catch (_) {
+    console.warn(`[open-external] URL inválida rechazada: ${url}`);
+    return false;
   }
-  return false;
 });
 
 // Traer ventana principal al frente (cuando llega orden del celular)
@@ -1578,16 +1630,6 @@ ipcMain.handle('focus-window', () => {
     return true;
   }
   return false;
-});
-
-// Ejecutar código JS en el contexto de la ventana
-ipcMain.handle('execute-js', async (_event, code) => {
-  if (!mainWindow) return null;
-  try {
-    return await mainWindow.webContents.executeJavaScript(code);
-  } catch (_) {
-    return null;
-  }
 });
 
 // Retornar la IP LAN real de la PC

@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendKeyToWebview: (payload) => ipcRenderer.invoke('send-key-to-webview', payload),
   sendNativeClick: (coords) => ipcRenderer.invoke('send-native-click', coords),
   simulatePlayClick: (coords) => ipcRenderer.invoke('simulate-play-click', coords),
-  executeJs: (code) => ipcRenderer.invoke('execute-js', code),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   focusWindow: () => ipcRenderer.invoke('focus-window'),
   setStreamHeaders: (payload) => ipcRenderer.invoke('set-stream-headers', payload),
