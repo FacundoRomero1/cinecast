@@ -38,7 +38,8 @@ import { AudioSettingsModal } from '../components/AudioSettingsModal';
 import { CastModal } from '../components/CastModal';
 import { GuestShareModal } from '../components/GuestShareModal';
 import { DualScreenSimulator } from '../components/DualScreenSimulator';
-import { ContinueWatchingRow } from '../components/ContinueWatchingRow';
+import { ContinueRow } from './ContinueRow';
+import { MiniRemote } from './MiniRemote';
 import { SportsMatchesTab } from '../components/SportsMatchesTab';
 import { SportsLiveGrid } from '../components/SportsLiveGrid';
 import { SpotifyHub } from '../components/SpotifyHub';
@@ -187,7 +188,7 @@ const HomeView: React.FC<HomeViewProps> = ({
       </div>
 
       {continueWatchingList.length > 0 && (
-        <ContinueWatchingRow
+        <ContinueRow
           items={continueWatchingList}
           onPlay={(media, episode, initialTime) => {
             handlePlayLocal(media, episode, initialTime);
@@ -237,7 +238,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
 
   // Restaurar estado inicial desde searchParams de la URL
   const initialFilters = useMemo<FilterState>(() => {
-    const typeParam = searchParams.get('type') || 'all';
+    const categoryParam = searchParams.get('category') || searchParams.get('type') || 'all';
     const genreParam = searchParams.get('genre');
     const genres = genreParam
       ? genreParam
@@ -254,7 +255,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     const sortParam = (searchParams.get('sort') || 'default') as CatalogSortOption;
 
     return {
-      category: typeParam,
+      category: categoryParam,
       genres,
       yearFrom,
       yearTo,
@@ -270,7 +271,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     (next: FilterState) => {
       setFilters(next);
       const params: Record<string, string> = {};
-      if (next.category && next.category !== 'all') params.type = next.category;
+      if (next.category && next.category !== 'all') params.category = next.category;
       if (next.genres && next.genres.length > 0) params.genre = next.genres.join(',');
       if (next.yearFrom !== null && next.yearFrom !== undefined) {
         params.yearFrom = String(next.yearFrom);
@@ -288,7 +289,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
 
   // Sincronizar desde la URL hacia los filtros si el usuario navega atrás/adelante
   useEffect(() => {
-    const typeParam = searchParams.get('type') || 'all';
+    const categoryParam = searchParams.get('category') || searchParams.get('type') || 'all';
     const genreParam = searchParams.get('genre');
     const nextGenres = genreParam
       ? genreParam
@@ -305,15 +306,15 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     const sortParam = (searchParams.get('sort') || 'default') as CatalogSortOption;
 
     setFilters((prev) => {
-      const sameType = prev.category === typeParam;
+      const sameCategory = prev.category === categoryParam;
       const sameGenres = JSON.stringify(prev.genres) === JSON.stringify(nextGenres);
       const sameYearFrom = prev.yearFrom === nextYearFrom;
       const sameYearTo = prev.yearTo === nextYearTo;
       const sameRating = prev.minRating === nextRating;
       const sameSort = prev.sort === sortParam;
-      if (sameType && sameGenres && sameYearFrom && sameYearTo && sameRating && sameSort) return prev;
+      if (sameCategory && sameGenres && sameYearFrom && sameYearTo && sameRating && sameSort) return prev;
       return {
-        category: typeParam,
+        category: categoryParam,
         genres: nextGenres,
         yearFrom: nextYearFrom,
         yearTo: nextYearTo,
@@ -1361,6 +1362,7 @@ interface NewAppContentProps {
 
 const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     deviceRole,
     setDeviceRole,
@@ -1494,18 +1496,33 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
       ) : (
         <AppShell
           extraBottomPadding={deviceRole === 'remote'}
+          hasMiniRemote={deviceRole === 'remote' && location.pathname !== '/control'}
           bottomSlot={
             deviceRole === 'remote' ? (
-              <RemoteControlDrawer
-                playbackState={remotePlaybackState}
-                currentMedia={remoteMediaItem}
-                currentEpisode={remoteEpisodeItem}
-                connectedScreenName={connectedScreenName}
-                onSendCommand={sendRemoteCommand}
-                onOpenAudioModal={() => setIsAudioModalOpen(true)}
-                onOpenCastModal={() => setIsCastModalOpen(true)}
-                onOpenGuestModal={() => setIsGuestModalOpen(true)}
-              />
+              <>
+                <div className="hidden md:block">
+                  <RemoteControlDrawer
+                    playbackState={remotePlaybackState}
+                    currentMedia={remoteMediaItem}
+                    currentEpisode={remoteEpisodeItem}
+                    connectedScreenName={connectedScreenName}
+                    onSendCommand={sendRemoteCommand}
+                    onOpenAudioModal={() => setIsAudioModalOpen(true)}
+                    onOpenCastModal={() => setIsCastModalOpen(true)}
+                    onOpenGuestModal={() => setIsGuestModalOpen(true)}
+                  />
+                </div>
+                {location.pathname !== '/control' && (
+                  <MiniRemote
+                    connectedScreenName={connectedScreenName}
+                    playbackState={remotePlaybackState}
+                    currentMedia={remoteMediaItem}
+                    onSendCommand={sendRemoteCommand}
+                    onNavigateToControl={() => navigate('/control')}
+                    onNavigateToSettings={() => navigate('/ajustes')}
+                  />
+                )}
+              </>
             ) : undefined
           }
         >

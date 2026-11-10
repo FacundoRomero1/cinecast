@@ -1,23 +1,26 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
 import {
-  Home,
-  Compass,
-  Search,
   Bookmark,
+  Compass,
+  Film,
+  Gamepad2,
+  Home,
+  Music,
+  Search,
+  Settings,
   Trophy,
   Tv,
-  Music,
   Youtube,
-  Settings,
-  Gamepad2,
-  Film,
 } from 'lucide-react';
+import React from 'react';
+import { NavLink } from 'react-router-dom';
+
+import { useScrollRestoration } from './useScrollRestoration';
 
 export interface AppShellProps {
   children: React.ReactNode;
   bottomSlot?: React.ReactNode;
   extraBottomPadding?: boolean | undefined;
+  hasMiniRemote?: boolean | undefined;
 }
 
 interface NavItemConfig {
@@ -49,9 +52,12 @@ export const AppShell: React.FC<AppShellProps> = ({
   children,
   bottomSlot,
   extraBottomPadding = false,
+  hasMiniRemote = false,
 }) => {
+  useScrollRestoration();
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col md:flex-row">
+    <div className="min-h-[100dvh] md:min-h-screen bg-zinc-950 text-zinc-100 flex flex-col md:flex-row">
       {/* Menú lateral fijo en escritorio (>= 768px) */}
       <aside
         aria-label="Navegación principal"
@@ -73,10 +79,9 @@ export const AppShell: React.FC<AppShellProps> = ({
                 to={item.to}
                 end={item.to === '/'}
                 className={({ isActive }) =>
-                  `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
-                    isActive
-                      ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
-                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
+                  `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isActive
+                    ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
+                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
                   }`
                 }
               >
@@ -91,10 +96,9 @@ export const AppShell: React.FC<AppShellProps> = ({
           <NavLink
             to="/ajustes"
             className={({ isActive }) =>
-              `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
-                isActive
-                  ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
-                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
+              `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isActive
+                ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
+                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
               }`
             }
           >
@@ -104,26 +108,30 @@ export const AppShell: React.FC<AppShellProps> = ({
         </div>
       </aside>
 
-      {/* Contenido principal */}
+      {/* Contenido principal con padding inferior adaptado */}
       <main
         className={`flex-1 md:pl-60 min-w-0 ${
-          extraBottomPadding || bottomSlot ? 'pb-48 md:pb-24' : 'pb-28 md:pb-10'
+          hasMiniRemote
+            ? 'pb-[calc(124px+env(safe-area-inset-bottom,0px))] md:pb-24'
+            : extraBottomPadding || bottomSlot
+            ? 'pb-[calc(76px+env(safe-area-inset-bottom,0px))] md:pb-24'
+            : 'pb-[calc(68px+env(safe-area-inset-bottom,0px))] md:pb-10'
         }`}
       >
         {children}
       </main>
 
-      {/* Slot fijo sobre la barra de pestañas móvil (ej: RemoteControlDrawer en rol remote) */}
+      {/* Slot fijo sobre la barra de pestañas móvil */}
       {bottomSlot && (
-        <div className="fixed inset-x-0 bottom-[60px] md:bottom-0 md:left-60 z-50 [&>div]:!static">
+        <div className="z-cc-minicontrol [&>div]:!static">
           {bottomSlot}
         </div>
       )}
 
-      {/* Barra de pestañas inferior en móvil (< 768px) */}
+      {/* Barra de pestañas inferior en móvil (< 768px): siempre visible, safe-area aware */}
       <nav
         aria-label="Navegación móvil"
-        className="fixed bottom-0 inset-x-0 h-[60px] md:hidden bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/80 z-40 flex items-center justify-around px-1 py-1"
+        className="fixed bottom-0 inset-x-0 h-[calc(60px+env(safe-area-inset-bottom,0px))] pb-[env(safe-area-inset-bottom,0px)] md:hidden bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/80 z-cc-tabbar flex items-center justify-around px-1 py-1 select-none"
       >
         {MOBILE_TAB_ITEMS.map((item) => {
           const Icon = item.icon;
@@ -132,8 +140,14 @@ export const AppShell: React.FC<AppShellProps> = ({
               key={item.to}
               to={item.to}
               end={item.to === '/'}
+              onClick={() => {
+                const cur = window.location.hash.replace(/^#/, '') || '/';
+                if (cur === item.to) {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+              }}
               className={({ isActive }) =>
-                `min-h-[44px] min-w-[44px] flex-1 py-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+                `min-h-[44px] min-w-[44px] flex-1 py-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation ${
                   isActive ? 'text-red-500' : 'text-zinc-400 hover:text-zinc-200'
                 }`
               }

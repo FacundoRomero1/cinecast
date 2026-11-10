@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { SlidersHorizontal, X, RotateCcw } from 'lucide-react';
 import type { CatalogSortOption, GenreCountItem } from '../providers/types';
 
@@ -47,6 +47,32 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 }) => {
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const currentYear = new Date().getFullYear();
+
+  useEffect(() => {
+    if (!mobileSheetOpen) return;
+    const origOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // Manejo de historia: botón Atrás cierra primero el panel sin cambiar de ruta
+    window.history.pushState({ ccFilterOpen: true }, '');
+    const handlePopState = () => {
+      setMobileSheetOpen(false);
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      document.body.style.overflow = origOverflow;
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [mobileSheetOpen]);
+
+  const closeMobileSheet = () => {
+    if (window.history.state && window.history.state.ccFilterOpen) {
+      window.history.back();
+    } else {
+      setMobileSheetOpen(false);
+    }
+  };
 
   const allYears = useMemo(() => {
     const list: number[] = [];
@@ -315,7 +341,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           role="dialog"
           aria-modal="true"
           aria-label="Filtros de catálogo"
-          className="fixed inset-0 z-50 md:hidden flex flex-col justify-end bg-black/75 backdrop-blur-sm"
+          className="fixed inset-0 z-cc-panel md:hidden flex flex-col justify-end bg-black/80 backdrop-blur-sm"
         >
           <div className="w-full max-h-[85vh] overflow-y-auto rounded-t-3xl bg-zinc-950 border-t border-zinc-800 p-5 space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
@@ -324,8 +350,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                 type="button"
                 tabIndex={0}
                 aria-label="Cerrar filtros"
-                onClick={() => setMobileSheetOpen(false)}
-                className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl bg-zinc-900 text-zinc-300 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                onClick={closeMobileSheet}
+                className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl bg-zinc-900 text-zinc-300 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -333,12 +359,21 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 
             {renderControls()}
 
-            <div className="pt-3 border-t border-zinc-800 flex gap-3">
+            {/* Pie fijo con "Ver N resultados" y "Limpiar" de al menos 44 px */}
+            <div className="sticky bottom-0 inset-x-0 pt-3 pb-2 bg-zinc-950 border-t border-zinc-800 flex items-center gap-3">
               <button
                 type="button"
                 tabIndex={0}
-                onClick={() => setMobileSheetOpen(false)}
-                className="w-full min-h-[44px] py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                onClick={resetFilters}
+                className="min-h-[44px] min-w-[80px] px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white font-bold text-xs border border-zinc-800 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation"
+              >
+                Limpiar
+              </button>
+              <button
+                type="button"
+                tabIndex={0}
+                onClick={closeMobileSheet}
+                className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 touch-manipulation text-center"
               >
                 Ver {totalResults.toLocaleString('es-AR')} resultados
               </button>

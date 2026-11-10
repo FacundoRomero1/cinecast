@@ -39,4 +39,54 @@
   --cc-space-4: 1rem;
   --cc-space-6: 1.5rem;
   --cc-space-8: 2rem;
+
+  /* =========================================================================
+   * Escala de z-index documentada y unificada
+   * =========================================================================
+   * 1. Contenido base (filas, cards, grillas): z-10 (--cc-z-content)
+   * 2. Barra de pestañas inferior móvil (fija): z-30 (--cc-z-tabbar)
+   * 3. Mini control remoto móvil (sobre barra): z-35 (--cc-z-minicontrol)
+   * 4. Paneles desplegables / FilterBar sheet: z-45 (--cc-z-panel)
+   * 5. Modales clásicos (DetailModal, VideoPlayer, CastModal): z-50 (--cc-z-modal)
+   * 6. Avisos / Notificaciones flotantes / Toasts: z-60 (--cc-z-toast)
+   * ========================================================================= */
+  --cc-z-content: 10;
+  --cc-z-tabbar: 30;
+  --cc-z-minicontrol: 35;
+  --cc-z-panel: 45;
+  --cc-z-modal: 50;
+  --cc-z-toast: 60;
+}
+
+.z-cc-content {
+  z-index: 10;
+}
+
+.z-cc-tabbar {
+  z-index: 30;
+}
+
+.z-cc-minicontrol {
+  z-index: 35;
+}
+
+.z-cc-panel {
+  z-index: 45;
+}
+
+.z-cc-modal {
+  z-index: 50;
+}
+
+.z-cc-toast {
+  z-index: 60;
+}
+
+/* touch-action manipulation para eliminar retardo y zoom por doble toque en móviles */
+button,
+a,
+[role="button"],
+select,
+input {
+  touch-action: manipulation;
 }

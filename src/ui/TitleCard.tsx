@@ -32,13 +32,14 @@ export const TitleCard: React.FC<TitleCardProps> = ({
   };
 
   return (
-    <div
+    <article
+      data-card-id={item.id}
       role="button"
       tabIndex={0}
       aria-label={`${item.title} (${item.year}), ${isSeries ? 'Serie' : 'Película'}, puntuación ${item.rating}`}
       onClick={() => onSelect(item)}
       onKeyDown={handleKeyDown}
-      className={`group relative flex flex-col rounded-xl bg-zinc-900/80 border border-zinc-800/80 overflow-hidden cursor-pointer select-none transition-transform duration-200 hover:scale-[1.03] hover:border-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 min-h-[44px] min-w-[44px] ${className}`}
+      className={`group relative flex flex-col rounded-xl bg-zinc-900/80 border border-zinc-800/80 overflow-hidden cursor-pointer select-none transition-transform duration-200 hover:scale-[1.03] hover:border-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 min-h-[44px] min-w-[44px] touch-manipulation ${className}`}
     >
       <div className="relative aspect-[2/3] w-full bg-zinc-900 overflow-hidden">
         {item.posterUrl ? (
@@ -132,6 +133,6 @@ export const TitleCard: React.FC<TitleCardProps> = ({
           </span>
         </div>
       </div>
-    </div>
+    </article>
   );
 };

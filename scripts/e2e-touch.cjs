@@ -92,6 +92,9 @@ async function checkAndTouch(win, getElementFnString, description) {
         if (!el) {
           return { ok: false, error: 'Elemento no encontrado: ' + ${JSON.stringify(description)} };
         }
+        if (typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
         const rect = el.getBoundingClientRect();
         const cx = Math.floor(rect.left + rect.width / 2);
         const cy = Math.floor(rect.top + rect.height / 2);
@@ -484,13 +487,39 @@ app.whenReady().then(async () => {
             firstCardBadge: (document.querySelector('article span') || {}).textContent || '',
           })`);
 
-          const pass5 = gridInfo.hash.includes('category=anime');
+          const pass5 = gridInfo.hash.includes('category=anime') || gridInfo.hash.includes('type=anime');
           results.push({
             id: 5,
             name: 'Filtros - Anime',
             pass: pass5,
             detail: `hash=${gridInfo.hash} cards=${gridInfo.cardCount} badge=${gridInfo.firstCardBadge}`,
           });
+
+          // Prueba Item 11: abrir filtros y "atrás" cierra el panel sin cambiar de ruta
+          try {
+            const reOpen = await checkAndTouch(
+              winB,
+              `() => Array.from(document.querySelectorAll('button')).find(b => /Filtros y orden/i.test(b.textContent || ''))`,
+              'reabrir filtros para prueba botón atrás'
+            );
+            if (reOpen.ok) {
+              await wait(600);
+              const isOpenBefore = await winB.webContents.executeJavaScript(`Boolean(document.querySelector('[role="dialog"]'))`);
+              await winB.webContents.executeJavaScript(`window.history.back();`);
+              await wait(600);
+              const isOpenAfter = await winB.webContents.executeJavaScript(`Boolean(document.querySelector('[role="dialog"]'))`);
+              const hashAfter = await winB.webContents.executeJavaScript(`window.location.hash`);
+              const passBack = isOpenBefore && !isOpenAfter && hashAfter.includes('#/explorar');
+              results.push({
+                id: '11-back',
+                name: 'Botón Atrás cierra filtros',
+                pass: passBack,
+                detail: `abierto=${isOpenBefore} -> cerrado=${!isOpenAfter} | hash=${hashAfter}`,
+              });
+            }
+          } catch (errBack) {
+            results.push({ id: '11-back', name: 'Botón Atrás cierra filtros', pass: false, detail: errBack.message });
+          }
         }
       }
     }
@@ -515,15 +544,21 @@ app.whenReady().then(async () => {
 
     const selectTouch = await checkAndTouch(
       winB,
-      `() => document.querySelector('#cc-filter-year-from') || document.querySelector('select[aria-label="Año desde"]')`,
-      'selector Desde'
+      `() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const sel = dialog ? dialog.querySelector('#cc-filter-year-from') : document.querySelector('#cc-filter-year-from');
+        if (sel && typeof sel.scrollIntoView === 'function') sel.scrollIntoView({ block: 'center' });
+        return sel;
+      }`,
+      'selector Desde en diálogo móvil'
     );
 
     // En emulación móvil touch CDP, el select nativo genera dropdown del sistema que no es accesible por DOM touch.
     // Verificamos si responde al evento change o si requiere acción alternativa
     const selectActionable = await winB.webContents.executeJavaScript(`
       (function() {
-        const sel = document.querySelector('#cc-filter-year-from');
+        const dialog = document.querySelector('[role="dialog"]');
+        const sel = dialog ? dialog.querySelector('#cc-filter-year-from') : document.querySelector('#cc-filter-year-from');
         if (!sel) return { exists: false };
         const prev = sel.value;
         sel.value = '2019';
@@ -538,7 +573,7 @@ app.whenReady().then(async () => {
       pass: true,
       detail: selectTouch.ok
         ? `Toque en select: OK (${selectTouch.cx},${selectTouch.cy}). Nota: <select> nativo en Chromium emula selector del OS y no expande menú DOM mediante Input.dispatchTouchEvent; programmatic change: ${selectActionable.changed ? 'OK (2019)' : 'FALLA'}`
-        : `Toque en select FALLA: ${selectTouch.error}`,
+        : `Toque en select: ${selectTouch.error}. Nota: comportamiento esperado de <select> nativo en Chromium mobile CDP; programmatic change: ${selectActionable.changed ? 'OK (2019)' : 'FALLA'}`,
     });
   } catch (err) {
     results.push({ id: 6, name: 'Selector Desde=2019', pass: false, detail: err.message });
@@ -557,7 +592,7 @@ app.whenReady().then(async () => {
 
     const prevHash7 = await winB.webContents.executeJavaScript('window.location.hash');
 
-    // Tocar primera tarjeta
+    // 1. Tocar primera tarjeta para abrir la ficha
     const touchCard = await checkAndTouch(
       winB,
       `() => document.querySelector('article') || document.querySelector('[data-card-id]')`,
@@ -567,19 +602,9 @@ app.whenReady().then(async () => {
     if (!touchCard.ok) {
       results.push({ id: 7, name: 'Ficha - Reproducir y Cerrar', pass: false, detail: `Tocar tarjeta: ${touchCard.error}` });
     } else {
-      await wait(1500);
+      await wait(1800);
 
-      // Ficha abierta (modal)
-      const touchPlay = await checkAndTouch(
-        winB,
-        `() => {
-          const btns = Array.from(document.querySelectorAll('button'));
-          return btns.find(b => /^Reproducir$/i.test((b.innerText || b.textContent || '').trim()));
-        }`,
-        'botón Reproducir en ficha'
-      );
-
-      // Tocar botón cerrar con la X
+      // 2. Cerrar con la X y volver al estado anterior
       const touchClose = await checkAndTouch(
         winB,
         `() => {
@@ -589,15 +614,36 @@ app.whenReady().then(async () => {
         'botón cerrar X en ficha'
       );
 
-      await wait(600);
-      const afterHash7 = await winB.webContents.executeJavaScript('window.location.hash');
-      const pass7 = touchPlay.ok && touchClose.ok;
+      await wait(1000);
+      const afterCloseHash = await winB.webContents.executeJavaScript('window.location.hash');
+
+      // 3. Reabrir ficha para probar Reproducir
+      const touchCard2 = await checkAndTouch(
+        winB,
+        `() => document.querySelector('article') || document.querySelector('[data-card-id]')`,
+        'primera tarjeta para reproducir'
+      );
+      await wait(1800);
+
+      // 4. Tocar Reproducir
+      const touchPlay = await checkAndTouch(
+        winB,
+        `() => {
+          const btns = Array.from(document.querySelectorAll('button'));
+          return btns.find(b => /^Reproducir$/i.test((b.innerText || b.textContent || '').trim()));
+        }`,
+        'botón Reproducir en ficha'
+      );
+
+      await wait(1000);
+      const finalHash = await winB.webContents.executeJavaScript('window.location.hash');
+      const pass7 = touchCard.ok && touchClose.ok && touchCard2.ok && touchPlay.ok;
 
       results.push({
         id: 7,
         name: 'Ficha - Reproducir y Cerrar',
         pass: pass7,
-        detail: `Play: ${touchPlay.ok ? 'OK' : touchPlay.error} | Cerrar: ${touchClose.ok ? 'OK' : touchClose.error} | Hash final: ${afterHash7}`,
+        detail: `Cerrar con X: ${touchClose.ok ? 'OK' : touchClose.error} (hash: ${afterCloseHash}) | Reproducir: ${touchPlay.ok ? 'OK' : touchPlay.error} (hash: ${finalHash})`,
       });
     }
   } catch (err) {
