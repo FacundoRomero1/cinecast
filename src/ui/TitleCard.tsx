@@ -1,14 +1,26 @@
 import React from 'react';
-import { Star } from 'lucide-react';
+import { Play, Star, Trash2, Tv } from 'lucide-react';
 import type { CardItem } from '../providers/types';
 
 export interface TitleCardProps {
   item: CardItem;
   onSelect: (item: CardItem) => void;
+  onPlay?: ((item: CardItem) => void) | undefined;
+  onCast?: ((item: CardItem) => void) | undefined;
+  onRemove?: ((item: CardItem) => void) | undefined;
+  connectedScreenName?: string | undefined;
   className?: string | undefined;
 }
 
-export const TitleCard: React.FC<TitleCardProps> = ({ item, onSelect, className = '' }) => {
+export const TitleCard: React.FC<TitleCardProps> = ({
+  item,
+  onSelect,
+  onPlay,
+  onCast,
+  onRemove,
+  connectedScreenName,
+  className = '',
+}) => {
   const isSeries =
     item.type === 'series' || item.category === 'series' || item.category === 'anime';
 
@@ -39,6 +51,57 @@ export const TitleCard: React.FC<TitleCardProps> = ({ item, onSelect, className 
         ) : (
           <div className="w-full h-full flex items-center justify-center p-3 text-center text-xs text-zinc-400 font-medium">
             {item.title}
+          </div>
+        )}
+
+        {(onPlay || onCast || onRemove) && (
+          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex items-end justify-between p-2 gap-1.5">
+            <div className="flex items-center gap-1.5">
+              {onPlay && (
+                <button
+                  type="button"
+                  title="Reproducir"
+                  aria-label={`Reproducir ${item.title}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPlay(item);
+                  }}
+                  className="min-w-[36px] min-h-[36px] p-2 rounded-xl bg-red-600 hover:bg-red-500 text-white shadow-lg flex items-center justify-center transition"
+                >
+                  <Play className="w-3.5 h-3.5 fill-white" />
+                </button>
+              )}
+
+              {onCast && (
+                <button
+                  type="button"
+                  title={`Enviar a ${connectedScreenName || 'PC'}`}
+                  aria-label={`Enviar ${item.title} a ${connectedScreenName || 'PC'}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCast(item);
+                  }}
+                  className="min-w-[36px] min-h-[36px] p-2 rounded-xl bg-zinc-900/95 hover:bg-zinc-800 text-white border border-zinc-700 shadow-lg flex items-center justify-center transition"
+                >
+                  <Tv className="w-3.5 h-3.5 text-red-400" />
+                </button>
+              )}
+            </div>
+
+            {onRemove && (
+              <button
+                type="button"
+                title="Quitar de Mi lista"
+                aria-label={`Quitar ${item.title} de Mi lista`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(item);
+                }}
+                className="min-w-[36px] min-h-[36px] p-2 rounded-xl bg-zinc-900/95 hover:bg-red-600 text-zinc-200 hover:text-white border border-zinc-700 shadow-lg flex items-center justify-center transition"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         )}
       </div>

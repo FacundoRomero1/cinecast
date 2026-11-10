@@ -7,9 +7,19 @@ export interface RowProps {
   title: string;
   items: CardItem[];
   onSelectItem: (item: CardItem) => void;
+  onPlayItem?: ((item: CardItem) => void) | undefined;
+  onCastItem?: ((item: CardItem) => void) | undefined;
+  connectedScreenName?: string | undefined;
 }
 
-export const Row: React.FC<RowProps> = ({ title, items, onSelectItem }) => {
+export const Row: React.FC<RowProps> = ({
+  title,
+  items,
+  onSelectItem,
+  onPlayItem,
+  onCastItem,
+  connectedScreenName,
+}) => {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
   if (!items || items.length === 0) return null;
@@ -57,7 +67,13 @@ export const Row: React.FC<RowProps> = ({ title, items, onSelectItem }) => {
       >
         {items.map((item) => (
           <div key={item.id} className="w-[148px] sm:w-[172px] shrink-0">
-            <TitleCard item={item} onSelect={onSelectItem} />
+            <TitleCard
+              item={item}
+              onSelect={onSelectItem}
+              onPlay={onPlayItem}
+              onCast={onCastItem}
+              connectedScreenName={connectedScreenName}
+            />
           </div>
         ))}
       </div>

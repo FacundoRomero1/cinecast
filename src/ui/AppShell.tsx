@@ -16,6 +16,8 @@ import {
 
 export interface AppShellProps {
   children: React.ReactNode;
+  bottomSlot?: React.ReactNode;
+  extraBottomPadding?: boolean | undefined;
 }
 
 interface NavItemConfig {
@@ -43,7 +45,11 @@ const MOBILE_TAB_ITEMS: NavItemConfig[] = [
   { to: '/control', label: 'Control', icon: Gamepad2 },
 ];
 
-export const AppShell: React.FC<AppShellProps> = ({ children }) => {
+export const AppShell: React.FC<AppShellProps> = ({
+  children,
+  bottomSlot,
+  extraBottomPadding = false,
+}) => {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col md:flex-row">
       {/* Menú lateral fijo en escritorio (>= 768px) */}
@@ -99,12 +105,25 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       </aside>
 
       {/* Contenido principal */}
-      <main className="flex-1 md:pl-60 pb-20 md:pb-10 min-w-0">{children}</main>
+      <main
+        className={`flex-1 md:pl-60 min-w-0 ${
+          extraBottomPadding ? 'pb-40 md:pb-24' : 'pb-20 md:pb-10'
+        }`}
+      >
+        {children}
+      </main>
+
+      {/* Slot fijo sobre la barra de pestañas móvil (ej: RemoteControlDrawer en rol remote) */}
+      {bottomSlot && (
+        <div className="fixed inset-x-0 bottom-[60px] md:bottom-0 md:left-60 z-50 [&>div]:!static">
+          {bottomSlot}
+        </div>
+      )}
 
       {/* Barra de pestañas inferior en móvil (< 768px) */}
       <nav
         aria-label="Navegación móvil"
-        className="fixed bottom-0 inset-x-0 md:hidden bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/80 z-40 flex items-center justify-around px-1 py-1"
+        className="fixed bottom-0 inset-x-0 h-[60px] md:hidden bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/80 z-40 flex items-center justify-around px-1 py-1"
       >
         {MOBILE_TAB_ITEMS.map((item) => {
           const Icon = item.icon;

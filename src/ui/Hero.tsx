@@ -1,15 +1,24 @@
 import React from 'react';
-import { Info, Play, Star } from 'lucide-react';
+import { Info, Play, Star, Tv } from 'lucide-react';
 import type { CardItem } from '../providers/types';
 
 export interface HeroProps {
   item: CardItem | null;
   overview?: string | undefined;
   onPlay: (item: CardItem) => void;
+  onCast?: ((item: CardItem) => void) | undefined;
+  connectedScreenName?: string | undefined;
   onMoreInfo: (item: CardItem) => void;
 }
 
-export const Hero: React.FC<HeroProps> = ({ item, overview, onPlay, onMoreInfo }) => {
+export const Hero: React.FC<HeroProps> = ({
+  item,
+  overview,
+  onPlay,
+  onCast,
+  connectedScreenName,
+  onMoreInfo,
+}) => {
   if (!item) return null;
 
   const isSeries =
@@ -76,6 +85,18 @@ export const Hero: React.FC<HeroProps> = ({ item, overview, onPlay, onMoreInfo }
             <Play className="w-4 h-4 fill-white" />
             <span>Reproducir</span>
           </button>
+
+          {onCast && (
+            <button
+              type="button"
+              tabIndex={0}
+              onClick={() => onCast(item)}
+              className="min-h-[44px] min-w-[44px] px-5 py-2.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-white border border-red-500/40 font-bold text-sm inline-flex items-center justify-center gap-2 shadow-lg transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+            >
+              <Tv className="w-4 h-4 text-red-500" />
+              <span>Enviar a {connectedScreenName || 'PC'}</span>
+            </button>
+          )}
 
           <button
             type="button"
