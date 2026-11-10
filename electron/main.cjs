@@ -125,8 +125,25 @@ const AD_HOSTS = [
   'wps.com',
 ];
 
-// Lista blanca MUY corta de popups permitidos (todo lo demás se deniega)
-const POPUP_ALLOW = /^https?:\/\/[^/]*(tukiplay|vidcore|vidsrc|2embed|multiembed|vidlink|videasy|moviesapi|smashy|superembed|streamtape|filemoon)/i;
+// Lista blanca exacta de hosts permitidos para abrir popups (sin coincidencias por subcadena)
+const POPUP_ALLOWED_HOSTS = new Set([
+  'accounts.google.com',
+  'accounts.spotify.com',
+  'www.youtube.com',
+  'youtube.com',
+  'm.youtube.com',
+  'open.spotify.com',
+]);
+
+function isPopupAllowedUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    return POPUP_ALLOWED_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch (_) {
+    return false;
+  }
+}
 
 // Patrones de red para el filtro "camaleón" (dominio exacto + subdominios)
 const AD_FILTER_PATTERNS = AD_HOSTS.flatMap((h) => [`*://${h}/*`, `*://*.${h}/*`]);
@@ -855,7 +872,7 @@ function createWindow() {
     if (isDiagnosticMode) {
       return { action: 'allow' };
     }
-    if (POPUP_ALLOW.test(url)) {
+    if (isPopupAllowedUrl(url)) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
@@ -872,30 +889,63 @@ function createWindow() {
         },
       };
     }
-    console.log('🛡️ [Anti-Popup] denegado:', url);
+    console.warn(`[popup-blocked] ${url}`);
     return { action: 'deny' };
   });
 
   // =========================================================================
-  // 5.1 CONTROL DE WEBVIEWS GUEST (PASO 2 - CENSURA)
+  // 5.1 CONTROL DE WEBVIEWS GUEST (will-attach-webview y did-attach-webview)
   // =========================================================================
+  const hardenWillAttachWebview = (event, webPreferences, params) => {
+    delete webPreferences.preload;
+    delete webPreferences.preloadURL;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+
+    const src = params && typeof params.src === 'string' ? params.src : '';
+    let validHttp = false;
+    try {
+      const parsed = new URL(src);
+      validHttp = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch (_) {
+      validHttp = false;
+    }
+    if (!validHttp) {
+      console.warn(`[webview-blocked] src no permitido: ${src}`);
+      event.preventDefault();
+    }
+  };
+
+  const configureGuestWebview = (contents) => {
+    if (!contents || contents.isDestroyed()) return;
+    const videoSes = session.fromPartition('persist:videosession', { cache: true });
+    const isVideoSession = contents.session === videoSes;
+
+    contents.setWindowOpenHandler(({ url }) => {
+      if (isVideoSession) {
+        console.warn(`[popup-blocked] ${url}`);
+        return { action: 'deny' };
+      }
+      if (isDiagnosticMode) return { action: 'allow' };
+      if (isPopupAllowedUrl(url)) {
+        return { action: 'allow' };
+      }
+      console.warn(`[popup-blocked] ${url}`);
+      return { action: 'deny' };
+    });
+  };
+
+  mainWindow.webContents.on('will-attach-webview', hardenWillAttachWebview);
+  mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
+    configureGuestWebview(guestContents);
+  });
+
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() === 'webview') {
-      contents.setWindowOpenHandler(({ url }) => {
-        if (isDiagnosticMode) return { action: 'allow' };
-        if (
-          POPUP_ALLOW.test(url) ||
-          url.includes('videasy') ||
-          url.includes('embed') ||
-          url.includes('tukiplay') ||
-          url.includes('vidlink') ||
-          url.includes('autoembed')
-        ) {
-          return { action: 'allow' };
-        }
-        console.log('🛡️ [Webview Anti-Popup] Bloqueado popup publicitario:', url);
-        return { action: 'deny' };
-      });
+      configureGuestWebview(contents);
     }
   });
 
@@ -911,18 +961,16 @@ function createPlayerWindow(url) {
       webviewTag: true,
     },
   });
+  playerWin.webContents.on('will-attach-webview', hardenWillAttachWebview);
+  playerWin.webContents.on('did-attach-webview', (_event, guestContents) => {
+    configureGuestWebview(guestContents);
+  });
   playerWin.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
     if (isDiagnosticMode) return { action: 'allow' };
-    if (
-      POPUP_ALLOW.test(targetUrl) ||
-      targetUrl.includes('videasy') ||
-      targetUrl.includes('embed') ||
-      targetUrl.includes('tukiplay') ||
-      targetUrl.includes('vidlink') ||
-      targetUrl.includes('autoembed')
-    ) {
+    if (isPopupAllowedUrl(targetUrl)) {
       return { action: 'allow' };
     }
+    console.warn(`[popup-blocked] ${targetUrl}`);
     return { action: 'deny' };
   });
   if (url) playerWin.loadURL(url);
