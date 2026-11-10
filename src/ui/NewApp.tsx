@@ -39,11 +39,14 @@ import { DualScreenSimulator } from '../components/DualScreenSimulator';
 import { ContinueWatchingRow } from '../components/ContinueWatchingRow';
 import { SportsMatchesTab } from '../components/SportsMatchesTab';
 import { SportsLiveGrid } from '../components/SportsLiveGrid';
+import { SpotifyHub } from '../components/SpotifyHub';
+import { YouTubeHub } from '../components/YouTubeHub';
+import { SPOTIFY_TRACKS } from '../data/spotifyCatalog';
+import { YOUTUBE_VIDEOS } from '../data/youtubeCatalog';
 import { AppRuntimeProvider, useAppRuntime, type HubType } from '../app/AppRuntime';
 import { toMediaItem } from '../app/toMediaItem';
 import type { AudioSettings, MediaItem, PlaybackSettings } from '../types';
 import { AppShell } from './AppShell';
-import { HubsHost } from './HubsHost';
 import { Hero } from './Hero';
 import { Row } from './Row';
 import { TitleCard } from './TitleCard';
@@ -1095,6 +1098,154 @@ const HubRouteSynchronizer: React.FC = () => {
   return null;
 };
 
+const SpotifyView: React.FC = () => {
+  const {
+    deviceRole,
+    connectedScreenName,
+    activeSpotifyTrack,
+    setActiveSpotifyTrack,
+    isSpotifyPlaying,
+    setIsSpotifyPlaying,
+    audioSettings,
+    sendRemoteCommand,
+    triggerNotification,
+  } = useAppRuntime();
+
+  return (
+    <SpotifyHub
+      currentTrack={activeSpotifyTrack}
+      isPlaying={isSpotifyPlaying}
+      volume={audioSettings.volume}
+      isMuted={audioSettings.isMuted}
+      isScreenMode={deviceRole !== 'remote'}
+      onSelectTrack={(track) => {
+        setActiveSpotifyTrack(track);
+        setIsSpotifyPlaying(true);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({
+            action: 'playSpotifyTrack',
+            payload: { track },
+          });
+          triggerNotification(`🎵 Enviado a ${connectedScreenName}: ${track.title}`);
+        }
+      }}
+      onTogglePlay={() => {
+        setIsSpotifyPlaying((p) => !p);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({ action: isSpotifyPlaying ? 'pause' : 'play' });
+        }
+      }}
+      onNextTrack={() => {
+        const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
+        const next = SPOTIFY_TRACKS[(idx + 1) % SPOTIFY_TRACKS.length]!;
+        setActiveSpotifyTrack(next);
+        setIsSpotifyPlaying(true);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: next } });
+        }
+      }}
+      onPrevTrack={() => {
+        const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
+        const prev =
+          SPOTIFY_TRACKS[(idx - 1 + SPOTIFY_TRACKS.length) % SPOTIFY_TRACKS.length]!;
+        setActiveSpotifyTrack(prev);
+        setIsSpotifyPlaying(true);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: prev } });
+        }
+      }}
+      onCastTrackToScreen={(track) => {
+        setActiveSpotifyTrack(track);
+        setIsSpotifyPlaying(true);
+        sendRemoteCommand({
+          action: 'playSpotifyTrack',
+          payload: { track },
+        });
+        triggerNotification(`🎵 Reproduciendo "${track.title}" en ${connectedScreenName}`);
+      }}
+      connectedScreenName={connectedScreenName}
+    />
+  );
+};
+
+const YouTubeView: React.FC = () => {
+  const {
+    deviceRole,
+    connectedScreenName,
+    activeYouTubeVideo,
+    setActiveYouTubeVideo,
+    isYouTubePlaying,
+    setIsYouTubePlaying,
+    audioSettings,
+    lastRemoteCommand,
+    sendRemoteCommand,
+    triggerNotification,
+  } = useAppRuntime();
+
+  return (
+    <YouTubeHub
+      currentVideo={activeYouTubeVideo}
+      isPlaying={isYouTubePlaying}
+      volume={audioSettings.volume}
+      isMuted={audioSettings.isMuted}
+      isScreenMode={deviceRole !== 'remote'}
+      remoteCommandTrigger={lastRemoteCommand}
+      onSelectVideo={(video) => {
+        setActiveYouTubeVideo(video);
+        setIsYouTubePlaying(true);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({
+            action: 'playYouTubeVideo',
+            payload: { video },
+          });
+          triggerNotification(`▶️ Enviado a ${connectedScreenName}: ${video.title}`);
+        }
+      }}
+      onTogglePlay={() => {
+        setIsYouTubePlaying((p) => !p);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({ action: isYouTubePlaying ? 'pause' : 'play' });
+        }
+      }}
+      onNextVideo={() => {
+        const idx = YOUTUBE_VIDEOS.findIndex((v) => v.id === activeYouTubeVideo?.id);
+        const next = YOUTUBE_VIDEOS[(idx + 1) % YOUTUBE_VIDEOS.length]!;
+        setActiveYouTubeVideo(next);
+        setIsYouTubePlaying(true);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({ action: 'playYouTubeVideo', payload: { video: next } });
+        }
+      }}
+      onPrevVideo={() => {
+        const idx = YOUTUBE_VIDEOS.findIndex((v) => v.id === activeYouTubeVideo?.id);
+        const prev =
+          YOUTUBE_VIDEOS[(idx - 1 + YOUTUBE_VIDEOS.length) % YOUTUBE_VIDEOS.length]!;
+        setActiveYouTubeVideo(prev);
+        setIsYouTubePlaying(true);
+        if (deviceRole === 'remote') {
+          sendRemoteCommand({ action: 'playYouTubeVideo', payload: { video: prev } });
+        }
+      }}
+      onSeekRelative={(seconds) => {
+        sendRemoteCommand({
+          action: 'seekRelative',
+          payload: { seconds },
+        });
+      }}
+      onCastVideoToScreen={(video) => {
+        setActiveYouTubeVideo(video);
+        setIsYouTubePlaying(true);
+        sendRemoteCommand({
+          action: 'playYouTubeVideo',
+          payload: { video },
+        });
+        triggerNotification(`📺 Reproduciendo "${video.title}" en ${connectedScreenName}`);
+      }}
+      connectedScreenName={connectedScreenName}
+    />
+  );
+};
+
 interface NewAppContentProps {
   onSwitchToClassic: () => void;
 }
@@ -1249,7 +1400,6 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             ) : undefined
           }
         >
-          <HubsHost />
           <Routes>
             <Route
               path="/"
@@ -1315,8 +1465,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                 </div>
               }
             />
-            <Route path="/musica" element={null} />
-            <Route path="/youtube" element={null} />
+            <Route path="/musica" element={<SpotifyView />} />
+            <Route path="/youtube" element={<YouTubeView />} />
             <Route
               path="/ajustes"
               element={<SettingsView onSwitchToClassic={onSwitchToClassic} />}
