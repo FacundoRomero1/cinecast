@@ -645,6 +645,15 @@ app.whenReady().then(async () => {
         pass: pass7,
         detail: `Cerrar con X: ${touchClose.ok ? 'OK' : touchClose.error} (hash: ${afterCloseHash}) | Reproducir: ${touchPlay.ok ? 'OK' : touchPlay.error} (hash: ${finalHash})`,
       });
+
+      // Asegurar que si el reproductor se abrió localmente, se cierre para continuar con las pruebas
+      await winB.webContents.executeJavaScript(`
+        (function() {
+          const btn = document.querySelector('button[title="Volver atrás"]');
+          if (btn) btn.click();
+        })()
+      `);
+      await wait(1000);
     }
   } catch (err) {
     results.push({ id: 7, name: 'Ficha - Reproducir y Cerrar', pass: false, detail: err.message });
@@ -740,6 +749,341 @@ app.whenReady().then(async () => {
     }
   } catch (err) {
     results.push({ id: 9, name: 'Pestaña activa en pantalla', pass: false, detail: err.message });
+  }
+
+  async function waitForCondition(win, expr, timeoutMs = 12000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const res = await win.webContents.executeJavaScript(expr);
+        if (res) return res;
+      } catch (_) {}
+      await wait(300);
+    }
+    return null;
+  }
+
+  // =========================================================================
+  // Caso (10a): Black Clover T2:E10 - Castear a PC
+  // =========================================================================
+  try {
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/titulo/anime/tmdb-tv-73223';`);
+    await waitForCondition(winB, `
+      (function() {
+        const selects = Array.from(document.querySelectorAll('select'));
+        return selects.some(s => Array.from(s.options).some(o => /temporada\\s*2/i.test(o.text) || o.value === '2'));
+      })()
+    `, 10000);
+
+    // Cambiar a Temporada 2 en el select de la ficha
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const selects = Array.from(document.querySelectorAll('select'));
+        const seasonSelect = selects.find(s => Array.from(s.options).some(o => /temporada\\s*2/i.test(o.text) || o.value === '2'));
+        if (seasonSelect) {
+          seasonSelect.value = '2';
+          seasonSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()
+    `);
+    
+    // Esperar a que se carguen los episodios de la temporada 2
+    await waitForCondition(winB, `
+      (function() {
+        const loading = document.body.innerText.includes('Cargando');
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        return !loading && rows.length >= 10;
+      })()
+    `, 10000);
+
+    // Centrar la fila del episodio 10
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        const ep10Row = rows.find(r => /E10:|Episodio 10/i.test(r.innerText || '')) || rows[9];
+        if (ep10Row && typeof ep10Row.scrollIntoView === 'function') {
+          ep10Row.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(600);
+
+    // Tocar "PC" en el episodio 10
+    const touchCastEp10 = await checkAndTouch(
+      winB,
+      `() => {
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        const ep10Row = rows.find(r => /E10:|Episodio 10/i.test(r.innerText || '')) || rows[9];
+        if (!ep10Row) return null;
+        const btns = Array.from(ep10Row.querySelectorAll('button'));
+        return btns.find(b => /PC/i.test(b.innerText || ''));
+      }`,
+      'botón PC en episodio 10 de Black Clover'
+    );
+
+    if (!touchCastEp10.ok) {
+      results.push({ id: '10a', name: 'Black Clover T2:E10 -> PC', pass: false, detail: touchCastEp10.error });
+    } else {
+      let pcPlayer = await waitForCondition(winA, `
+        (function() {
+          const selects = Array.from(document.querySelectorAll('select'));
+          const h2 = document.querySelector('h2');
+          if (selects.length >= 2 && h2 && selects[0].value === '2' && selects[1].value === '10') {
+            return {
+              seasonVal: selects[0].value,
+              episodeVal: selects[1].value,
+              title: h2.innerText || ''
+            };
+          }
+          return null;
+        })()
+      `, 8000);
+
+      if (!pcPlayer) {
+        pcPlayer = await winA.webContents.executeJavaScript(`
+          (function() {
+            const selects = Array.from(document.querySelectorAll('select'));
+            const h2 = document.querySelector('h2');
+            return {
+              seasonVal: selects[0] ? selects[0].value : null,
+              episodeVal: selects[1] ? selects[1].value : null,
+              title: h2 ? h2.innerText : ''
+            };
+          })()
+        `);
+      }
+
+      if (!pcPlayer || !pcPlayer.seasonVal) {
+        results.push({ id: '10a', name: 'Black Clover T2:E10 -> PC', pass: false, detail: 'VideoPlayer no montó en PC' });
+      } else {
+        const pass10a =
+          pcPlayer.seasonVal === '2' &&
+          pcPlayer.episodeVal === '10' &&
+          !pcPlayer.title.includes('1x01') &&
+          pcPlayer.title.includes('10');
+
+        results.push({
+          id: '10a',
+          name: 'Black Clover T2:E10 -> PC',
+          pass: pass10a,
+          detail: `PC VideoPlayer season=${pcPlayer.seasonVal} episode=${pcPlayer.episodeVal} title="${pcPlayer.title}"`,
+        });
+
+        // Cerrar VideoPlayer en PC
+        await winA.webContents.executeJavaScript(`
+          (function() {
+            const btn = document.querySelector('button[title="Volver atrás"]');
+            if (btn) btn.click();
+          })()
+        `);
+        await wait(1000);
+      }
+    }
+  } catch (err) {
+    results.push({ id: '10a', name: 'Black Clover T2:E10 -> PC', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (10b): Black Clover T2:E10 - Ver aquí en Celular
+  // =========================================================================
+  try {
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/titulo/anime/tmdb-tv-73223';`);
+    await waitForCondition(winB, `
+      (function() {
+        const selects = Array.from(document.querySelectorAll('select'));
+        return selects.some(s => Array.from(s.options).some(o => /temporada\\s*2/i.test(o.text) || o.value === '2'));
+      })()
+    `, 10000);
+
+    // Asegurar temporada 2
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const selects = Array.from(document.querySelectorAll('select'));
+        const seasonSelect = selects.find(s => Array.from(s.options).some(o => /temporada\\s*2/i.test(o.text) || o.value === '2'));
+        if (seasonSelect && seasonSelect.value !== '2') {
+          seasonSelect.value = '2';
+          seasonSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()
+    `);
+    
+    await waitForCondition(winB, `
+      (function() {
+        const loading = document.body.innerText.includes('Cargando');
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        return !loading && rows.length >= 10;
+      })()
+    `, 10000);
+
+    // Centrar la fila del episodio 10
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        const ep10Row = rows.find(r => /E10:|Episodio 10/i.test(r.innerText || '')) || rows[9];
+        if (ep10Row && typeof ep10Row.scrollIntoView === 'function') {
+          ep10Row.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(600);
+
+    // Tocar "Ver aquí" en el episodio 10
+    const touchPlayLocalEp10 = await checkAndTouch(
+      winB,
+      `() => {
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        const ep10Row = rows.find(r => /E10:|Episodio 10/i.test(r.innerText || '')) || rows[9];
+        if (!ep10Row) return null;
+        const btns = Array.from(ep10Row.querySelectorAll('button'));
+        return btns.find(b => /Ver aquí/i.test(b.innerText || ''));
+      }`,
+      'botón Ver aquí en episodio 10 de Black Clover'
+    );
+
+    if (!touchPlayLocalEp10.ok) {
+      results.push({ id: '10b', name: 'Black Clover T2:E10 -> Celular', pass: false, detail: touchPlayLocalEp10.error });
+    } else {
+      let mobilePlayer = await waitForCondition(winB, `
+        (function() {
+          const selects = Array.from(document.querySelectorAll('select'));
+          const h2 = document.querySelector('h2');
+          if (selects.length >= 2 && h2 && selects[0].value === '2' && selects[1].value === '10') {
+            return {
+              seasonVal: selects[0].value,
+              episodeVal: selects[1].value,
+              title: h2.innerText || ''
+            };
+          }
+          return null;
+        })()
+      `, 8000);
+
+      if (!mobilePlayer) {
+        mobilePlayer = await winB.webContents.executeJavaScript(`
+          (function() {
+            const selects = Array.from(document.querySelectorAll('select'));
+            const h2 = document.querySelector('h2');
+            return {
+              seasonVal: selects[0] ? selects[0].value : null,
+              episodeVal: selects[1] ? selects[1].value : null,
+              title: h2 ? h2.innerText : ''
+            };
+          })()
+        `);
+      }
+
+      if (!mobilePlayer || !mobilePlayer.seasonVal) {
+        results.push({ id: '10b', name: 'Black Clover T2:E10 -> Celular', pass: false, detail: 'VideoPlayer no montó en Celular' });
+      } else {
+        const pass10b =
+          mobilePlayer.seasonVal === '2' &&
+          mobilePlayer.episodeVal === '10' &&
+          !mobilePlayer.title.includes('1x01') &&
+          mobilePlayer.title.includes('10');
+
+        results.push({
+          id: '10b',
+          name: 'Black Clover T2:E10 -> Celular',
+          pass: pass10b,
+          detail: `Celular VideoPlayer season=${mobilePlayer.seasonVal} episode=${mobilePlayer.episodeVal} title="${mobilePlayer.title}"`,
+        });
+
+        // Cerrar VideoPlayer en Celular
+        await winB.webContents.executeJavaScript(`
+          (function() {
+            const btn = document.querySelector('button[title="Volver atrás"]');
+            if (btn) btn.click();
+          })()
+        `);
+        await wait(1000);
+      }
+    }
+  } catch (err) {
+    results.push({ id: '10b', name: 'Black Clover T2:E10 -> Celular', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (10c): Breaking Bad T1:E5 - Directo en PC
+  // =========================================================================
+  try {
+    // Despertar PC si sigue en AmbientScreen
+    await winA.webContents.executeJavaScript(`
+      (function() {
+        const wakeBtn = Array.from(document.querySelectorAll('button')).find(b => /Explorar|Despertar/i.test(b.innerText || ''));
+        if (wakeBtn) wakeBtn.click();
+      })()
+    `);
+    await wait(600);
+
+    await winA.webContents.executeJavaScript(`window.location.hash = '#/titulo/series/tmdb-tv-1396';`);
+    await waitForCondition(winA, `
+      (function() {
+        const loading = document.body.innerText.includes('Cargando');
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        return !loading && rows.length >= 5;
+      })()
+    `, 10000);
+
+    const playEp5PC = await winA.webContents.executeJavaScript(`
+      (function() {
+        const rows = Array.from(document.querySelectorAll('div[class*="rounded-2xl bg-zinc-950"]'));
+        const ep5Row = rows.find(r => /E5:|Episodio 5|Materia gris/i.test(r.innerText || '')) || rows[4];
+        if (!ep5Row) return { ok: false, error: 'Fila E5 no encontrada' };
+        const btn = Array.from(ep5Row.querySelectorAll('button')).find(b => /Ver aquí|Reproducir/i.test(b.innerText || '')) || ep5Row.querySelector('div[class*="cursor-pointer"]');
+        if (btn) {
+          btn.click();
+          return { ok: true };
+        }
+        return { ok: false, error: 'Botón play no encontrado en E5' };
+      })()
+    `);
+
+    if (!playEp5PC.ok) {
+      results.push({ id: '10c', name: 'Breaking Bad T1:E5 -> PC directo', pass: false, detail: playEp5PC.error });
+    } else {
+      const pcPlayerBB = await waitForCondition(winA, `
+        (function() {
+          const selects = Array.from(document.querySelectorAll('select'));
+          const h2 = document.querySelector('h2');
+          if (selects.length >= 2 && h2) {
+            return {
+              seasonVal: selects[0].value,
+              episodeVal: selects[1].value,
+              title: h2.innerText || ''
+            };
+          }
+          return null;
+        })()
+      `, 12000);
+
+      if (!pcPlayerBB) {
+        results.push({ id: '10c', name: 'Breaking Bad T1:E5 -> PC directo', pass: false, detail: 'VideoPlayer no montó en PC' });
+      } else {
+        const pass10c =
+          pcPlayerBB.seasonVal === '1' &&
+          pcPlayerBB.episodeVal === '5' &&
+          !pcPlayerBB.title.includes('1x01') &&
+          (pcPlayerBB.title.includes('5') || pcPlayerBB.title.includes('Materia gris'));
+
+        results.push({
+          id: '10c',
+          name: 'Breaking Bad T1:E5 -> PC directo',
+          pass: pass10c,
+          detail: `PC VideoPlayer season=${pcPlayerBB.seasonVal} episode=${pcPlayerBB.episodeVal} title="${pcPlayerBB.title}"`,
+        });
+
+        // Cerrar VideoPlayer en PC
+        await winA.webContents.executeJavaScript(`
+          (function() {
+            const btn = document.querySelector('button[title="Volver atrás"]');
+            if (btn) btn.click();
+          })()
+        `);
+        await wait(1000);
+      }
+    }
+  } catch (err) {
+    results.push({ id: '10c', name: 'Breaking Bad T1:E5 -> PC directo', pass: false, detail: err.message });
   }
 
   // =========================================================================

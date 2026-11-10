@@ -75,7 +75,7 @@ export interface AppRuntimeContextValue {
   setRemotePlaybackState: React.Dispatch<React.SetStateAction<PlaybackState>>;
   remoteMediaItem: MediaItem | null;
   remoteEpisodeItem: Episode | null;
-  handlePlayLocal: (media: MediaItem, episode?: Episode | null, initialTime?: number) => void;
+  handlePlayLocal: (media: MediaItem, episode?: Episode | null, initialTime?: number, forceLocal?: boolean) => void;
   handleCastMediaToScreen: (media: MediaItem, episode?: Episode) => void;
   handlePlayNextEpisode: () => void;
   handlePlayPrevEpisode: () => void;
@@ -433,10 +433,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     switch (cmd.action) {
       case 'playMedia': {
-        const { mediaId, episodeId } = cmd.payload || {};
-        const media = MEDIA_CATALOG.find((m) => m.id === mediaId);
+        const { mediaId, episodeId, seasonNumber, episodeNumber } = cmd.payload || {};
+        const media = MEDIA_CATALOG.find((m) => m.id === mediaId) || (activeMedia?.id === mediaId ? activeMedia : undefined);
         if (media) {
-          const episode = media.episodes?.find((e) => e.id === episodeId) || media.episodes?.[0] || null;
+          const sNum = Number(seasonNumber) || 1;
+          const eNum = Number(episodeNumber) || 1;
+          const episode = (seasonNumber && episodeNumber
+            ? media.episodes?.find((e) => (e.seasonNumber || 1) === sNum && e.episodeNumber === eNum)
+            : null) || media.episodes?.find((e) => e.id === episodeId) || media.episodes?.[0] || null;
           setActiveMedia(media);
           setActiveEpisode(episode);
           setActiveHub('cinecast');
@@ -452,19 +456,34 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'playDiscoveredMovie': {
-        const mediaItem: MediaItem | undefined = cmd.payload;
+        const payload = cmd.payload || {};
+        const mediaItem: MediaItem | undefined = payload;
         if (mediaItem) {
+          const sNum = Number(payload.seasonNumber ?? payload.episode?.seasonNumber ?? payload.selectedEpisode?.seasonNumber ?? 1) || 1;
+          const eNum = Number(payload.episodeNumber ?? payload.episode?.episodeNumber ?? payload.selectedEpisode?.episodeNumber ?? 1) || 1;
+          const ep: Episode | null = payload.episode || payload.selectedEpisode || (
+            (payload.seasonNumber || payload.episodeNumber) ? {
+              id: `ep-${mediaItem.id}-s${sNum}-e${eNum}`,
+              title: payload.episodeTitle || `Episodio ${eNum}`,
+              seasonNumber: sNum,
+              episodeNumber: eNum,
+              overview: `Temporada ${sNum}, Episodio ${eNum}`,
+              duration: '24m',
+            } : null
+          ) || mediaItem.episodes?.find((e) => (e.seasonNumber || 1) === sNum && e.episodeNumber === eNum) || mediaItem.episodes?.[0] || null;
+
           if (!mediaItem.servers || mediaItem.servers.length === 0) {
             mediaItem.servers = generateServersForMedia({
               tmdbId: mediaItem.tmdbId,
               directMp4Url: mediaItem.videoUrl,
               type: mediaItem.category === 'live_tv' ? 'live_tv' : mediaItem.type === 'series' ? 'series' : 'movie',
+              season: ep?.seasonNumber || sNum,
+              episode: ep?.episodeNumber || eNum,
             });
             if (!mediaItem.videoUrl && mediaItem.servers.length > 0) {
               mediaItem.videoUrl = mediaItem.servers[0].url;
             }
           }
-          const ep = mediaItem.episodes?.[0] || null;
           setActiveMedia(mediaItem);
           setActiveEpisode(ep);
           setActiveHub('cinecast');
@@ -483,6 +502,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             mediaTitle: mediaItem.title,
             mediaPoster: mediaItem.posterUrl,
             mediaYear: mediaItem.year,
+            seasonNumber: ep?.seasonNumber || sNum,
+            episodeNumber: ep?.episodeNumber || eNum,
+            episodeTitle: ep?.title || '',
             mediaItem: mediaItem,
             episodeItem: ep || undefined,
             isPlaying: true,
@@ -974,7 +996,27 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // COPIA de App.tsx L928-1064; borrar al eliminar la UI clásica
   // User taps "Transmitir a PC" on a movie/episode
   const handleCastMediaToScreen = (media: MediaItem, episode?: Episode) => {
-    const targetEp = episode || media.episodes?.[0] || null;
+    const rawEp = episode || media.episodes?.[0] || null;
+    const targetEp: Episode | null = rawEp
+      ? {
+          ...rawEp,
+          seasonNumber:
+            Number(
+              rawEp.seasonNumber ??
+                (rawEp as any).season ??
+                (rawEp as any).season_number ??
+                1
+            ) || 1,
+          episodeNumber:
+            Number(
+              rawEp.episodeNumber ??
+                (rawEp as any).episode ??
+                (rawEp as any).episode_number ??
+                1
+            ) || 1,
+        }
+      : null;
+
     setActiveMedia(media);
     setActiveEpisode(targetEp);
 
@@ -997,20 +1039,51 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     deviceSync.sendCommand({
       action: 'playDiscoveredMovie',
-      payload: media,
+      payload: {
+        ...media,
+        episode: targetEp || undefined,
+        selectedEpisode: targetEp || undefined,
+        seasonNumber: targetEp?.seasonNumber || 1,
+        episodeNumber: targetEp?.episodeNumber || 1,
+        episodeTitle: targetEp?.title || '',
+      },
     });
 
     triggerNotification(`📱 Reproduciendo ${media.title} en ${connectedScreenName}...`);
   };
 
   // Local Play (or automatically Cast if user is on their phone in remote mode!)
-  const handlePlayLocal = (media: MediaItem, episode?: Episode | null, initialTime?: number) => {
-    if (deviceRole === 'remote') {
+  const handlePlayLocal = (
+    media: MediaItem,
+    episode?: Episode | null,
+    initialTime?: number,
+    forceLocal: boolean = false
+  ) => {
+    if (deviceRole === 'remote' && !forceLocal) {
       handleCastMediaToScreen(media, episode || undefined);
       return;
     }
     setActiveMedia(media);
-    const ep = episode || media.episodes?.[0] || null;
+    const rawEp = episode || media.episodes?.[0] || null;
+    const ep: Episode | null = rawEp
+      ? {
+          ...rawEp,
+          seasonNumber:
+            Number(
+              rawEp.seasonNumber ??
+                (rawEp as any).season ??
+                (rawEp as any).season_number ??
+                1
+            ) || 1,
+          episodeNumber:
+            Number(
+              rawEp.episodeNumber ??
+                (rawEp as any).episode ??
+                (rawEp as any).episode_number ??
+                1
+            ) || 1,
+        }
+      : null;
     setActiveEpisode(ep);
     setPlayerInitialTime(initialTime || 0);
     setIsPlayingLocally(true);

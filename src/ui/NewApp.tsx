@@ -890,8 +890,50 @@ const TitleDetailRouteView: React.FC = () => {
     <DetailModal
       media={media}
       onClose={() => navigate(-1)}
-      onPlayLocal={(m, ep) => handlePlayLocal(m, ep)}
-      onCastToScreen={(m, ep) => handleCastMediaToScreen(m, ep)}
+      onPlayLocal={(m, ep) => {
+        const enrichedEp = ep
+          ? {
+              ...ep,
+              seasonNumber:
+                Number(
+                  ep.seasonNumber ??
+                    (ep as any).season ??
+                    (ep as any).season_number ??
+                    1
+                ) || 1,
+              episodeNumber:
+                Number(
+                  ep.episodeNumber ??
+                    (ep as any).episode ??
+                    (ep as any).episode_number ??
+                    1
+                ) || 1,
+            }
+          : undefined;
+        handlePlayLocal(m, enrichedEp, 0, true);
+      }}
+      onCastToScreen={(m, ep) => {
+        const enrichedEp = ep
+          ? {
+              ...ep,
+              seasonNumber:
+                Number(
+                  ep.seasonNumber ??
+                    (ep as any).season ??
+                    (ep as any).season_number ??
+                    1
+                ) || 1,
+              episodeNumber:
+                Number(
+                  ep.episodeNumber ??
+                    (ep as any).episode ??
+                    (ep as any).episode_number ??
+                    1
+                ) || 1,
+            }
+          : undefined;
+        handleCastMediaToScreen(m, enrichedEp);
+      }}
       isMyList={Boolean(media && myListIds.includes(media.id))}
       onToggleMyList={(mediaId) => toggleMyList(mediaId)}
       connectedScreenName={connectedScreenName}
@@ -1465,7 +1507,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             </button>
           </div>
         </div>
-      ) : isPlayingLocally && activeMedia && activeHub === 'cinecast' && deviceRole !== 'remote' ? (
+      ) : isPlayingLocally && activeMedia && activeHub === 'cinecast' ? (
         /* 9. Reproductor a pantalla completa sobre todo con las props de App.tsx L1158-1188 */
         <VideoPlayer
           key={`${activeMedia.id}_s${activeEpisode?.seasonNumber || 1}_e${activeEpisode?.episodeNumber || 1}`}
