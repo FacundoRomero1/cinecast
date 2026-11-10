@@ -48,7 +48,6 @@ if (!gotSingleInstanceLock) {
 // Flags de Chromium para reproducción multimedia confiable
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-site-isolation-trials');
-app.commandLine.appendSwitch('allow-running-insecure-content');
 app.commandLine.appendSwitch('allow-insecure-localhost');
 app.commandLine.appendSwitch('disable-features', 'PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies,BlockInsecurePrivateNetworkRequests');
 app.commandLine.appendSwitch('disable-webrtc');
@@ -800,7 +799,6 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
-      allowRunningInsecureContent: true,
       webviewTag: true,
       spellcheck: false,
     },
@@ -884,7 +882,6 @@ function createWindow() {
             partition: 'persist:cinecast-session',
             nodeIntegration: false,
             contextIsolation: true,
-            webSecurity: false,
           },
         },
       };
