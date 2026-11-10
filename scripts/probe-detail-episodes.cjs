@@ -126,3 +126,4 @@ app.whenReady().then(async () => {
   app.quit();
   process.exit(allPassed ? 0 : 1);
 });
+
