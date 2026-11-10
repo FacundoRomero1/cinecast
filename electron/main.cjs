@@ -1018,14 +1018,21 @@ function createPlayerWindow(url) {
   // =========================================================================
   const port = process.env.PORT || 3000;
   const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+  const uiArg = process.argv.includes('--ui=nuevo')
+    ? 'nuevo'
+    : process.argv.includes('--ui=clasico')
+    ? 'clasico'
+    : null;
+  const startUrl = `http://localhost:${port}/?role=screen${uiArg ? `&ui=${uiArg}` : ''}`;
+  const fileQuery = uiArg ? { role: 'screen', ui: uiArg } : { role: 'screen' };
 
   // Cargar siempre vía servidor HTTP local (0.0.0.0:3000) para habilitar WebSocket nativo,
   // con fallback automático a loadFile si aún no estuviera escuchando
-  mainWindow.loadURL(`http://localhost:${port}/?role=screen`).catch(() => {
+  mainWindow.loadURL(startUrl).catch(() => {
     setTimeout(() => {
-      mainWindow?.loadURL(`http://localhost:${port}/?role=screen`).catch(() => {
+      mainWindow?.loadURL(startUrl).catch(() => {
         console.log('[Electron] Cargando index.html local directo como fallback');
-        mainWindow?.loadFile(indexPath, { query: { role: 'screen' } });
+        mainWindow?.loadFile(indexPath, { query: fileQuery });
       });
     }, 1000);
   });
