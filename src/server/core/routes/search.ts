@@ -36,6 +36,71 @@ interface TmdbSearchEndpointResponse {
   results?: TmdbSearchResultEntry[];
 }
 
+export function getMediaKind(item: {
+  type?: string;
+  category?: string;
+  mediaType?: string;
+}): 'series' | 'movie' {
+  if (
+    item.type === 'series' ||
+    item.category === 'series' ||
+    item.category === 'anime' ||
+    item.mediaType === 'tv'
+  ) {
+    return 'series';
+  }
+  return 'movie';
+}
+
+export function deduplicateSearchResults<T extends SearchableMediaItem>(items: T[]): T[] {
+  const result: T[] = [];
+  const seenByKindAndTmdb = new Map<string, number>();
+  const seenById = new Map<string, number>();
+
+  for (const item of items) {
+    const kind = getMediaKind(item);
+    const tmdbId = typeof item.tmdbId === 'number' && item.tmdbId > 0 ? item.tmdbId : null;
+    const tmdbKey = tmdbId ? `${kind}:tmdb:${tmdbId}` : null;
+    const idKey = item.id ? `id:${item.id}` : null;
+
+    const isLocal = !item.notInCatalog;
+
+    let existingIdx = -1;
+    if (tmdbKey && seenByKindAndTmdb.has(tmdbKey)) {
+      existingIdx = seenByKindAndTmdb.get(tmdbKey)!;
+    } else if (idKey && seenById.has(idKey)) {
+      existingIdx = seenById.get(idKey)!;
+    }
+
+    if (existingIdx === -1) {
+      const newIdx = result.length;
+      result.push(item);
+      if (tmdbKey) seenByKindAndTmdb.set(tmdbKey, newIdx);
+      if (idKey) seenById.set(idKey, newIdx);
+    } else {
+      const existing = result[existingIdx];
+      const existingIsLocal = !existing.notInCatalog;
+
+      // Preferir ítem del catálogo local frente a TMDB
+      if (!existingIsLocal && isLocal) {
+        result[existingIdx] = {
+          ...item,
+          servers:
+            existing.servers && existing.servers.length > (item.servers?.length || 0)
+              ? existing.servers
+              : item.servers,
+        };
+      } else if (existingIsLocal && !isLocal) {
+        if ((!existing.servers || existing.servers.length === 0) && item.servers) {
+          result[existingIdx] = { ...existing, servers: item.servers };
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 export function createSearchRouter(options: SearchOptions): Router {
   const router = Router();
   const baseDir = options.baseDir || process.cwd();
@@ -156,7 +221,8 @@ export function createSearchRouter(options: SearchOptions): Router {
 
     // Deduplicar respetando idioma latino y aplicar scoring estricto
     const combinedRaw: SearchableMediaItem[] = [...localMatches, ...tmdbRawItems];
-    const ranked = rankAndDeduplicateItems(combinedRaw, rawQ, corrected || '');
+    const deduplicated = deduplicateSearchResults(combinedRaw);
+    const ranked = rankAndDeduplicateItems(deduplicated, rawQ, corrected || '');
     const itemsSlice = ranked.slice(0, 30);
 
     res.setHeader('Cache-Control', 'public, max-age=60');

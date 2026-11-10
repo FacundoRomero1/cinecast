@@ -6,6 +6,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  useSearchParams,
 } from 'react-router-dom';
 import { VirtuosoGrid } from 'react-virtuoso';
 import QRCode from 'qrcode';
@@ -22,7 +23,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import { localCatalogProvider } from '../providers/localCatalogProvider';
-import type { CardItem, GenreCountItem, HomeRow } from '../providers/types';
+import type { CardItem, CatalogSortOption, GenreCountItem, HomeRow } from '../providers/types';
 import { watchHistoryService } from '../services/watchHistoryService';
 import { deviceSync } from '../services/deviceSync';
 import { diagnosticService } from '../services/diagnosticService';
@@ -231,13 +232,86 @@ const ExploreView: React.FC<ExploreViewProps> = ({
   onCastItem,
 }) => {
   const { connectedScreenName } = useAppRuntime();
-  const [filters, setFilters] = useState<FilterState>({
-    category: 'all',
-    genres: [],
-    decade: null,
-    minRating: 0,
-    sort: 'default',
-  });
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Restaurar estado inicial desde searchParams de la URL
+  const initialFilters = useMemo<FilterState>(() => {
+    const typeParam = searchParams.get('type') || 'all';
+    const genreParam = searchParams.get('genre');
+    const genres = genreParam
+      ? genreParam
+          .split(',')
+          .map((g) => g.trim())
+          .filter(Boolean)
+      : [];
+    const yearFromParam = searchParams.get('yearFrom');
+    const decade = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
+    const ratingParam = searchParams.get('rating');
+    const minRating = ratingParam ? parseFloat(ratingParam) || 0 : 0;
+    const sortParam = (searchParams.get('sort') || 'default') as CatalogSortOption;
+
+    return {
+      category: typeParam,
+      genres,
+      decade,
+      minRating,
+      sort: sortParam,
+    };
+  }, []);
+
+  const [filters, setFilters] = useState<FilterState>(initialFilters);
+
+  // Sincronizar cambios en los filtros con los parámetros de la URL usando replace: true
+  const updateFilters = useCallback(
+    (next: FilterState) => {
+      setFilters(next);
+      const params: Record<string, string> = {};
+      if (next.category && next.category !== 'all') params.type = next.category;
+      if (next.genres && next.genres.length > 0) params.genre = next.genres.join(',');
+      if (next.decade !== null && next.decade !== undefined) {
+        params.yearFrom = String(next.decade);
+        params.yearTo = String(next.decade + 9);
+      }
+      if (next.minRating > 0) params.rating = String(next.minRating);
+      if (next.sort && next.sort !== 'default') params.sort = next.sort;
+
+      setSearchParams(params, { replace: true });
+    },
+    [setSearchParams]
+  );
+
+  // Sincronizar desde la URL hacia los filtros si el usuario navega atrás/adelante
+  useEffect(() => {
+    const typeParam = searchParams.get('type') || 'all';
+    const genreParam = searchParams.get('genre');
+    const nextGenres = genreParam
+      ? genreParam
+          .split(',')
+          .map((g) => g.trim())
+          .filter(Boolean)
+      : [];
+    const yearFromParam = searchParams.get('yearFrom');
+    const nextDecade = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
+    const ratingParam = searchParams.get('rating');
+    const nextRating = ratingParam ? parseFloat(ratingParam) || 0 : 0;
+    const sortParam = (searchParams.get('sort') || 'default') as CatalogSortOption;
+
+    setFilters((prev) => {
+      const sameType = prev.category === typeParam;
+      const sameGenres = JSON.stringify(prev.genres) === JSON.stringify(nextGenres);
+      const sameDecade = prev.decade === nextDecade;
+      const sameRating = prev.minRating === nextRating;
+      const sameSort = prev.sort === sortParam;
+      if (sameType && sameGenres && sameDecade && sameRating && sameSort) return prev;
+      return {
+        category: typeParam,
+        genres: nextGenres,
+        decade: nextDecade,
+        minRating: nextRating,
+        sort: sortParam,
+      };
+    });
+  }, [searchParams]);
 
   const [items, setItems] = useState<CardItem[]>([]);
   const [total, setTotal] = useState<number>(0);
@@ -334,7 +408,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
 
       <FilterBar
         value={filters}
-        onChange={setFilters}
+        onChange={updateFilters}
         availableGenres={facetGenres}
         totalResults={total}
       />
@@ -395,17 +469,39 @@ const SearchView: React.FC<SearchViewProps> = ({
   onCastItem,
 }) => {
   const { connectedScreenName } = useAppRuntime();
-  const [query, setQuery] = useState<string>('');
-  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialQ = searchParams.get('q') || '';
+  const [query, setQuery] = useState<string>(initialQ);
+  const [debouncedQuery, setDebouncedQuery] = useState<string>(initialQ.trim());
   const [results, setResults] = useState<CardItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
+  // Sincronizar hacia useSearchParams con debounce y replace: true
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedQuery(query.trim());
+      const trimmed = query.trim();
+      setDebouncedQuery(trimmed);
+
+      const currentQ = searchParams.get('q') || '';
+      if (trimmed !== currentQ) {
+        if (trimmed.length > 0) {
+          setSearchParams({ q: trimmed }, { replace: true });
+        } else {
+          setSearchParams({}, { replace: true });
+        }
+      }
     }, 300);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, searchParams, setSearchParams]);
+
+  // Restaurar estado si searchParams cambia por navegación en historial
+  useEffect(() => {
+    const qFromUrl = searchParams.get('q') || '';
+    if (qFromUrl !== query) {
+      setQuery(qFromUrl);
+      setDebouncedQuery(qFromUrl.trim());
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (debouncedQuery.length < 2) {

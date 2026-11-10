@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { buildSync } from 'esbuild';
 
 const require = createRequire(import.meta.url);
 const { createApp } = require('../electron/core.cjs');
@@ -228,7 +229,89 @@ try {
     `[Prueba h] /api/catalog?ids=a,desconocido,b&fields=card devuelve ítems en card e ignora desconocidos: ${passH ? 'PASA' : 'FALLA'} (pedidos=3 [2 reales + 1 desconocido], devueltos=${idsItems.length}, ids=[${idsItems.map((i) => i.id).join(', ')}])`
   );
 
-  if (!(passA && passB && passC && hasFacets && passE && passF && passG && passH)) {
+  // (i) deduplicateSearchResults (función de unificación aislada con datos fijos)
+  const searchCompiled = buildSync({
+    entryPoints: [path.join(rootDir, 'src/server/core/routes/search.ts')],
+    write: false,
+    format: 'cjs',
+    target: 'node22',
+    platform: 'node',
+    bundle: true,
+    external: ['express'],
+  });
+  const searchMod = { exports: {} };
+  const searchFn = new Function('module', 'exports', 'require', searchCompiled.outputFiles[0].text);
+  searchFn(searchMod, searchMod.exports, require);
+  const { deduplicateSearchResults, getMediaKind } = searchMod.exports;
+
+  // Caso 1: Mismo tmdbId y mismo tipo (series/anime) -> debe quedar 1 solo, prefiriendo catálogo local
+  const mockDuplicatedSeries = [
+    {
+      id: 'tmdb-series-73223',
+      tmdbId: 73223,
+      title: 'Black Clover',
+      category: 'series',
+      type: 'series',
+      notInCatalog: true,
+      servers: [{ name: 'Vidsrc', url: 'https://vidsrc.cc' }],
+    },
+    {
+      id: 'tmdb-anime-73223',
+      tmdbId: 73223,
+      title: 'Black Clover',
+      category: 'anime',
+      type: 'series',
+      notInCatalog: false,
+      servers: [{ name: 'TukiPlay', url: 'https://tukiplay.com' }],
+    },
+  ];
+  const dedupSeries = deduplicateSearchResults(mockDuplicatedSeries);
+  const passI1 =
+    dedupSeries.length === 1 &&
+    dedupSeries[0].id === 'tmdb-anime-73223' &&
+    dedupSeries[0].notInCatalog === false;
+
+  // Caso 2: Mismo tmdbId pero tipos distintos (película vs serie/anime) -> NO deben unificarse
+  const mockDifferentTypes = [
+    {
+      id: 'tmdb-anime-812225',
+      tmdbId: 812225,
+      title: 'Black Clover: La espada del rey mago',
+      category: 'anime',
+      type: 'series',
+      notInCatalog: false,
+    },
+    {
+      id: 'tmdb-movie-812225',
+      tmdbId: 812225,
+      title: 'Black Clover: La espada del rey mago',
+      category: 'movie',
+      type: 'movie',
+      notInCatalog: true,
+    },
+  ];
+  const dedupDiffTypes = deduplicateSearchResults(mockDifferentTypes);
+  const passI2 =
+    dedupDiffTypes.length === 2 &&
+    dedupDiffTypes.some((i) => getMediaKind(i) === 'series') &&
+    dedupDiffTypes.some((i) => getMediaKind(i) === 'movie');
+
+  // Caso 3: Mismo id duplicado -> debe deduplicarse
+  const mockSameId = [
+    { id: 'custom-123', title: 'Test 1', notInCatalog: true },
+    { id: 'custom-123', title: 'Test 1 Local', notInCatalog: false },
+  ];
+  const dedupSameId = deduplicateSearchResults(mockSameId);
+  const passI3 =
+    dedupSameId.length === 1 &&
+    dedupSameId[0].title === 'Test 1 Local';
+
+  const passI = passI1 && passI2 && passI3;
+  console.log(
+    `[Prueba i] deduplicateSearchResults (unificación aislada): ${passI ? 'PASA' : 'FALLA'} (caso 1 series/anime local preferido=${passI1}, caso 2 tipos distintos preservados=${passI2}, caso 3 id idéntico=${passI3})`
+  );
+
+  if (!(passA && passB && passC && hasFacets && passE && passF && passG && passH && passI)) {
     process.exitCode = 1;
   }
 } finally {
