@@ -27,16 +27,23 @@ function resolveInitialUiV2Flag(): boolean {
     const params = new URLSearchParams(window.location.search);
     const uiParam = params.get('ui');
     if (uiParam === 'nuevo') {
-      localStorage.setItem('cinecast_ui_v2', '1');
+      localStorage.removeItem('cinecast_ui_v2');
       return true;
     }
     if (uiParam === 'clasico') {
-      localStorage.removeItem('cinecast_ui_v2');
+      localStorage.setItem('cinecast_ui_v2', '0');
       return false;
     }
-    return localStorage.getItem('cinecast_ui_v2') === '1';
+    const saved = localStorage.getItem('cinecast_ui_v2');
+    if (saved === '0') {
+      return false;
+    }
+    if (saved === '1') {
+      return true;
+    }
+    return true;
   } catch (_) {
-    return false;
+    return true;
   }
 }
 
@@ -48,7 +55,7 @@ const RootContainer: React.FC = () => {
       <NewApp
         onDisableV2={() => {
           try {
-            localStorage.removeItem('cinecast_ui_v2');
+            localStorage.setItem('cinecast_ui_v2', '0');
           } catch (_) {}
           setUseV2(false);
         }}

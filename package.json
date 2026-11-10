@@ -22,6 +22,7 @@
     "check:providers": "node scripts/check-providers.mjs",
     "build:win": "npm run build && electron-builder --win --dir",
     "build:installer": "npm run build && electron-builder --win nsis",
+    "app": "npm run build:core && vite build && electron electron/main.cjs",
     "app:nuevo": "npm run build:core && vite build && electron electron/main.cjs --ui=nuevo",
     "app:clasico": "npm run build:core && vite build && electron electron/main.cjs --ui=clasico"
   },

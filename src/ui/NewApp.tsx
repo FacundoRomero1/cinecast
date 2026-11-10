@@ -1393,7 +1393,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
 export const NewApp: React.FC<NewAppProps> = ({ onDisableV2 }) => {
   const handleSwitchToClassic = useCallback(() => {
     try {
-      localStorage.removeItem('cinecast_ui_v2');
+      localStorage.setItem('cinecast_ui_v2', '0');
     } catch (_) {}
     if (onDisableV2) {
       onDisableV2();
