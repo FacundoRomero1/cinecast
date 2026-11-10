@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, shell, webContents, protocol, safeStorage } = require('electron');
+const { app, BrowserWindow, session, ipcMain, shell, webContents, protocol, safeStorage, components } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { createApp, attachWebSocket, getLocalIpAddress } = require('./core.cjs');
@@ -1731,8 +1731,20 @@ function hardenSession(ses, permitidos) {
 }
 
 // Ciclo de vida de la aplicación
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
+
+  if (components?.whenReady) {
+    try {
+      await Promise.race([
+        components.whenReady(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Widevine timeout (20s)')), 20000)),
+      ]);
+      console.log('[widevine]', JSON.stringify(components.status()));
+    } catch (err) {
+      console.warn('[widevine] Error o tiempo agotado esperando components.whenReady():', err?.message || err);
+    }
+  }
 
   // Endurecer permisos de todas las sesiones antes de crear ventanas
   const basePerms = new Set(['fullscreen', 'clipboard-sanitized-write']);
