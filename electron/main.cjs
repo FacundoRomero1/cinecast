@@ -1596,9 +1596,58 @@ ipcMain.handle('get-no-cors-fix', () => {
   return isNoCorsFix;
 });
 
+// Endurecimiento de permisos por sesión (denegar por defecto salvo lista blanca explícita)
+const loggedPermDenied = new Set();
+
+function hardenSession(ses, permitidos) {
+  if (!ses) return;
+  const allowedSet = permitidos instanceof Set ? permitidos : new Set(permitidos || []);
+  const logDenied = (permiso, rawOrigin) => {
+    let origin = rawOrigin || 'unknown';
+    try {
+      if (origin && origin.startsWith('http')) {
+        origin = new URL(origin).origin;
+      }
+    } catch (_) {}
+    const key = `${permiso}|${origin}`;
+    if (!loggedPermDenied.has(key)) {
+      loggedPermDenied.add(key);
+      console.warn(`[perm-denied] ${permiso} ${origin}`);
+    }
+  };
+
+  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+    if (allowedSet.has(permission)) {
+      callback(true);
+      return;
+    }
+    const rawOrigin = details?.requestingUrl || (wc && !wc.isDestroyed() ? wc.getURL() : '') || 'unknown';
+    logDenied(permission, rawOrigin);
+    callback(false);
+  });
+
+  ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+    if (allowedSet.has(permission)) {
+      return true;
+    }
+    const rawOrigin = requestingOrigin || details?.securityOrigin || (wc && !wc.isDestroyed() ? wc.getURL() : '') || 'unknown';
+    logDenied(permission, rawOrigin);
+    return false;
+  });
+}
+
 // Ciclo de vida de la aplicación
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return;
+
+  // Endurecer permisos de todas las sesiones antes de crear ventanas
+  const basePerms = new Set(['fullscreen', 'clipboard-sanitized-write']);
+  const spotifyPerms = new Set(['fullscreen', 'clipboard-sanitized-write', 'protected-media-identifier']);
+  hardenSession(session.defaultSession, basePerms);
+  hardenSession(session.fromPartition('persist:cinecast-session', { cache: true }), basePerms);
+  hardenSession(session.fromPartition('persist:videosession', { cache: true }), basePerms);
+  hardenSession(session.fromPartition('persist:youtube-tv', { cache: true }), basePerms);
+  hardenSession(session.fromPartition('persist:spotify', { cache: true }), spotifyPerms);
 
   // 0. userData debe ser escribible (cache/quota/cookies viven ahí)
   try {
