@@ -1030,15 +1030,23 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setActiveMedia(media);
     setActiveEpisode(targetEp);
 
+    const effectiveTmdbId =
+      media.tmdbId ||
+      (typeof media.id === 'string' && /^\d+$/.test(media.id)
+        ? Number(media.id)
+        : typeof media.id === 'string' && media.id.includes('-')
+        ? Number(media.id.split('-').pop()) || 0
+        : 0);
+
     const srvs =
       media.servers && media.servers.length > 0
         ? media.servers
         : generateServersForMedia({
-            tmdbId: media.tmdbId,
+            tmdbId: effectiveTmdbId,
             type:
               media.category === 'live_tv'
                 ? 'live_tv'
-                : media.type === 'series'
+                : media.type === 'series' || media.category === 'anime' || media.category === 'series'
                 ? 'series'
                 : 'movie',
             season: targetEp?.seasonNumber || 1,

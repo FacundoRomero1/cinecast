@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Cast,
   ChevronDown,
@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import type { Episode, MediaItem, PlaybackState, RemoteCommand } from '../types';
 import { createStyledPosterFallback } from '../utils/imageUtils';
+import { deviceSync } from '../services/deviceSync';
+import { generateServersForMedia } from '../services/embedService';
 
 export interface RemotePanelProps {
   playbackState?: PlaybackState | null;
@@ -112,15 +114,191 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   const activeServerIdx = playbackState?.activeServerIndex ?? 0;
   const serversExhausted = Boolean(playbackState?.serversExhausted);
 
-  const episodesList =
-    playbackState?.playbackMeta?.episodes ||
-    (currentMedia?.episodes
-      ? currentMedia.episodes.map((e) => ({
-          season: e.seasonNumber || 1,
+  // Detección de contenido episódico y TMDB ID
+  const rawId = playbackState?.mediaId || currentMedia?.id || '';
+  const tmdbId =
+    currentMedia?.tmdbId ||
+    playbackState?.mediaItem?.tmdbId ||
+    (typeof rawId === 'string' && /^\d+$/.test(rawId)
+      ? Number(rawId)
+      : typeof rawId === 'string' && rawId.includes('-')
+      ? Number(rawId.split('-').pop()) || 0
+      : 0);
+
+  const fallbackServers = useMemo(() => {
+    if (serversList.length > 0) return serversList;
+    if (tmdbId > 0) {
+      return generateServersForMedia({
+        tmdbId,
+        type:
+          currentMedia?.type === 'series' ||
+          (currentMedia?.type as any) === 'anime' ||
+          currentMedia?.category === 'anime' ||
+          currentMedia?.category === 'series'
+            ? 'series'
+            : 'movie',
+        season: seasonNum || 1,
+        episode: episodeNum || 1,
+      }).map((s) => ({ name: s.name, language: s.language }));
+    }
+    return [];
+  }, [serversList, tmdbId, currentMedia?.type, currentMedia?.category, seasonNum, episodeNum]);
+
+  const effectiveServersList = serversList.length > 0 ? serversList : fallbackServers;
+
+  const isEpisodic = Boolean(
+    seasonNum ||
+    currentEpisode?.seasonNumber ||
+    currentMedia?.type === 'series' ||
+    (currentMedia?.type as any) === 'anime' ||
+    currentMedia?.category === 'series' ||
+    currentMedia?.category === 'anime' ||
+    (currentMedia?.seasons && currentMedia.seasons.length > 0) ||
+    (currentMedia?.episodes && currentMedia.episodes.length > 0) ||
+    (playbackState?.playbackMeta && (playbackState.playbackMeta.totalSeasons ?? 0) > 0)
+  );
+
+  const [seasons, setSeasons] = useState<Array<{ seasonNumber: number; name: string }>>(() => {
+    if (currentMedia?.seasons && currentMedia.seasons.length > 0) {
+      return currentMedia.seasons.map((s) => ({
+        seasonNumber: s.seasonNumber,
+        name: s.title || `Temporada ${s.seasonNumber}`,
+      }));
+    }
+    const total = playbackState?.playbackMeta?.totalSeasons;
+    if (total && total > 0) {
+      return Array.from({ length: total }, (_, i) => ({
+        seasonNumber: i + 1,
+        name: `Temporada ${i + 1}`,
+      }));
+    }
+    return [];
+  });
+
+  const [selectedSeason, setSelectedSeason] = useState<number>(seasonNum || 1);
+  const [episodes, setEpisodes] = useState<
+    Array<{ season: number; episode: number; title: string; duration?: string }>
+  >([]);
+  const [isLoadingEpisodes, setIsLoadingEpisodes] = useState<boolean>(false);
+  const [episodesError, setEpisodesError] = useState<string | null>(null);
+  const episodesCacheRef = useRef<
+    Record<number, Array<{ season: number; episode: number; title: string; duration?: string }>>
+  >({});
+
+  // Sincronizar selectedSeason cuando cambie la temporada en reproducción
+  useEffect(() => {
+    if (seasonNum && seasonNum > 0) {
+      setSelectedSeason(seasonNum);
+    }
+  }, [seasonNum]);
+
+  // Cargar temporadas si no vinieron en props
+  useEffect(() => {
+    if (!isEpisodic || !tmdbId) return;
+    if (seasons.length > 0) return;
+
+    let cancelled = false;
+    const loadSeasons = async () => {
+      try {
+        const base = deviceSync.getApiBase();
+        const res = await fetch(`${base}/api/tv/${tmdbId}`, { signal: AbortSignal.timeout(6000) });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (Array.isArray(data.seasons) && data.seasons.length > 0) {
+          setSeasons(
+            data.seasons.map((s: any) => ({
+              seasonNumber: Number(s.seasonNumber || 1),
+              name: String(s.name || `Temporada ${s.seasonNumber || 1}`),
+            }))
+          );
+        } else if (typeof data.numberOfSeasons === 'number' && data.numberOfSeasons > 0) {
+          setSeasons(
+            Array.from({ length: data.numberOfSeasons }, (_, i) => ({
+              seasonNumber: i + 1,
+              name: `Temporada ${i + 1}`,
+            }))
+          );
+        }
+      } catch (_) {}
+    };
+
+    loadSeasons();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEpisodic, tmdbId, seasons.length]);
+
+  // Cargar episodios de la temporada seleccionada
+  useEffect(() => {
+    if (!isEpisodic) return;
+
+    // 1. Usar caché en memoria si existe
+    if (episodesCacheRef.current[selectedSeason] && episodesCacheRef.current[selectedSeason].length > 0) {
+      setEpisodes(episodesCacheRef.current[selectedSeason]);
+      setEpisodesError(null);
+      setIsLoadingEpisodes(false);
+      return;
+    }
+
+    // 2. Fallback con currentMedia si tiene episodios de esta temporada
+    if (currentMedia?.episodes && currentMedia.episodes.length > 0) {
+      const matching = currentMedia.episodes
+        .filter((e) => (e.seasonNumber || 1) === selectedSeason)
+        .map((e) => ({
+          season: e.seasonNumber || selectedSeason,
           episode: e.episodeNumber || 1,
           title: e.title || `Episodio ${e.episodeNumber || 1}`,
-        }))
-      : []);
+          duration: e.duration,
+        }));
+      if (matching.length > 0) {
+        episodesCacheRef.current[selectedSeason] = matching;
+        setEpisodes(matching);
+      }
+    }
+
+    if (!tmdbId) return;
+
+    let cancelled = false;
+    const fetchEpisodes = async () => {
+      setIsLoadingEpisodes(true);
+      setEpisodesError(null);
+      try {
+        const base = deviceSync.getApiBase();
+        const res = await fetch(`${base}/api/tv/${tmdbId}/season/${selectedSeason}`, {
+          signal: AbortSignal.timeout(7000),
+        });
+        if (!res.ok) {
+          throw new Error(`Error ${res.status}: no se encontró la temporada`);
+        }
+        const data = await res.json();
+        if (cancelled) return;
+        const rawEps = Array.isArray(data.episodes) ? data.episodes : [];
+        const formatted = rawEps.map((ep: any, idx: number) => ({
+          season: Number(ep.seasonNumber ?? ep.season ?? selectedSeason),
+          episode: Number(ep.episodeNumber ?? ep.episode ?? ep.episode_number ?? idx + 1),
+          title: String(ep.title || ep.name || `Episodio ${ep.episodeNumber ?? idx + 1}`),
+          duration: ep.duration ? String(ep.duration) : undefined,
+        }));
+        episodesCacheRef.current[selectedSeason] = formatted;
+        setEpisodes(formatted);
+      } catch (err: any) {
+        if (cancelled) return;
+        if (!episodesCacheRef.current[selectedSeason] || episodesCacheRef.current[selectedSeason].length === 0) {
+          setEpisodesError(err.message || 'Error al cargar capítulos');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingEpisodes(false);
+        }
+      }
+    };
+
+    fetchEpisodes();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEpisodic, tmdbId, selectedSeason, currentMedia?.episodes]);
 
   const handleTestSignal = () => {
     setPingSuccess(true);
@@ -437,7 +615,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             >
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-emerald-400" />
-                <span>Servidores ({serversList.length})</span>
+                <span>Servidores ({effectiveServersList.length})</span>
                 {serversExhausted && (
                   <span className="px-2 py-0.5 rounded-full bg-red-600/80 text-[10px] text-white">
                     Falló servidor
@@ -449,10 +627,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
             {isServersOpen && (
               <div className="p-2 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-1.5 max-h-48 overflow-y-auto">
-                {serversList.length === 0 ? (
+                {effectiveServersList.length === 0 ? (
                   <p className="text-xs text-zinc-500 p-2 text-center">No hay servidores listados</p>
                 ) : (
-                  serversList.map((srv, idx) => {
+                  effectiveServersList.map((srv, idx) => {
                     const isActive = idx === activeServerIdx;
                     return (
                       <button
@@ -484,8 +662,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             )}
           </div>
 
-          {/* Selector de capítulos (despliega lista con jumpToEpisode) */}
-          {episodesList.length > 0 && (
+          {/* Selector de capítulos (Parte 2: con selector de temporada y jumpToEpisode) */}
+          {isEpisodic && (
             <div className="space-y-2">
               <button
                 type="button"
@@ -494,41 +672,103 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <ListVideo className="w-4 h-4 text-red-400" />
-                  <span>Capítulos ({episodesList.length})</span>
+                  <span>
+                    Capítulos {episodes.length > 0 ? `(${episodes.length})` : ''}
+                  </span>
                 </div>
                 {isChaptersOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
 
               {isChaptersOpen && (
-                <div className="p-2 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-1.5 max-h-56 overflow-y-auto">
-                  {episodesList.map((ep, idx) => {
-                    const isCurrent =
-                      ep.season === seasonNum && ep.episode === episodeNum;
-                    return (
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-2.5">
+                  {/* Selector de temporadas */}
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="remote-season-select" className="text-xs font-bold text-zinc-400 shrink-0">
+                      Temporada:
+                    </label>
+                    <select
+                      id="remote-season-select"
+                      aria-label="Elegir temporada"
+                      value={selectedSeason}
+                      onChange={(e) => setSelectedSeason(Number(e.target.value))}
+                      className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-xs font-bold focus:outline-none focus:border-red-500 cursor-pointer"
+                    >
+                      {(seasons.length > 0
+                        ? seasons
+                        : [{ seasonNumber: selectedSeason, name: `Temporada ${selectedSeason}` }]
+                      ).map((s) => (
+                        <option key={s.seasonNumber} value={s.seasonNumber}>
+                          {s.name || `Temporada ${s.seasonNumber}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Estado de carga */}
+                  {isLoadingEpisodes && (
+                    <div className="p-4 text-center text-xs text-zinc-400 animate-pulse">
+                      Cargando capítulos de la temporada {selectedSeason}...
+                    </div>
+                  )}
+
+                  {/* Estado de error */}
+                  {!isLoadingEpisodes && episodesError && (
+                    <div className="p-3 text-center text-xs text-red-400 bg-red-950/40 rounded-xl border border-red-900/50 flex flex-col items-center gap-1.5">
+                      <span>{episodesError}</span>
                       <button
-                        key={`ch-${ep.season}-${ep.episode}-${idx}`}
                         type="button"
-                        onClick={() =>
-                          onSendCommand({
-                            action: 'jumpToEpisode',
-                            payload: { season: ep.season, episode: ep.episode },
-                          })
-                        }
-                        className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-semibold transition flex items-center justify-between ${
-                          isCurrent
-                            ? 'bg-red-600 text-white font-bold'
-                            : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
-                        }`}
+                        onClick={() => {
+                          delete episodesCacheRef.current[selectedSeason];
+                          setSelectedSeason((prev) => prev);
+                        }}
+                        className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold"
                       >
-                        <span className="truncate">
-                          E{ep.episode}: {ep.title}
-                        </span>
-                        {isCurrent && (
-                          <span className="text-[10px] font-bold uppercase shrink-0">Viendo</span>
-                        )}
+                        Reintentar
                       </button>
-                    );
-                  })}
+                    </div>
+                  )}
+
+                  {/* Lista de episodios */}
+                  {!isLoadingEpisodes && !episodesError && (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {episodes.length === 0 ? (
+                        <p className="text-xs text-zinc-500 p-2 text-center">
+                          No hay capítulos para la temporada {selectedSeason}
+                        </p>
+                      ) : (
+                        episodes.map((ep, idx) => {
+                          const isCurrent =
+                            selectedSeason === seasonNum && ep.episode === episodeNum;
+                          return (
+                            <button
+                              key={`ch-${ep.season}-${ep.episode}-${idx}`}
+                              type="button"
+                              onClick={() =>
+                                onSendCommand({
+                                  action: 'jumpToEpisode',
+                                  payload: { season: selectedSeason, episode: ep.episode },
+                                })
+                              }
+                              className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-semibold transition flex items-center justify-between ${
+                                isCurrent
+                                  ? 'bg-red-600 text-white font-bold shadow'
+                                  : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
+                              }`}
+                            >
+                              <span className="truncate">
+                                E{ep.episode}: {ep.title}
+                              </span>
+                              {isCurrent && (
+                                <span className="text-[10px] font-bold uppercase tracking-wider shrink-0 bg-white/20 px-2 py-0.5 rounded">
+                                  Viendo
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -1231,6 +1231,18 @@ app.whenReady().then(async () => {
     `, 8000);
     await wait(400);
 
+    // Centrar botón de servidor en viewport para que no lo tape la barra inferior
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const serverBtns = Array.from(document.querySelectorAll('div[class*="max-h-48"] button'));
+        const btn = serverBtns[1] || serverBtns[0];
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(300);
+
     const seqBeforeSrv = (await pollServerCommands(baseUrl, roomId, 0)).length;
 
     const touchServer2 = await checkAndTouch(
@@ -1258,18 +1270,159 @@ app.whenReady().then(async () => {
           ? `Comando selectServer recibido en PC (payload: ${JSON.stringify(selectSrvCmd.command.payload)})`
           : `No se registró comando selectServer (nuevos comandos: ${newSrvCmds.length})`,
       });
-
-      // Cerrar VideoPlayer en PC
-      await winA.webContents.executeJavaScript(`
-        (function() {
-          const btn = document.querySelector('button[title="Volver atrás"]');
-          if (btn) btn.click();
-        })()
-      `);
-      await wait(1000);
     }
   } catch (err) {
     results.push({ id: 13, name: 'Seleccionar servidor remoto', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (14): Capítulos multitemporada desde control remoto (Black Clover T2:E3 -> T1:E2)
+  // =========================================================================
+  try {
+    // Asegurar que estamos en #/control en el celular
+    await winB.webContents.executeJavaScript(`if (!window.location.hash.includes('/control')) window.location.hash = '#/control';`);
+    await wait(400);
+
+    // Abrir sección Capítulos en RemotePanel si está colapsada
+    await waitForCondition(winB, `
+      (function() {
+        const btn = Array.from(document.querySelectorAll('button')).find(b => /Capítulos/i.test(b.innerText || ''));
+        if (btn && !document.querySelector('select[aria-label="Elegir temporada"]')) {
+          btn.click();
+        }
+        return Boolean(document.querySelector('select[aria-label="Elegir temporada"]'));
+      })()
+    `, 8000);
+    await wait(300);
+
+    // 1. Seleccionar temporada 2 en el celular
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const sel = document.querySelector('select[aria-label="Elegir temporada"]');
+        if (!sel) return false;
+        sel.value = '2';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()
+    `);
+
+    // Esperar a que carguen los botones de la temporada 2
+    await waitForCondition(winB, `
+      (function() {
+        const btns = Array.from(document.querySelectorAll('div[class*="max-h-56"] button'));
+        return btns.some(b => /E3:|Episodio 3/i.test(b.innerText || ''));
+      })()
+    `, 8000);
+    await wait(400);
+
+    // Centrar capítulo 3 en viewport para evitar solapamiento con barra de navegación
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btns = Array.from(document.querySelectorAll('div[class*="max-h-56"] button'));
+        const btn = btns.find(b => /E3:|Episodio 3/i.test(b.innerText || '')) || btns[2];
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(300);
+
+    // Tocar capítulo 3
+    const touchEp3 = await checkAndTouch(
+      winB,
+      `() => {
+        const btns = Array.from(document.querySelectorAll('div[class*="max-h-56"] button'));
+        return btns.find(b => /E3:|Episodio 3/i.test(b.innerText || '')) || btns[2];
+      }`,
+      'capítulo 3 de temporada 2 en RemotePanel'
+    );
+
+    let pcT2E3 = null;
+    if (touchEp3.ok) {
+      pcT2E3 = await waitForCondition(winA, `
+        (function() {
+          const selects = Array.from(document.querySelectorAll('select'));
+          if (selects.length >= 2 && selects[0].value === '2' && selects[1].value === '3') {
+            return { seasonVal: selects[0].value, episodeVal: selects[1].value };
+          }
+          return null;
+        })()
+      `, 8000);
+    }
+
+    // 2. Seleccionar temporada 1 en el celular
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const sel = document.querySelector('select[aria-label="Elegir temporada"]');
+        if (!sel) return false;
+        sel.value = '1';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()
+    `);
+
+    // Esperar a que carguen los botones de la temporada 1
+    await waitForCondition(winB, `
+      (function() {
+        const btns = Array.from(document.querySelectorAll('div[class*="max-h-56"] button'));
+        return btns.some(b => /E2:|Episodio 2/i.test(b.innerText || ''));
+      })()
+    `, 8000);
+    await wait(400);
+
+    // Centrar capítulo 2 en viewport
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btns = Array.from(document.querySelectorAll('div[class*="max-h-56"] button'));
+        const btn = btns.find(b => /E2:|Episodio 2/i.test(b.innerText || '')) || btns[1];
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(300);
+
+    // Tocar capítulo 2
+    const touchEp2 = await checkAndTouch(
+      winB,
+      `() => {
+        const btns = Array.from(document.querySelectorAll('div[class*="max-h-56"] button'));
+        return btns.find(b => /E2:|Episodio 2/i.test(b.innerText || '')) || btns[1];
+      }`,
+      'capítulo 2 de temporada 1 en RemotePanel'
+    );
+
+    let pcT1E2 = null;
+    if (touchEp2.ok) {
+      pcT1E2 = await waitForCondition(winA, `
+        (function() {
+          const selects = Array.from(document.querySelectorAll('select'));
+          if (selects.length >= 2 && selects[0].value === '1' && selects[1].value === '2') {
+            return { seasonVal: selects[0].value, episodeVal: selects[1].value };
+          }
+          return null;
+        })()
+      `, 8000);
+    }
+
+    const pass14 = Boolean(touchEp3.ok && pcT2E3 && touchEp2.ok && pcT1E2);
+    results.push({
+      id: 14,
+      name: 'Capítulos multitemporada (T2:E3 y T1:E2)',
+      pass: pass14,
+      detail: `T2:E3 -> ${pcT2E3 ? `PC(S${pcT2E3.seasonVal}:E${pcT2E3.episodeVal})` : (touchEp3.error || 'PC no cambió')} | T1:E2 -> ${pcT1E2 ? `PC(S${pcT1E2.seasonVal}:E${pcT1E2.episodeVal})` : (touchEp2.error || 'PC no cambió')}`,
+    });
+
+    // Cerrar VideoPlayer en PC al final de Caso 14
+    await winA.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[title="Volver atrás"]');
+        if (btn) btn.click();
+      })()
+    `);
+    await wait(1000);
+  } catch (err) {
+    results.push({ id: 14, name: 'Capítulos multitemporada (T2:E3 y T1:E2)', pass: false, detail: err.message });
   }
 
   // =========================================================================
