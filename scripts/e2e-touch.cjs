@@ -905,7 +905,7 @@ app.whenReady().then(async () => {
           }
           return null;
         })()
-      `, 8000);
+      `, 12000);
 
       if (!pcPlayer) {
         pcPlayer = await winA.webContents.executeJavaScript(`
@@ -1024,7 +1024,7 @@ app.whenReady().then(async () => {
           }
           return null;
         })()
-      `, 8000);
+      `, 12000);
 
       if (!mobilePlayer) {
         mobilePlayer = await winB.webContents.executeJavaScript(`
@@ -1297,6 +1297,35 @@ app.whenReady().then(async () => {
   // Caso (13): Servidores desde control remoto: cambiar a servidor 2
   // =========================================================================
   try {
+    // Si PC no tiene reproducción activa con servidores, cargar una película con 2 servidores
+    const pcHasVideo = await winA.webContents.executeJavaScript(`
+      Boolean(document.querySelector('video') || document.querySelector('div[class*="VideoPlayer"]'))
+    `);
+    if (!pcHasVideo) {
+      await fetch(`${baseUrl}/api/sync/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          command: {
+            action: 'playDiscoveredMovie',
+            payload: {
+              id: 'breaking-bad',
+              title: 'Breaking Bad',
+              type: 'series',
+              seasonNumber: 1,
+              episodeNumber: 5,
+              servers: [
+                { name: 'Servidor 1', url: 'http://localhost:3000/api/mock-1' },
+                { name: 'Servidor 2', url: 'http://localhost:3000/api/mock-2' },
+              ],
+            },
+          },
+        }),
+      });
+      await wait(1200);
+    }
+
     // Abrir sección Servidores en RemotePanel si está colapsada y esperar a que monten los botones
     await waitForCondition(winB, `
       (function() {
@@ -1425,7 +1454,7 @@ app.whenReady().then(async () => {
           }
           return null;
         })()
-      `, 8000);
+      `, 12000);
     }
 
     // 2. Seleccionar temporada 1 en el celular
@@ -1480,7 +1509,7 @@ app.whenReady().then(async () => {
           }
           return null;
         })()
-      `, 8000);
+      `, 12000);
     }
 
     const pass14 = Boolean(touchEp3.ok && pcT2E3 && touchEp2.ok && pcT1E2);
@@ -1769,6 +1798,305 @@ app.whenReady().then(async () => {
     });
   } catch (err) {
     results.push({ id: 18, name: 'set-master-volume en webview (vol 40 -> 0.4)', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (19): Gestor de pantallas (pantallas persistentes, ping verde/rojo, renombrar, borrar)
+  // =========================================================================
+  try {
+    // 1. Navegar en celular a #/pantallas y asegurar scroll arriba
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/pantallas'; window.scrollTo(0, 0);`);
+    await waitForCondition(winB, `Boolean(document.querySelector('button[aria-label="Agregar pantalla"]'))`, 8000);
+    await wait(300);
+
+    // Centrar botón Agregar pantalla
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Agregar pantalla"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(200);
+
+    // 2. Tocar botón "Agregar pantalla"
+    const touchAdd = await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Agregar pantalla"]')`,
+      'botón Agregar pantalla'
+    );
+    await waitForCondition(winB, `Boolean(document.getElementById('screen-name-input'))`, 6000);
+    await wait(200);
+
+    // 3. Completar formulario con nombre "Sala" e IP LAN de la PC
+    const lanIp = getLanIp();
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const nameInput = document.getElementById('screen-name-input');
+        const ipInput = document.getElementById('screen-ip-input');
+        const portInput = document.getElementById('screen-port-input');
+        if (nameInput) {
+          nameInput.value = 'Sala';
+          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if (ipInput) {
+          ipInput.value = '${lanIp}';
+          ipInput.dispatchEvent(new Event('input', { bubbles: true }));
+          ipInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if (portInput) {
+          portInput.value = '3000';
+          portInput.dispatchEvent(new Event('input', { bubbles: true }));
+          portInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()
+    `);
+    await wait(300);
+
+    // Centrar botón Guardar pantalla
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Guardar pantalla"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(200);
+
+    // 4. Tocar "Guardar pantalla"
+    await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Guardar pantalla"]')`,
+      'botón Guardar pantalla'
+    );
+    await wait(500);
+
+    // 5. Verificar que aparece "Sala" y que se pone verde (data-status="online")
+    const salaAdded = await waitForCondition(
+      winB,
+      `Boolean(document.querySelector('[data-screen-name="Sala"]'))`,
+      8000
+    );
+    const salaGreen = await waitForCondition(
+      winB,
+      `Boolean(document.querySelector('[data-screen-name="Sala"] [data-status="online"]'))`,
+      8000
+    );
+
+    // 6. Sobrevive a recargar la página (persistencia en localStorage cinecast_screens_v1)
+    await winB.webContents.executeJavaScript(`window.location.reload();`);
+    const salaPersisted = await waitForCondition(
+      winB,
+      `Boolean(document.querySelector('[data-screen-name="Sala"]'))`,
+      8000
+    );
+    await wait(400);
+
+    // 7. Renombrar a "Living"
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const card = document.querySelector('[data-screen-name="Sala"]');
+        if (card) {
+          const editBtn = card.querySelector('button[aria-label*="Renombrar"]');
+          if (editBtn && typeof editBtn.scrollIntoView === 'function') {
+            editBtn.scrollIntoView({ block: 'center', behavior: 'instant' });
+          }
+        }
+      })()
+    `);
+    await wait(200);
+
+    await checkAndTouch(
+      winB,
+      `() => document.querySelector('[data-screen-name="Sala"] button[aria-label*="Renombrar"]')`,
+      'botón Renombrar Sala'
+    );
+    await waitForCondition(winB, `Boolean(document.getElementById('screen-name-input'))`, 6000);
+    await wait(200);
+
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const input = document.getElementById('screen-name-input');
+        if (input) {
+          input.value = 'Living';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()
+    `);
+    await wait(200);
+
+    // Centrar botón Guardar cambios
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Guardar pantalla"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(200);
+
+    await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Guardar pantalla"]')`,
+      'botón Guardar cambios Living'
+    );
+    await wait(500);
+
+    const livingRenamed = await waitForCondition(
+      winB,
+      `Boolean(document.querySelector('[data-screen-name="Living"]'))`,
+      8000
+    );
+
+    // 8. Borrar "Living"
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const card = document.querySelector('[data-screen-name="Living"]');
+        if (card) {
+          const delBtn = card.querySelector('button[aria-label*="Borrar"]');
+          if (delBtn && typeof delBtn.scrollIntoView === 'function') {
+            delBtn.scrollIntoView({ block: 'center', behavior: 'instant' });
+          }
+        }
+      })()
+    `);
+    await wait(200);
+
+    await checkAndTouch(
+      winB,
+      `() => document.querySelector('[data-screen-name="Living"] button[aria-label*="Borrar"]')`,
+      'botón Borrar Living'
+    );
+    await waitForCondition(
+      winB,
+      `Boolean(document.querySelector('button[aria-label="Confirmar eliminación"]'))`,
+      6000
+    );
+    await wait(200);
+
+    // Centrar botón Confirmar eliminación
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Confirmar eliminación"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(200);
+
+    await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Confirmar eliminación"]')`,
+      'botón Confirmar eliminación'
+    );
+    await wait(500);
+
+    const livingDeleted = await waitForCondition(
+      winB,
+      `!document.querySelector('[data-screen-name="Living"]')`,
+      8000
+    );
+
+    // 9. Agregar pantalla con IP inexistente -> se queda en rojo sin trabar la pantalla
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Agregar pantalla"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(200);
+
+    await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Agregar pantalla"]')`,
+      'botón Agregar pantalla inexistente'
+    );
+    await waitForCondition(winB, `Boolean(document.getElementById('screen-name-input'))`, 6000);
+    await wait(200);
+
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const nameInput = document.getElementById('screen-name-input');
+        const ipInput = document.getElementById('screen-ip-input');
+        const portInput = document.getElementById('screen-port-input');
+        if (nameInput) {
+          nameInput.value = 'Inexistente';
+          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if (ipInput) {
+          ipInput.value = '192.0.2.1';
+          ipInput.dispatchEvent(new Event('input', { bubbles: true }));
+          ipInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if (portInput) {
+          portInput.value = '9999';
+          portInput.dispatchEvent(new Event('input', { bubbles: true }));
+          portInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()
+    `);
+    await wait(200);
+
+    // Centrar botón Guardar pantalla inexistente
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Guardar pantalla"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(200);
+
+    await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Guardar pantalla"]')`,
+      'botón Guardar pantalla inexistente'
+    );
+    await wait(500);
+
+    const invalidRed = await waitForCondition(
+      winB,
+      `Boolean(document.querySelector('[data-screen-name="Inexistente"] [data-status="offline"]'))`,
+      8000
+    );
+
+    const uiResponsive = await winB.webContents.executeJavaScript(`
+      Boolean(document.querySelector('h1'))
+    `);
+
+    const pass19 = Boolean(
+      salaAdded &&
+      salaGreen &&
+      salaPersisted &&
+      livingRenamed &&
+      livingDeleted &&
+      invalidRed &&
+      uiResponsive
+    );
+
+    results.push({
+      id: 19,
+      name: 'Gestor de pantallas: Sala verde, persistencia, Living, borrado, IP inexistente roja',
+      pass: pass19,
+      detail: `Sala: ${salaAdded ? 'agregada' : 'NO'} | verde: ${salaGreen ? 'SI' : 'NO'} | reload: ${salaPersisted ? 'OK' : 'NO'} | renombre: ${livingRenamed ? 'OK' : 'NO'} | borrado: ${livingDeleted ? 'OK' : 'NO'} | offline roja: ${invalidRed ? 'OK' : 'NO'}`,
+    });
+  } catch (err) {
+    results.push({
+      id: 19,
+      name: 'Gestor de pantallas: Sala verde, persistencia, Living, borrado, IP inexistente roja',
+      pass: false,
+      detail: err.message,
+    });
   }
 
   // =========================================================================

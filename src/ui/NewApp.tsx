@@ -24,6 +24,7 @@ import {
   Youtube,
   Music,
   Trophy,
+  Tv,
 } from 'lucide-react';
 import { ConnectionDiagnosticSection } from './ConnectionDiagnosticSection';
 import { localCatalogProvider } from '../providers/localCatalogProvider';
@@ -38,12 +39,11 @@ import { AmbientScreen } from '../components/AmbientScreen';
 import { RemoteControlDrawer } from '../components/RemoteControlDrawer';
 import { RemoteControlSheet } from '../components/RemoteControlSheet';
 import { AudioSettingsModal } from '../components/AudioSettingsModal';
-import { CastModal } from '../components/CastModal';
 import { GuestShareModal } from '../components/GuestShareModal';
-import { DualScreenSimulator } from '../components/DualScreenSimulator';
 import { ContinueRow } from './ContinueRow';
 import { MiniRemote } from './MiniRemote';
 import { RemotePanel } from './RemotePanel';
+import { ScreensManagerView } from './ScreensManagerView';
 import { SportsMatchesTab } from '../components/SportsMatchesTab';
 import { SportsLiveGrid } from '../components/SportsLiveGrid';
 import { SpotifyHub } from '../components/SpotifyHub';
@@ -1034,7 +1034,6 @@ const ControlView: React.FC = () => {
     connectedScreenName,
     sendRemoteCommand,
     setIsAudioModalOpen,
-    setIsCastModalOpen,
     setIsGuestModalOpen,
   } = useAppRuntime();
 
@@ -1051,7 +1050,7 @@ const ControlView: React.FC = () => {
         connectedScreenName={connectedScreenName}
         onSendCommand={sendRemoteCommand}
         onOpenAudioModal={() => setIsAudioModalOpen(true)}
-        onOpenCastModal={() => setIsCastModalOpen(true)}
+        onOpenCastModal={() => navigate('/pantallas')}
         onOpenGuestModal={() => setIsGuestModalOpen(true)}
         onNavigateToCatalog={() => navigate('/explorar')}
       />
@@ -1064,15 +1063,14 @@ interface SettingsViewProps {
 }
 
 const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
+  const navigate = useNavigate();
   const {
     roomId,
     connectedScreenName,
     devices,
     deviceRole,
-    setIsCastModalOpen,
     setIsAudioModalOpen,
     setIsGuestModalOpen,
-    setIsDualSimulatorOpen,
   } = useAppRuntime();
 
   const [diagEnabled, setDiagEnabled] = useState<boolean>(() => diagnosticService.isEnabled());
@@ -1128,11 +1126,12 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
         </p>
       </div>
 
-      {/* Botones que abren los 4 modales clásicos */}
+      {/* Botones de configuración y gestión */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
         <button
           type="button"
-          onClick={() => setIsCastModalOpen(true)}
+          onClick={() => navigate('/pantallas')}
+          aria-label="Gestionar pantallas"
           className="min-h-[64px] p-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800/90 border border-zinc-800 text-left flex items-center justify-between gap-3 transition"
         >
           <div className="flex items-center gap-3">
@@ -1151,6 +1150,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
         <button
           type="button"
           onClick={() => setIsAudioModalOpen(true)}
+          aria-label="Audio y reproducción"
           className="min-h-[64px] p-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800/90 border border-zinc-800 text-left flex items-center justify-between gap-3 transition"
         >
           <div className="flex items-center gap-3">
@@ -1169,6 +1169,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
         <button
           type="button"
           onClick={() => setIsGuestModalOpen(true)}
+          aria-label="Invitados"
           className="min-h-[64px] p-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800/90 border border-zinc-800 text-left flex items-center justify-between gap-3 transition"
         >
           <div className="flex items-center gap-3">
@@ -1186,17 +1187,18 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
 
         <button
           type="button"
-          onClick={() => setIsDualSimulatorOpen(true)}
+          onClick={() => navigate('/pantallas')}
+          aria-label="Mis pantallas"
           className="min-h-[64px] p-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800/90 border border-zinc-800 text-left flex items-center justify-between gap-3 transition"
         >
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
-              <Layers className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+              <Tv className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-sm font-bold text-white">Simulador de pantalla dual</div>
+              <div className="text-sm font-bold text-white">Mis pantallas y TV</div>
               <div className="text-xs text-zinc-400">
-                Probar TV + Celular en simultáneo
+                Conectar a TV, Living o agregar nuevas pantallas
               </div>
             </div>
           </div>
@@ -1527,12 +1529,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     refreshContinueWatching,
     isAudioModalOpen,
     setIsAudioModalOpen,
-    isCastModalOpen,
-    setIsCastModalOpen,
     isGuestModalOpen,
     setIsGuestModalOpen,
-    isDualSimulatorOpen,
-    setIsDualSimulatorOpen,
   } = useAppRuntime();
 
   const handleSelectCard = useCallback(
@@ -1633,7 +1631,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                     connectedScreenName={connectedScreenName}
                     onSendCommand={sendRemoteCommand}
                     onOpenAudioModal={() => setIsAudioModalOpen(true)}
-                    onOpenCastModal={() => setIsCastModalOpen(true)}
+                    onOpenCastModal={() => navigate('/pantallas')}
                     onOpenGuestModal={() => setIsGuestModalOpen(true)}
                   />
                 </div>
@@ -1723,6 +1721,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
               element={<SettingsView onSwitchToClassic={onSwitchToClassic} />}
             />
             <Route path="/control" element={<ControlView />} />
+            <Route path="/pantallas" element={<ScreensManagerView />} />
           </Routes>
         </AppShell>
       )}
@@ -1749,53 +1748,11 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
         }}
       />
 
-      <CastModal
-        isOpen={isCastModalOpen}
-        onClose={() => setIsCastModalOpen(false)}
-        devices={devices}
-        currentDeviceId={deviceSync.getDeviceId()}
-        currentRoomId={roomId}
-        currentDeviceType={deviceRole}
-        selectedScreenId={selectedScreenId}
-        onSelectScreen={(screenId) => {
-          setSelectedScreenId(screenId);
-          setIsCastModalOpen(false);
-        }}
-        onChangeRoom={(newRoomId) => {
-          deviceSync.setRoomId(newRoomId);
-          setRoomId(newRoomId);
-        }}
-        onChangeDeviceType={(type) => {
-          setDeviceRole(type);
-          deviceSync.setDeviceType(type);
-          if (type === 'screen') setIsScreenInStandby(true);
-        }}
-        onOpenDualSimulator={() => setIsDualSimulatorOpen(true)}
-        isPermanentHome={isPermanentHomeLinked}
-        onTogglePermanentHome={handleTogglePermanentHome}
-      />
-
       <GuestShareModal
         isOpen={isGuestModalOpen}
         onClose={() => setIsGuestModalOpen(false)}
         roomId={roomId}
         screenName={connectedScreenName}
-      />
-
-      <DualScreenSimulator
-        isOpen={isDualSimulatorOpen}
-        onClose={() => setIsDualSimulatorOpen(false)}
-        playbackState={remotePlaybackState}
-        currentMedia={remoteMediaItem}
-        currentEpisode={remoteEpisodeItem}
-        catalog={MEDIA_CATALOG}
-        onSendCommand={sendRemoteCommand}
-        onUpdateAudio={(audio) => setAudioSettings((prev) => ({ ...prev, ...audio }))}
-        onUpdatePlayback={(pb) => setPlaybackSettings((prev) => ({ ...prev, ...pb }))}
-        onOpenAudioModal={() => setIsAudioModalOpen(true)}
-        onOpenCastModal={() => setIsCastModalOpen(true)}
-        onPlayMedia={handlePlayLocal}
-        onNextEpisode={handlePlayNextEpisode}
       />
     </>
   );

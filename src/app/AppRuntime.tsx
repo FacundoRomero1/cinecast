@@ -92,12 +92,8 @@ export interface AppRuntimeContextValue {
   // Modales compartidos
   isAudioModalOpen: boolean;
   setIsAudioModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  isCastModalOpen: boolean;
-  setIsCastModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
   isGuestModalOpen: boolean;
   setIsGuestModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  isDualSimulatorOpen: boolean;
-  setIsDualSimulatorOpen: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const AppRuntimeContext = createContext<AppRuntimeContextValue | null>(null);
@@ -152,9 +148,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // COPIA de App.tsx L138-141; borrar al eliminar la UI clásica
   const [isAudioModalOpen, setIsAudioModalOpen] = useState<boolean>(false);
-  const [isCastModalOpen, setIsCastModalOpen] = useState<boolean>(false);
   const [isGuestModalOpen, setIsGuestModalOpen] = useState<boolean>(false);
-  const [isDualSimulatorOpen, setIsDualSimulatorOpen] = useState<boolean>(false);
 
   // COPIA de App.tsx L143-150; borrar al eliminar la UI clásica
   const [myListIds, setMyListIds] = useState<string[]>(() => {
@@ -1305,12 +1299,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     toggleMyList,
     isAudioModalOpen,
     setIsAudioModalOpen,
-    isCastModalOpen,
-    setIsCastModalOpen,
     isGuestModalOpen,
     setIsGuestModalOpen,
-    isDualSimulatorOpen,
-    setIsDualSimulatorOpen,
   };
 
   return (
