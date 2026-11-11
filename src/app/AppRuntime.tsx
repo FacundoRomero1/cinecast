@@ -18,6 +18,7 @@ import { watchHistoryService, WatchProgressItem } from '../services/watchHistory
 import { generateServersForMedia, refreshProviderHealth } from '../services/embedService';
 import { authService } from '../services/authService';
 import { Users } from 'lucide-react';
+import { hubFullscreen } from './hubFullscreen';
 
 export type HubType = 'cinecast' | 'spotify' | 'youtube' | 'sports';
 
@@ -890,6 +891,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (keyCode) {
           window.electronAPI?.sendNativeKey?.(keyCode);
         }
+        break;
+      }
+      case 'toggleHubFullscreen': {
+        hubFullscreen.toggle();
         break;
       }
     }

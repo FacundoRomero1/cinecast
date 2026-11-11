@@ -11,6 +11,7 @@ import {
   Minimize2,
 } from 'lucide-react';
 import { SpotifyTrack } from '../data/spotifyCatalog';
+import { hubFullscreen } from '../app/hubFullscreen';
 
 interface SpotifyHubProps {
   currentTrack?: SpotifyTrack | null;
@@ -98,6 +99,15 @@ export const SpotifyHub: React.FC<SpotifyHubProps> = ({
       exitHubFullscreen();
     }
   }, [isActive, exitHubFullscreen]);
+
+  useEffect(() => {
+    return hubFullscreen.subscribe((action) => {
+      if (!isActiveRef.current) return;
+      if (action === 'enter') enterHubFullscreen();
+      else if (action === 'exit') exitHubFullscreen();
+      else toggleHubFullscreen();
+    });
+  }, [enterHubFullscreen, exitHubFullscreen, toggleHubFullscreen]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

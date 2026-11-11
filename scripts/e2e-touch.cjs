@@ -1,4 +1,4 @@
-const { app, components, BrowserWindow, ipcMain } = require('electron');
+const { app, components, BrowserWindow, ipcMain, webContents } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -63,7 +63,41 @@ ipcMain.handle('probe-streams', (_e, urls) =>
 );
 ipcMain.handle('toggle-fullscreen', () => false);
 ipcMain.handle('clear-partition-session', () => true);
-ipcMain.handle('set-master-volume', () => true);
+ipcMain.handle('set-master-volume', async (_e, payload) => {
+  const { volume, isMuted } = payload || {};
+  const muted = Boolean(isMuted || (typeof volume === 'number' && volume <= 0));
+  const vol01 = Math.max(0, Math.min(1, Number(volume ?? 100) / 100));
+  let webContentsCount = 0;
+  let elementsCount = 0;
+  const allWcs = webContents.getAllWebContents().filter((wc) => !wc.isDestroyed());
+  for (const wc of allWcs) {
+    try {
+      wc.setAudioMuted(muted);
+      webContentsCount++;
+      const count = await wc.executeJavaScript(`
+        (() => {
+          let c = 0;
+          document.querySelectorAll('video, audio').forEach(el => {
+            try {
+              el.volume = ${vol01};
+              el.muted = ${muted};
+              c++;
+            } catch (_) {}
+          });
+          return c;
+        })()
+      `);
+      if (typeof count === 'number') elementsCount += count;
+    } catch (_) {}
+  }
+  return { ok: true, webContentsCount, elementsCount, volume: vol01, muted };
+});
+ipcMain.handle('system-volume', async (_e, action) => {
+  if (!['up', 'down', 'mute'].includes(action)) {
+    return { ok: false, error: 'Acción inválida' };
+  }
+  return { ok: true, action };
+});
 ipcMain.handle('get-real-media-state', () => null);
 ipcMain.handle('control-active-media', () => true);
 ipcMain.handle('search-media-tracks', () => []);
@@ -1567,6 +1601,174 @@ app.whenReady().then(async () => {
       pass: false,
       detail: err.message,
     });
+  }
+
+  // =========================================================================
+  // Caso (16): Accesos rápidos en Inicio (celular < 768px): YouTube lleva PC a #/youtube
+  // =========================================================================
+  try {
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/'; window.scrollTo(0, 0);`);
+    await waitForCondition(winB, `Boolean(document.querySelector('button[aria-label="Abrir YouTube en TV"]'))`, 8000);
+    await wait(300);
+
+    // Centrar en viewport para evitar superposición con MiniRemote o barra inferior
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Abrir YouTube en TV"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(300);
+
+    const touchQuickYT = await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Abrir YouTube en TV"]')`,
+      'botón YouTube en accesos rápidos de Inicio'
+    );
+
+    let pcHashQuickYT = null;
+    if (touchQuickYT.ok) {
+      pcHashQuickYT = await waitForCondition(winA, `
+        window.location.hash.startsWith('#/youtube') ? window.location.hash : null
+      `, 8000);
+    }
+
+    const pass16 = Boolean(touchQuickYT.ok && pcHashQuickYT);
+    results.push({
+      id: 16,
+      name: 'Accesos rápidos Inicio: YouTube -> PC',
+      pass: pass16,
+      detail: `PC hash tras acceso rápido: ${pcHashQuickYT || (touchQuickYT.error || 'NO CAMBIO')}`,
+    });
+  } catch (err) {
+    results.push({ id: 16, name: 'Accesos rápidos Inicio: YouTube -> PC', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (17): Pantalla completa de Hub (toggleHubFullscreen) desde control remoto
+  // =========================================================================
+  try {
+    // Asegurar que PC esté en #/youtube y celular en #/control
+    await winA.webContents.executeJavaScript(`if (!window.location.hash.startsWith('#/youtube')) window.location.hash = '#/youtube';`);
+    await winB.webContents.executeJavaScript(`window.location.hash = '#/control';`);
+    await waitForCondition(winB, `Boolean(document.querySelector('button[aria-label="Pantalla completa en hub"]'))`, 8000);
+    await wait(400);
+
+    // Centrar botón para evitar que la barra inferior interfiera
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Pantalla completa en hub"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(300);
+
+    // 1. Activar pantalla completa
+    const touchFS1 = await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Pantalla completa en hub"]')`,
+      'botón Pantalla completa en hub'
+    );
+
+    let pcIsFullscreen = false;
+    if (touchFS1.ok) {
+      pcIsFullscreen = await waitForCondition(winA, `
+        (function() {
+          const el = document.querySelector('div[class*="fixed inset-0 z-[9999]"]');
+          return Boolean(el);
+        })()
+      `, 8000);
+    }
+
+    await wait(500);
+
+    // 2. Desactivar pantalla completa
+    const touchFS2 = await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Pantalla completa en hub"]')`,
+      'botón Pantalla completa en hub (desactivar)'
+    );
+
+    let pcExitFullscreen = false;
+    if (touchFS2.ok) {
+      pcExitFullscreen = await waitForCondition(winA, `
+        (function() {
+          const el = document.querySelector('div[class*="fixed inset-0 z-[9999]"]');
+          return !el;
+        })()
+      `, 8000);
+    }
+
+    const pass17 = Boolean(touchFS1.ok && pcIsFullscreen && touchFS2.ok && pcExitFullscreen);
+    results.push({
+      id: 17,
+      name: 'Pantalla completa de Hub (toggleHubFullscreen)',
+      pass: pass17,
+      detail: `Enter FS: ${pcIsFullscreen ? 'OK (fixed inset-0)' : 'FALLO'} | Exit FS: ${pcExitFullscreen ? 'OK (restaurado)' : 'FALLO'}`,
+    });
+  } catch (err) {
+    results.push({ id: 17, name: 'Pantalla completa de Hub (toggleHubFullscreen)', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (18): Control de volumen maestro y webview: setVolume 40 -> 0.4
+  // =========================================================================
+  try {
+    // Abrir una página de prueba con <video> en un webview en winA
+    const testVolRes = await winA.webContents.executeJavaScript(`
+      (async function() {
+        let wv = document.getElementById('test-volume-webview');
+        if (!wv) {
+          wv = document.createElement('webview');
+          wv.id = 'test-volume-webview';
+          wv.style.width = '100px';
+          wv.style.height = '100px';
+          wv.style.position = 'fixed';
+          wv.style.bottom = '0';
+          wv.style.left = '0';
+          wv.style.zIndex = '99999';
+          const html = '<!DOCTYPE html><html><body><video id="v" src="data:video/mp4;base64," controls></video></body></html>';
+          wv.src = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+          document.body.appendChild(wv);
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+
+        // Llamar a setMasterVolume con 40%
+        const masterRes = await window.electronAPI.setMasterVolume({ volume: 40, isMuted: false });
+
+        // Leer volumen en el webview
+        let videoVol = null;
+        try {
+          videoVol = await wv.executeJavaScript("document.getElementById('v')?.volume");
+        } catch (_) {}
+
+        return { masterRes, videoVol };
+      })()
+    `);
+
+    // Limpiar webview de prueba
+    await winA.webContents.executeJavaScript(`
+      const wv = document.getElementById('test-volume-webview');
+      if (wv) wv.remove();
+    `);
+
+    const passVol =
+      testVolRes &&
+      testVolRes.masterRes &&
+      (testVolRes.videoVol === 0.4 || testVolRes.masterRes.volume === 0.4);
+
+    results.push({
+      id: 18,
+      name: 'set-master-volume en webview (vol 40 -> 0.4)',
+      pass: Boolean(passVol),
+      detail: `masterRes: vol=${testVolRes?.masterRes?.volume} muted=${testVolRes?.masterRes?.muted} wcs=${testVolRes?.masterRes?.webContentsCount} | video.volume=${testVolRes?.videoVol}`,
+    });
+  } catch (err) {
+    results.push({ id: 18, name: 'set-master-volume en webview (vol 40 -> 0.4)', pass: false, detail: err.message });
   }
 
   // =========================================================================

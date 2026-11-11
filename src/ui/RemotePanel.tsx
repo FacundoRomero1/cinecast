@@ -467,11 +467,104 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             </p>
           </div>
 
-          <div className="pt-2">
+          {/* (a) Control de volumen en Hub: silencio, -10, barra / porcentaje, +10 */}
+          <div className="p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800 space-y-3 text-left">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+              Volumen de la TV
+            </span>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
+                onClick={() => onSendCommand({ action: 'toggleMute' })}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
+              >
+                {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5" />}
+              </button>
+
+              <button
+                type="button"
+                aria-label="Bajar volumen 10%"
+                onClick={() =>
+                  onSendCommand({
+                    action: 'setVolume',
+                    payload: Math.max(0, currentVolume - 10),
+                  })
+                }
+                className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-extrabold text-zinc-200 transition"
+              >
+                -10
+              </button>
+
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={isMuted ? 0 : currentVolume}
+                onChange={(e) =>
+                  onSendCommand({ action: 'setVolume', payload: Number(e.target.value) })
+                }
+                aria-label="Control de volumen"
+                className="flex-1 accent-red-600 h-2 bg-zinc-700 rounded-lg cursor-pointer"
+              />
+
+              <button
+                type="button"
+                aria-label="Subir volumen 10%"
+                onClick={() =>
+                  onSendCommand({
+                    action: 'setVolume',
+                    payload: Math.min(100, currentVolume + 10),
+                  })
+                }
+                className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-extrabold text-zinc-200 transition"
+              >
+                +10
+              </button>
+
+              <span className="text-xs font-mono font-bold text-zinc-200 w-9 text-right shrink-0">
+                {isMuted ? '0%' : `${currentVolume}%`}
+              </span>
+            </div>
+
+            {/* Botón opcional Volumen del sistema (Windows) */}
+            <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-500">
+              <span>Volumen de sistema (Windows):</span>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onSendCommand({ action: 'setVolume', payload: { systemVolume: 'down' } } as any)}
+                  className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 hover:bg-zinc-800"
+                >
+                  Bajar (Win)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSendCommand({ action: 'setVolume', payload: { systemVolume: 'up' } } as any)}
+                  className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 hover:bg-zinc-800"
+                >
+                  Subir (Win)
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* (b) Pantalla completa y (d) Volver a películas */}
+          <div className="flex gap-2.5 pt-1">
+            <button
+              type="button"
+              aria-label="Pantalla completa en hub"
+              onClick={() => onSendCommand({ action: 'toggleHubFullscreen' })}
+              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold text-xs transition border border-zinc-700 shadow flex items-center justify-center gap-2"
+            >
+              <Maximize2 className="w-4 h-4 text-emerald-400" />
+              <span>Pantalla completa</span>
+            </button>
+
             <button
               type="button"
               onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'cinecast' } })}
-              className="w-full min-h-[48px] px-4 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-sm transition shadow-lg shadow-red-950/40 flex items-center justify-center gap-2"
+              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs transition shadow-lg shadow-red-950/40 flex items-center justify-center gap-2"
             >
               <Film className="w-4 h-4" />
               <span>Volver a películas</span>

@@ -21,6 +21,9 @@ import {
   Layers,
   Activity,
   Wifi,
+  Youtube,
+  Music,
+  Trophy,
 } from 'lucide-react';
 import { ConnectionDiagnosticSection } from './ConnectionDiagnosticSection';
 import { localCatalogProvider } from '../providers/localCatalogProvider';
@@ -83,6 +86,7 @@ const HomeView: React.FC<HomeViewProps> = ({
   onPlayItem,
   onCastItem,
 }) => {
+  const navigate = useNavigate();
   const {
     continueWatchingList,
     refreshContinueWatching,
@@ -90,6 +94,7 @@ const HomeView: React.FC<HomeViewProps> = ({
     handleCastMediaToScreen,
     triggerNotification,
     connectedScreenName,
+    sendRemoteCommand,
   } = useAppRuntime();
 
   const [rows, setRows] = useState<HomeRow[]>([]);
@@ -205,6 +210,80 @@ const HomeView: React.FC<HomeViewProps> = ({
           connectedScreenName={connectedScreenName}
         />
       )}
+
+      {/* Accesos rápidos en Inicio solo en celular (<768 px) */}
+      <div className="px-4 md:hidden py-1">
+        <div
+          aria-label="Accesos rápidos de inicio"
+          className="p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 grid grid-cols-3 gap-2 shadow"
+        >
+          <button
+            type="button"
+            aria-label="Abrir YouTube en TV"
+            onClick={() => {
+              const isConnected = Boolean(
+                connectedScreenName &&
+                connectedScreenName.trim() !== '' &&
+                connectedScreenName !== 'Sin pantalla' &&
+                connectedScreenName !== 'Ninguna'
+              );
+              if (!isConnected) {
+                navigate('/pantallas');
+                return;
+              }
+              sendRemoteCommand({ action: 'switchHub', payload: { hub: 'youtube' } });
+            }}
+            className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 transition border border-zinc-700/80 shadow"
+          >
+            <Youtube className="w-4 h-4 text-red-500 shrink-0" />
+            <span>YouTube</span>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Abrir Spotify en TV"
+            onClick={() => {
+              const isConnected = Boolean(
+                connectedScreenName &&
+                connectedScreenName.trim() !== '' &&
+                connectedScreenName !== 'Sin pantalla' &&
+                connectedScreenName !== 'Ninguna'
+              );
+              if (!isConnected) {
+                navigate('/pantallas');
+                return;
+              }
+              sendRemoteCommand({ action: 'switchHub', payload: { hub: 'spotify' } });
+            }}
+            className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 transition border border-zinc-700/80 shadow"
+          >
+            <Music className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>Spotify</span>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Abrir Partidos en TV"
+            onClick={() => {
+              const isConnected = Boolean(
+                connectedScreenName &&
+                connectedScreenName.trim() !== '' &&
+                connectedScreenName !== 'Sin pantalla' &&
+                connectedScreenName !== 'Ninguna'
+              );
+              if (!isConnected) {
+                navigate('/pantallas');
+                return;
+              }
+              sendRemoteCommand({ action: 'switchHub', payload: { hub: 'sports' } });
+            }}
+            className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 transition border border-zinc-700/80 shadow"
+          >
+            <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Partidos</span>
+          </button>
+        </div>
+      </div>
 
       {rows.map((row) => (
         <Row

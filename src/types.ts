@@ -247,6 +247,7 @@ export type RemoteCommandAction =
   | 'nextTrack'
   | 'prevTrack'
   | 'toggleFullscreen'
+  | 'toggleHubFullscreen'
   | 'changeServer'
   | 'selectServer'
   | 'addCustomStream'

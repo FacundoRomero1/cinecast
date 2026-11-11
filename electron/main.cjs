@@ -1216,21 +1216,66 @@ function getAllFrames() {
 }
 
 // Control de volumen maestro en Electron (incluso en iframes, YouTube y Spotify)
-ipcMain.handle('set-master-volume', async (_event, { volume, isMuted }) => {
-  if (!mainWindow) return false;
-  const muted = Boolean(isMuted || volume <= 0);
-  mainWindow.webContents.setAudioMuted(muted);
+ipcMain.handle('set-master-volume', async (_event, payload) => {
+  const { volume, isMuted } = payload || {};
+  const muted = Boolean(isMuted || (typeof volume === 'number' && volume <= 0));
   const vol01 = Math.max(0, Math.min(1, Number(volume ?? 100) / 100));
-  // Inyecta el volumen en todos los frames/iframes/webviews que tengan etiquetas <video> o <audio>
-  for (const frame of getAllFrames()) {
-    frame.executeJavaScript(`
-      document.querySelectorAll('video, audio').forEach(el => {
-        el.volume = ${vol01};
-        el.muted = ${muted};
-      });
-    `).catch(() => {});
+
+  let webContentsCount = 0;
+  let elementsCount = 0;
+
+  // 1. Aplicar setAudioMuted a la ventana principal y a todos los webContents (incluyendo webviews)
+  const allWcs = webContents.getAllWebContents().filter((wc) => !wc.isDestroyed());
+  for (const wc of allWcs) {
+    try {
+      wc.setAudioMuted(muted);
+      webContentsCount++;
+    } catch (_) {}
   }
-  return true;
+
+  // 2. Inyectar volumen y muted en todos los <video> y <audio> de todos los frames
+  const frames = getAllFrames();
+  for (const frame of frames) {
+    try {
+      const count = await frame.executeJavaScript(`
+        (() => {
+          let c = 0;
+          document.querySelectorAll('video, audio').forEach(el => {
+            try {
+              el.volume = ${vol01};
+              el.muted = ${muted};
+              c++;
+            } catch (_) {}
+          });
+          return c;
+        })()
+      `);
+      if (typeof count === 'number') elementsCount += count;
+    } catch (_) {}
+  }
+
+  return { ok: true, webContentsCount, elementsCount, volume: vol01, muted };
+});
+
+// Control de volumen del sistema operativo (Windows) vía PowerShell SendKeys
+ipcMain.handle('system-volume', async (_event, action) => {
+  if (!['up', 'down', 'mute'].includes(action)) {
+    return { ok: false, error: 'Acción inválida: debe ser up, down o mute' };
+  }
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'Solo disponible en Windows' };
+  }
+  try {
+    const key = action === 'up' ? '[char]175' : action === 'down' ? '[char]174' : '[char]173';
+    const script = action === 'mute'
+      ? `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${key}')`
+      : `Add-Type -AssemblyName System.Windows.Forms; 1..5 | ForEach-Object { [System.Windows.Forms.SendKeys]::SendWait('${key}') }`;
+    const { execSync } = require('child_process');
+    execSync(`powershell -NoProfile -NonInteractive -Command "${script}"`, { stdio: 'ignore', windowsHide: true });
+    return { ok: true, action };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 // Lector universal de estado y tiempo REAL de reproducción

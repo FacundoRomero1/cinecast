@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { YouTubeVideo } from '../data/youtubeCatalog';
 import { RemoteCommand } from '../types';
+import { hubFullscreen } from '../app/hubFullscreen';
 
 interface YouTubeHubProps {
   currentVideo?: YouTubeVideo | null;
@@ -118,6 +119,15 @@ export const YouTubeHub: React.FC<YouTubeHubProps> = ({
       exitHubFullscreen();
     }
   }, [isActive, exitHubFullscreen]);
+
+  useEffect(() => {
+    return hubFullscreen.subscribe((action) => {
+      if (!isActiveRef.current) return;
+      if (action === 'enter') enterHubFullscreen();
+      else if (action === 'exit') exitHubFullscreen();
+      else toggleHubFullscreen();
+    });
+  }, [enterHubFullscreen, exitHubFullscreen, toggleHubFullscreen]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
