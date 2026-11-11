@@ -8,6 +8,7 @@ import {
   ListVideo,
   Maximize2,
   Moon,
+  MousePointer,
   Music,
   Pause,
   Play,
@@ -31,6 +32,7 @@ import type { Episode, MediaItem, PlaybackState, RemoteCommand } from '../types'
 import { createStyledPosterFallback } from '../utils/imageUtils';
 import { deviceSync } from '../services/deviceSync';
 import { generateServersForMedia } from '../services/embedService';
+import { PadSection } from './PadSection';
 
 export interface RemotePanelProps {
   playbackState?: PlaybackState | null;
@@ -85,6 +87,16 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
   const isYouTube = activeHub === 'youtube';
   const isSpotify = activeHub === 'spotify';
+
+  const [isPadOpen, setIsPadOpen] = useState<boolean>(() => {
+    return isYouTube || isSpotify || activeHub === 'sports';
+  });
+
+  useEffect(() => {
+    if (isYouTube || isSpotify || activeHub === 'sports') {
+      setIsPadOpen(true);
+    }
+  }, [isYouTube, isSpotify, activeHub]);
 
   const title =
     playbackState?.mediaTitle ||
@@ -396,6 +408,41 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           <span className="text-[11px]">Partidos</span>
         </button>
       </nav>
+
+      {/* Botón destacado Pad (Mouse y Cruceta) visible siempre */}
+      <section aria-label="Control Pad" className="space-y-3">
+        <button
+          type="button"
+          aria-label="Pad táctil y cruceta"
+          onClick={() => setIsPadOpen((p) => !p)}
+          className={`w-full min-h-[48px] px-4 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
+            isPadOpen
+              ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
+              : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow">
+              <MousePointer className="w-4 h-4" />
+            </div>
+            <div className="text-left">
+              <span className="block text-white text-xs sm:text-sm font-extrabold">
+                Pad táctil y cruceta TV
+              </span>
+              <span className="block text-[11px] text-zinc-400 font-normal">
+                {isPadOpen ? 'Ocultar controles de mouse y D-Pad' : 'Controlar cursor y flechas en pantalla'}
+              </span>
+            </div>
+          </div>
+          {isPadOpen ? <ChevronUp className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
+        </button>
+
+        {isPadOpen && (
+          <div className="p-3.5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-xl">
+            <PadSection onSendCommand={onSendCommand} />
+          </div>
+        )}
+      </section>
 
       {/* 3. Tarjeta de reproducción activa según el estado */}
       {isYouTube || isSpotify ? (

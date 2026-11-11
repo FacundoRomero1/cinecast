@@ -161,6 +161,40 @@ async function swipeVertical(win, startX, startY, endY, steps = 10) {
   await wait(200);
 }
 
+async function swipeHorizontal(win, startX, startY, endX, steps = 6) {
+  await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: startX, y: startY }],
+  });
+  await wait(30);
+  for (let i = 1; i <= steps; i++) {
+    const curX = Math.floor(startX + ((endX - startX) * i) / steps);
+    await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: curX, y: startY }],
+    });
+    await wait(25);
+  }
+  await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await wait(200);
+}
+
+async function tapAt(win, x, y) {
+  await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x, y }],
+  });
+  await wait(50);
+  await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await wait(200);
+}
+
 async function pollServerCommands(baseUrl, roomId = 'cine-home-1', since = 0) {
   try {
     const res = await fetch(
@@ -1129,6 +1163,16 @@ app.whenReady().then(async () => {
       Boolean(Array.from(document.querySelectorAll('button')).find(b => /Volver a pel/i.test(b.innerText || '')))
     `, 8000);
 
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = Array.from(document.querySelectorAll('button')).find(b => /Volver a pel/i.test(b.innerText || ''));
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(300);
+
     const touchBackMovies = await checkAndTouch(
       winB,
       `() => Array.from(document.querySelectorAll('button')).find(b => /Volver a pel/i.test(b.innerText || ''))`,
@@ -1423,6 +1467,106 @@ app.whenReady().then(async () => {
     await wait(1000);
   } catch (err) {
     results.push({ id: 14, name: 'Capítulos multitemporada (T2:E3 y T1:E2)', pass: false, detail: err.message });
+  }
+
+  // =========================================================================
+  // Caso (15): Pad táctil y cruceta: trackpadMove (dx>0), trackpadClick y navigateUp
+  // =========================================================================
+  try {
+    // Asegurar que estamos en #/control en el celular
+    await winB.webContents.executeJavaScript(`if (!window.location.hash.includes('/control')) window.location.hash = '#/control';`);
+    await wait(400);
+
+    // Asegurar que la sección Pad esté desplegada
+    await waitForCondition(winB, `
+      (function() {
+        const btn = document.querySelector('button[aria-label="Pad táctil y cruceta"]');
+        if (btn && !document.getElementById('remote-touchpad-area')) {
+          btn.click();
+        }
+        return Boolean(document.getElementById('remote-touchpad-area'));
+      })()
+    `, 8000);
+    await wait(300);
+
+    // Obtener coordenadas del área táctil (centrada en viewport)
+    const padCoords = await winB.webContents.executeJavaScript(`
+      (function() {
+        const el = document.getElementById('remote-touchpad-area');
+        if (!el) return null;
+        el.scrollIntoView({ block: 'center', behavior: 'instant' });
+        const r = el.getBoundingClientRect();
+        return {
+          x: Math.floor(r.left + r.width / 2),
+          y: Math.floor(r.top + r.height / 2),
+        };
+      })()
+    `);
+
+    let moveCmd = null;
+    let clickCmd = null;
+    let upCmd = null;
+
+    if (padCoords) {
+      // (a) Arrastrar con touchMove 60 px a la derecha -> trackpadMove con dx > 0
+      const seqBeforeMove = (await pollServerCommands(baseUrl, roomId, 0)).length;
+      await swipeHorizontal(winB, padCoords.x - 30, padCoords.y, padCoords.x + 30, 6);
+      await wait(500);
+      const cmdsAfterMove = await pollServerCommands(baseUrl, roomId, 0);
+      const newMoveCmds = cmdsAfterMove.slice(seqBeforeMove);
+      moveCmd = newMoveCmds.find(
+        (c) => c.command?.action === 'trackpadMove' && Number(c.command?.payload?.dx) > 0
+      );
+
+      // (b) Un toque sobre el área -> trackpadClick
+      const seqBeforeClick = (await pollServerCommands(baseUrl, roomId, 0)).length;
+      await tapAt(winB, padCoords.x, padCoords.y);
+      await wait(500);
+      const cmdsAfterClick = await pollServerCommands(baseUrl, roomId, 0);
+      const newClickCmds = cmdsAfterClick.slice(seqBeforeClick);
+      clickCmd = newClickCmds.find(
+        (c) => c.command?.action === 'trackpadClick'
+      );
+    }
+
+    // (c) Tocar "Arriba" en la cruceta -> navigateUp
+    await winB.webContents.executeJavaScript(`
+      (function() {
+        const btn = document.querySelector('button[aria-label="Arriba"]');
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
+      })()
+    `);
+    await wait(300);
+
+    const seqBeforeNav = (await pollServerCommands(baseUrl, roomId, 0)).length;
+    const touchUp = await checkAndTouch(
+      winB,
+      `() => document.querySelector('button[aria-label="Arriba"]')`,
+      'botón Arriba en cruceta TV'
+    );
+    if (touchUp.ok) {
+      await wait(500);
+      const cmdsAfterNav = await pollServerCommands(baseUrl, roomId, 0);
+      const newNavCmds = cmdsAfterNav.slice(seqBeforeNav);
+      upCmd = newNavCmds.find((c) => c.command?.action === 'navigateUp');
+    }
+
+    const pass15 = Boolean(moveCmd && clickCmd && upCmd);
+    results.push({
+      id: 15,
+      name: 'Pad: trackpadMove (dx>0), trackpadClick y navigateUp',
+      pass: pass15,
+      detail: `move(dx>0): ${moveCmd ? `dx=${moveCmd.command.payload?.dx}` : 'NO'} | click: ${clickCmd ? 'OK' : 'NO'} | navigateUp: ${upCmd ? 'OK' : (touchUp.error || 'NO')}`,
+    });
+  } catch (err) {
+    results.push({
+      id: 15,
+      name: 'Pad: trackpadMove (dx>0), trackpadClick y navigateUp',
+      pass: false,
+      detail: err.message,
+    });
   }
 
   // =========================================================================
