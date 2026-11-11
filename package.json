@@ -25,7 +25,8 @@
     "app": "npm run build:core && vite build && electron electron/main.cjs",
     "app:nuevo": "npm run build:core && vite build && electron electron/main.cjs --ui=nuevo",
     "app:clasico": "npm run build:core && vite build && electron electron/main.cjs --ui=clasico",
-    "test:ui": "node scripts/test-ui.cjs"
+    "test:ui": "node scripts/cleanup.cjs && node scripts/guard.cjs 900 --name=test-ui --tail=12 -- node scripts/test-ui.cjs",
+    "test:touch": "node scripts/cleanup.cjs && node scripts/guard.cjs 150 --name=e2e-touch --tail=60 -- electron scripts/e2e-touch.cjs"
   },
   "build": {
     "appId": "com.cinecast.tv",

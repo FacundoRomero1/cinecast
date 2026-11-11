@@ -52,59 +52,51 @@ async function waitForHealth(url, timeoutMs = 35000) {
   return false;
 }
 
-function runElectronScript(electronPath, scriptRelPath, logName, timeoutMs = 180000) {
+// Cada prueba de Electron se ejecuta a través de scripts/guard.cjs (límite de
+// tiempo, log en scratch/logs/<nombre>.log y taskkill del árbol si se traba).
+function runElectronScript(scriptRelPath, logName, timeoutSec = 150) {
   return new Promise((resolve) => {
-    const scriptPath = path.join(rootDir, scriptRelPath);
-    const logPath = path.join(logsDir, `${logName}.log`);
-    const logStream = fs.createWriteStream(logPath, { flags: 'w' });
-
-    const env = { ...process.env };
-    delete env.ELECTRON_RUN_AS_NODE;
-
     const start = Date.now();
-    const proc = spawn(electronPath, [scriptPath, 'http://localhost:3000'], {
-      cwd: rootDir,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    proc.stdout.pipe(logStream);
-    proc.stderr.pipe(logStream);
-
-    let killed = false;
-    const timer = setTimeout(() => {
-      killed = true;
-      killProcessTree(proc.pid);
-      logStream.write(`\n[test-ui] TIMEOUT de ${timeoutMs}ms alcanzado\n`);
-    }, timeoutMs);
-
+    const proc = spawn(
+      process.execPath,
+      [
+        path.join(rootDir, 'scripts', 'guard.cjs'),
+        String(timeoutSec),
+        `--name=${logName}`,
+        '--tail=0',
+        '--',
+        'electron',
+        scriptRelPath,
+        'http://localhost:3000',
+      ],
+      { cwd: rootDir, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+    let out = '';
+    proc.stdout.on('data', (d) => (out += d));
+    proc.stderr.on('data', (d) => (out += d));
     proc.on('close', (code) => {
-      clearTimeout(timer);
-      logStream.end();
       const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-      const passed = !killed && code === 0;
-      resolve({ name: logName, passed, elapsed, code });
+      resolve({ name: logName, passed: code === 0, elapsed, code, timeout: code === 124 });
     });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      logStream.write(`\n[test-ui] Spawn error: ${err.message}\n`);
-      logStream.end();
+    proc.on('error', () => {
       const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-      resolve({ name: logName, passed: false, elapsed, code: 1 });
+      resolve({ name: logName, passed: false, elapsed, code: 1, timeout: false });
     });
   });
 }
 
 async function main() {
+  // Limpieza previa (electron del proyecto y node en :3000)
+  try {
+    execSync(`"${process.execPath}" "${path.join(rootDir, 'scripts', 'cleanup.cjs')}"`, { stdio: 'inherit' });
+  } catch (_) {
+    // cleanup sale con 1 si el puerto sigue ocupado; lo verifica el chequeo siguiente
+  }
   const occupied = await isPortInUse(3000);
   if (occupied) {
     console.error('[test-ui] Error: El puerto 3000 está ocupado. Abortando pruebas.');
     process.exit(1);
   }
-
-  // Resolver ejecutable oficial de Electron
-  const electronPath = require('electron');
 
   // Iniciar servidor de desarrollo
   const serverLogPath = path.join(logsDir, 'dev-server.log');
@@ -138,7 +130,7 @@ async function main() {
 
   const results = [];
   for (const t of tests) {
-    const res = await runElectronScript(electronPath, t.file, t.name, 180000);
+    const res = await runElectronScript(t.file, t.name, 150);
     results.push(res);
   }
 
@@ -161,7 +153,7 @@ async function main() {
   console.log('| nombre | PASA/FALLA | segundos |');
   console.log('| :--- | :---: | :---: |');
   for (const r of results) {
-    console.log(`| ${r.name} | ${r.passed ? 'PASA' : 'FALLA'} | ${r.elapsed}s |`);
+    console.log(`| ${r.name} | ${r.passed ? 'PASA' : r.timeout ? 'FALLA (TIMEOUT)' : 'FALLA'} | ${r.elapsed}s |`);
   }
 
   if (portFree) {
