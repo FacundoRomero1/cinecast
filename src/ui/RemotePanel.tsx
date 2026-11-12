@@ -843,78 +843,6 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             </div>
           </div>
 
-          {/* Toggles / automatización: Modo Maratón, Auto Saltar Intro, Auto Siguiente */}
-          <div className="p-3 rounded-xl bg-zinc-850/80 border border-zinc-800 space-y-2.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-              Automatización de reproducción
-            </span>
-
-            {/* Modo Maratón */}
-            <div className="flex items-center justify-between min-h-[44px] gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-zinc-200">Modo Maratón</span>
-                  <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-red-600/30 text-red-400 border border-red-500/30">
-                    Recomendado
-                  </span>
-                </div>
-                <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-                  Salta intro y créditos al instante, continúa temporadas sin parar
-                </p>
-              </div>
-              <Switch
-                checked={Boolean(playbackState?.marathon)}
-                ariaLabel="Alternar Modo Maratón"
-                onChange={(enabled) =>
-                  onSendCommand({
-                    action: 'setMarathon',
-                    payload: { enabled },
-                  })
-                }
-              />
-            </div>
-
-            {/* Saltar intro automático */}
-            <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
-              <div className="min-w-0 flex-1">
-                <span className="text-xs font-bold text-zinc-200">Saltar intro automático</span>
-                <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-                  Omite la intro cuando el servidor detecta las marcas de tiempo
-                </p>
-              </div>
-              <Switch
-                checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
-                ariaLabel="Alternar salto de intro automático"
-                onChange={(autoSkipIntro) =>
-                  onSendCommand({
-                    action: 'setPlaybackSettings',
-                    payload: { autoSkipIntro },
-                  })
-                }
-              />
-            </div>
-
-            {/* Siguiente capítulo automático */}
-            <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
-              <div className="min-w-0 flex-1">
-                <span className="text-xs font-bold text-zinc-200">Siguiente capítulo automático</span>
-                <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-                  Reproduce el próximo episodio al terminar el actual
-                </p>
-              </div>
-              <Switch
-                checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
-                ariaLabel="Alternar reproducción automática del siguiente capítulo"
-                onChange={(autoPlayNext) =>
-                  onSendCommand({
-                    action: 'setPlaybackSettings',
-                    payload: { autoPlayNext },
-                  })
-                }
-              />
-            </div>
-          </div>
-
           {/* Selector de servidores (Parte 3) */}
           <div className="space-y-2">
             <button
@@ -1085,7 +1013,82 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         </section>
       )}
 
-      {/* 4. Sección 'Más' plegada por defecto (acordeón accesible) */}
+      {/* 4. Toggles / automatización: Modo Maratón, Auto Saltar Intro, Auto Siguiente (accesible siempre) */}
+      <section
+        aria-label="Automatización de reproducción"
+        className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md space-y-2.5"
+      >
+        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+          Automatización de reproducción
+        </span>
+
+        {/* Modo Maratón */}
+        <div className="flex items-center justify-between min-h-[44px] gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-zinc-200">Modo Maratón</span>
+              <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-red-600/30 text-red-400 border border-red-500/30">
+                Recomendado
+              </span>
+            </div>
+            <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
+              Salta intro y créditos al instante, continúa temporadas sin parar
+            </p>
+          </div>
+          <Switch
+            checked={Boolean(playbackState?.marathon)}
+            ariaLabel="Alternar Modo Maratón"
+            onChange={(enabled) =>
+              onSendCommand({
+                action: 'setMarathon',
+                payload: { enabled },
+              })
+            }
+          />
+        </div>
+
+        {/* Saltar intro automático */}
+        <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
+          <div className="min-w-0 flex-1">
+            <span className="text-xs font-bold text-zinc-200">Saltar intro automático</span>
+            <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
+              Omite la intro cuando el servidor detecta las marcas de tiempo
+            </p>
+          </div>
+          <Switch
+            checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
+            ariaLabel="Alternar salto de intro automático"
+            onChange={(autoSkipIntro) =>
+              onSendCommand({
+                action: 'setPlaybackSettings',
+                payload: { autoSkipIntro },
+              })
+            }
+          />
+        </div>
+
+        {/* Siguiente capítulo automático */}
+        <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
+          <div className="min-w-0 flex-1">
+            <span className="text-xs font-bold text-zinc-200">Siguiente capítulo automático</span>
+            <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
+              Reproduce el próximo episodio al terminar el actual
+            </p>
+          </div>
+          <Switch
+            checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
+            ariaLabel="Alternar reproducción automática del siguiente capítulo"
+            onChange={(autoPlayNext) =>
+              onSendCommand({
+                action: 'setPlaybackSettings',
+                payload: { autoPlayNext },
+              })
+            }
+          />
+        </div>
+      </section>
+
+      {/* 5. Sección 'Más' plegada por defecto (acordeón accesible) */}
       <section
         aria-label="Opciones avanzadas"
         className="rounded-2xl bg-zinc-900/90 border border-zinc-800 overflow-hidden shadow-md"

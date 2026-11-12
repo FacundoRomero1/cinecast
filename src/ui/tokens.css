@@ -105,3 +105,11 @@ input {
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
 }
+
+/* El modo liviano no debe desactivar la transición de los interruptores */
+.cc-lite [role="switch"],
+.cc-lite [role="switch"] *,
+.cc-lite [data-testid="switch-track"],
+.cc-lite [data-testid="switch-thumb"] {
+  transition-duration: 150ms !important;
+}
