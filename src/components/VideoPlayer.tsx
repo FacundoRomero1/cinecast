@@ -1923,7 +1923,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     }}
                     className="bg-zinc-800 text-white rounded-md px-1.5 py-0.5 text-[11px] font-bold border border-zinc-600 outline-none hover:bg-zinc-700 cursor-pointer"
                   >
-                    {(realSeasons.length > 0 ? realSeasons : [{ seasonNumber: 1, name: 'Temporada 1', episodeCount: 1 }]).map((s) => (
+                    {(realSeasons.length > 0
+                      ? (realSeasons.some((s) => s.seasonNumber === selectedSeason)
+                          ? realSeasons
+                          : [...realSeasons, { seasonNumber: selectedSeason, name: `Temporada ${selectedSeason}`, episodeCount: 10 }].sort((a, b) => a.seasonNumber - b.seasonNumber))
+                      : Array.from({ length: Math.max(selectedSeason, media.seasonsCount || (media.seasons ? media.seasons.length : 1)) }, (_, i) => ({
+                          seasonNumber: i + 1,
+                          name: `Temporada ${i + 1}`,
+                          episodeCount: 10,
+                        }))
+                    ).map((s) => (
                       <option key={s.seasonNumber} value={s.seasonNumber}>
                         T{s.seasonNumber}
                       </option>
@@ -1940,8 +1949,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     className="bg-zinc-800 text-white rounded-md px-1.5 py-0.5 text-[11px] font-bold border border-zinc-600 outline-none hover:bg-zinc-700 cursor-pointer"
                   >
                     {(realEpisodes.length > 0
-                      ? realEpisodes
-                      : Array.from({ length: Math.max(1, realSeasons.find((s) => s.seasonNumber === selectedSeason)?.episodeCount || 8) }, (_, i) => ({
+                      ? (realEpisodes.some((e) => e.episode === selectedEpisode)
+                          ? realEpisodes
+                          : [...realEpisodes, { season: selectedSeason, episode: selectedEpisode, title: `Episodio ${selectedEpisode}` }].sort((a, b) => a.episode - b.episode))
+                      : Array.from({ length: Math.max(selectedEpisode, realSeasons.find((s) => s.seasonNumber === selectedSeason)?.episodeCount || 8) }, (_, i) => ({
                           season: selectedSeason,
                           episode: i + 1,
                           title: `Episodio ${i + 1}`,

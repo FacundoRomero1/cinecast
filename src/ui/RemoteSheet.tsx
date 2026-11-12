@@ -101,6 +101,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
       {/* Contenedor: En móvil (< 768px) es panel inferior al 92% del alto;
           en escritorio (>= 768px) es columna lateral derecha fija plegable sin tapar el centro */}
       <aside
+        aria-label="Control Remoto"
         data-testid="remote-sheet-container"
         style={dragOffset > 0 ? { transform: `translateY(${dragOffset}px)` } : undefined}
         className="fixed bottom-0 inset-x-0 h-[92dvh] max-h-[92dvh] rounded-t-3xl bg-zinc-950 border-t border-zinc-800 shadow-2xl z-50 flex flex-col md:inset-auto md:top-0 md:right-0 md:bottom-0 md:w-96 md:h-screen md:max-h-screen md:rounded-none md:border-t-0 md:border-l md:border-zinc-800 md:shadow-2xl md:z-40 transition-transform duration-200"

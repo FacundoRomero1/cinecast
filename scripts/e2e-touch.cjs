@@ -467,14 +467,14 @@ app.whenReady().then(async () => {
   }
 
   // =========================================================================
-  // Caso (4): Las 5 pestañas inferiores: cada toque cambia el hash
+  // =========================================================================
+  // Caso (4): Pestañas inferiores (Explorar, Buscar, Mi lista, Inicio cambian hash; Control abre RemoteSheet sin cambiar hash)
   // =========================================================================
   try {
     const tabs = [
       { label: 'Explorar', hash: '#/explorar' },
       { label: 'Buscar', hash: '#/buscar' },
       { label: 'Mi lista', hash: '#/lista' },
-      { label: 'Control', hash: '#/control' },
       { label: 'Inicio', hash: '#/' },
     ];
     let tabsPass = true;
@@ -493,7 +493,8 @@ app.whenReady().then(async () => {
       }
       await wait(500);
       const curHash = await winB.webContents.executeJavaScript('window.location.hash');
-      if (curHash !== tab.hash) {
+      const baseHash = (curHash || '').split('?')[0];
+      if (baseHash !== tab.hash) {
         tabsPass = false;
         tabDetails.push(`${tab.label}: esperado ${tab.hash}, actual ${curHash}`);
         break;
@@ -501,6 +502,55 @@ app.whenReady().then(async () => {
         tabDetails.push(`${tab.label}: OK`);
       }
     }
+
+    if (tabsPass) {
+      // Probar que tocar "Control" abre RemoteSheet sin cambiar de hash
+      const hashBeforeControl = await winB.webContents.executeJavaScript('window.location.hash');
+      const touchControl = await checkAndTouch(
+        winB,
+        `() => Array.from(document.querySelectorAll('nav[aria-label="Navegación móvil"] a, nav[aria-label="Navegación móvil"] button')).find(el => (el.textContent || '').includes('Control'))`,
+        'pestaña Control'
+      );
+      if (!touchControl.ok) {
+        tabsPass = false;
+        tabDetails.push(`Control: ${touchControl.error}`);
+      } else {
+        await wait(600);
+        const hashAfterControl = await winB.webContents.executeJavaScript('window.location.hash');
+        const sheetOpen = await winB.webContents.executeJavaScript(`Boolean(document.querySelector('aside[aria-label="Control Remoto"]'))`);
+        if (hashAfterControl !== hashBeforeControl) {
+          tabsPass = false;
+          tabDetails.push(`Control cambió hash: esperado ${hashBeforeControl}, actual ${hashAfterControl}`);
+        } else if (!sheetOpen) {
+          tabsPass = false;
+          tabDetails.push('Control no abrió RemoteSheet');
+        } else {
+          // Cerrar RemoteSheet y verificar que hash sigue igual
+          await winB.webContents.executeJavaScript(`
+            (() => {
+              const closeBtn = document.querySelector('button[aria-label*="Cerrar panel"]') ||
+                document.querySelector('aside[aria-label="Control Remoto"] button') ||
+                document.querySelector('aside button');
+              if (closeBtn) closeBtn.click();
+              else window.history.back();
+            })()
+          `);
+          await wait(500);
+          const hashAfterClose = await winB.webContents.executeJavaScript('window.location.hash');
+          const sheetClosed = await winB.webContents.executeJavaScript(`!document.querySelector('aside[aria-label="Control Remoto"]')`);
+          if (hashAfterClose !== hashBeforeControl) {
+            tabsPass = false;
+            tabDetails.push(`Cerrar Control cambió hash: ${hashAfterClose}`);
+          } else if (!sheetClosed) {
+            tabsPass = false;
+            tabDetails.push('RemoteSheet no se cerró');
+          } else {
+            tabDetails.push('Control (abre RemoteSheet, hash intacto, cierre OK)');
+          }
+        }
+      }
+    }
+
     results.push({ id: 4, name: 'Pestañas inferiores', pass: tabsPass, detail: tabDetails.join(' | ') });
   } catch (err) {
     results.push({ id: 4, name: 'Pestañas inferiores', pass: false, detail: err.message });
@@ -1833,24 +1883,19 @@ app.whenReady().then(async () => {
     const lanIp = getLanIp();
     await winB.webContents.executeJavaScript(`
       (function() {
+        function setVal(el, val) {
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (setter) setter.call(el, val);
+          else el.value = val;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
         const nameInput = document.getElementById('screen-name-input');
         const ipInput = document.getElementById('screen-ip-input');
         const portInput = document.getElementById('screen-port-input');
-        if (nameInput) {
-          nameInput.value = 'Sala';
-          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        if (ipInput) {
-          ipInput.value = '${lanIp}';
-          ipInput.dispatchEvent(new Event('input', { bubbles: true }));
-          ipInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        if (portInput) {
-          portInput.value = '3000';
-          portInput.dispatchEvent(new Event('input', { bubbles: true }));
-          portInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
+        if (nameInput) setVal(nameInput, 'Sala');
+        if (ipInput) setVal(ipInput, '${lanIp}');
+        if (portInput) setVal(portInput, '3000');
       })()
     `);
     await wait(300);
@@ -1921,7 +1966,9 @@ app.whenReady().then(async () => {
       (function() {
         const input = document.getElementById('screen-name-input');
         if (input) {
-          input.value = 'Living';
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (setter) setter.call(input, 'Living');
+          else input.value = 'Living';
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
         }
@@ -2024,24 +2071,19 @@ app.whenReady().then(async () => {
 
     await winB.webContents.executeJavaScript(`
       (function() {
+        function setVal(el, val) {
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (setter) setter.call(el, val);
+          else el.value = val;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
         const nameInput = document.getElementById('screen-name-input');
         const ipInput = document.getElementById('screen-ip-input');
         const portInput = document.getElementById('screen-port-input');
-        if (nameInput) {
-          nameInput.value = 'Inexistente';
-          nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-          nameInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        if (ipInput) {
-          ipInput.value = '192.0.2.1';
-          ipInput.dispatchEvent(new Event('input', { bubbles: true }));
-          ipInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        if (portInput) {
-          portInput.value = '9999';
-          portInput.dispatchEvent(new Event('input', { bubbles: true }));
-          portInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
+        if (nameInput) setVal(nameInput, 'Inexistente');
+        if (ipInput) setVal(ipInput, '192.0.2.1');
+        if (portInput) setVal(portInput, '9999');
       })()
     `);
     await wait(200);
