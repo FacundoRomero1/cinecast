@@ -109,7 +109,7 @@ export function openCatalogDb(baseDir: string, userDataPath?: string): OpenCatal
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const { DatabaseSync } = getSqliteModule();
   const db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA busy_timeout = 5000;');
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA cache_size = -4096; PRAGMA mmap_size = 0; PRAGMA temp_store = FILE; PRAGMA busy_timeout = 5000;');
 
   const sourceHash = computeCatalogSourceHash(basePath, extPath);
   let rebuilt = false;

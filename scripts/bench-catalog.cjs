@@ -354,16 +354,23 @@ async function main() {
     }
 
     if (onlySet.has('100k')) {
-      console.log('[bench-catalog] Generando catálogo sintético 100,000 en scratch/...');
-      await buildSyntheticCatalog(realItems, 100000, path.join(dir100k, 'public', 'data', 'catalog.json'));
+      const json100kPath = path.join(dir100k, 'public', 'data', 'catalog.json');
+      if (!fs.existsSync(json100kPath)) {
+        console.log('[bench-catalog] Generando catálogo sintético 100,000 en scratch/...');
+        await buildSyntheticCatalog(realItems, 100000, json100kPath);
+      } else {
+        console.log('[bench-catalog] Reutilizando catálogo sintético 100,000 en scratch/...');
+      }
       const r100k = invokeWorker('100k', dir100k, callsPerMode);
       runs.push(r100k);
       console.log(`[bench-catalog] ${r100k.tag} (${r100k.engine}): carga=${r100k.loadMs}ms heapUsed=${formatMiB(r100k.heapUsedBytes)} rssMiB=${r100k.rssMiB} MiB`);
     }
   } finally {
-    try {
-      fs.rmSync(scratchBase, { recursive: true, force: true });
-    } catch (_) {}
+    if (args.includes('--clean')) {
+      try {
+        fs.rmSync(scratchBase, { recursive: true, force: true });
+      } catch (_) {}
+    }
   }
 
   const mergedByTag = new Map();

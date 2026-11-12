@@ -166,3 +166,39 @@ Resultados medidos con `node --expose-gc scripts/bench-catalog.cjs` incorporando
 | `100k` | `memory` | `/api/home` | 121.83 / 140.04 | 72,435 | 126.00 / 158.43 | 4,153 (`gzip`) |
 | `100k` | `memory` | `/api/search?q=ba` | 296.15 / 344.22 | 76,127 | 296.76 / 321.24 | 9,890 (`gzip`) |
 | `100k` | `memory` | `/api/genres` | 18.33 / 27.15 | 572 | 17.80 / 20.23 | 572 (`identity`) |
+
+---
+
+## 7. Parte 5 — Optimización de memoria SQLite (`cache_size = -4096`, `mmap_size = 0`, `temp_store = FILE`)
+
+En `src/server/core/catalogDb.ts` se aplicaron PRAGMAs quirúrgicos de reducción de huella de memoria:
+- `PRAGMA cache_size = -4096`: Fija el límite de caché de páginas a 4 MiB (4096 KiB) en lugar del valor por defecto.
+- `PRAGMA mmap_size = 0`: Desactiva el mapeo de memoria directo en el OS para prevenir el inflado de RSS por páginas cacheadas por el kernel.
+- `PRAGMA temp_store = FILE`: Dirige las tablas y ordenamientos temporales a archivos de disco temporales en vez de memoria RAM.
+
+### Medición de Footprint tras 200 consultas variadas + `global.gc()` (`scripts/bench-catalog.cjs --calls=25`)
+
+| Escenario | Configuración SQLite | Ítems | JSON MiB | Carga (ms) | `heapUsed` tras GC | `rssMiB` tras GC |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `real-12119` | PRAGMAs optimizados (`-4096`, `mmap=0`, `temp=FILE`) | 12,119 | 23.67 MiB | 23.40 | 12.16 MiB | **65.79 MiB** |
+| `real-12119` | SQLite anterior | 12,119 | 23.67 MiB | 19.32 | 11.87 MiB | 68.30 MiB |
+| `real-12119` | Motor memoria | 12,119 | 23.67 MiB | 145.51 | 41.72 MiB | 114.67 MiB |
+| `100k` | PRAGMAs optimizados (`-4096`, `mmap=0`, `temp=FILE`) | 100,000 | 162.58 MiB | 113.97 | 11.98 MiB | **68.71 MiB** |
+| `100k` | Motor memoria | 100,000 | 162.58 MiB | 1,505.45 | 260.47 MiB | 406.55 MiB |
+
+### Latencias por endpoint con la configuración final (200 consultas variadas: 50 c/u)
+
+| Escenario | Endpoint | Sin gzip `p50 / p95` (ms) | Bytes sin gzip | Gzip `p50 / p95` (ms) | Bytes wire |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `real-12119` | `/api/catalog?limit=40&fields=card` | 0.86 / 1.23 | 14,821 | 1.03 / 1.17 | 3,581 (`gzip`) |
+| `real-12119` | `/api/home` | 153.05 / 195.39 | 50,671 | 157.63 / 225.37 | 11,651 (`gzip`) |
+| `real-12119` | `/api/search?q=ba` | 3.69 / 11.58 | 91,241 | 6.22 / 7.71 | 15,990 (`gzip`) |
+| `real-12119` | `/api/genres` | 0.56 / 0.70 | 558 | 0.50 / 1.17 | 558 (`identity`) |
+| `100k` | `/api/catalog?limit=40&fields=card` | 1.17 / 2.16 | 15,425 | 1.43 / 2.78 | 3,675 (`gzip`) |
+| `100k` | `/api/home` | 1755.69 / 2102.63 | 53,611 | 1757.67 / 1926.37 | 4,439 (`gzip`) |
+| `100k` | `/api/search?q=ba` | 23.60 / 25.52 | 90,951 | 23.67 / 25.01 | 6,906 (`gzip`) |
+| `100k` | `/api/genres` | 0.60 / 1.65 | 572 | 0.51 / 0.65 | 572 (`identity`) |
+
+**Conclusión de Parte 5**:
+La configuración SQLite con `cache_size = -4096`, `mmap_size = 0` y `temp_store = FILE` reduce el consumo de memoria física (RSS) a **65.79 MiB en 12k** y lo contiene en apenas **68.71 MiB en 100k** (reducción del 83.1% frente a los 406.55 MiB del motor en memoria).
+
