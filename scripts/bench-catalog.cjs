@@ -267,8 +267,10 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
     buildMs,
     loadMs,
     heapUsedBytes: memAfter.heapUsed,
+    heapUsedMiB: Number((memAfter.heapUsed / (1024 * 1024)).toFixed(2)),
     heapDeltaBytes: memAfter.heapUsed - memBefore.heapUsed,
     rssBytes: memAfter.rss,
+    rssMiB: Number((memAfter.rss / (1024 * 1024)).toFixed(2)),
     rssDeltaBytes: memAfter.rss - memBefore.rss,
     endpoints: results,
   };
@@ -340,7 +342,7 @@ async function main() {
       const realTagCount = realItems.length + (Array.isArray(extItems) ? extItems.length : 0);
       const rReal = invokeWorker(`real-${realTagCount}`, rootDir, callsPerMode);
       runs.push(rReal);
-      console.log(`[bench-catalog] ${rReal.tag}: carga=${rReal.loadMs}ms heap=${formatMiB(rReal.heapUsedBytes)} rss=${formatMiB(rReal.rssBytes)}`);
+      console.log(`[bench-catalog] ${rReal.tag} (${rReal.engine}): carga=${rReal.loadMs}ms heapUsed=${formatMiB(rReal.heapUsedBytes)} rssMiB=${rReal.rssMiB} MiB`);
     }
 
     if (onlySet.has('50k')) {
@@ -356,7 +358,7 @@ async function main() {
       await buildSyntheticCatalog(realItems, 100000, path.join(dir100k, 'public', 'data', 'catalog.json'));
       const r100k = invokeWorker('100k', dir100k, callsPerMode);
       runs.push(r100k);
-      console.log(`[bench-catalog] ${r100k.tag}: carga=${r100k.loadMs}ms heap=${formatMiB(r100k.heapUsedBytes)} rss=${formatMiB(r100k.rssBytes)}`);
+      console.log(`[bench-catalog] ${r100k.tag} (${r100k.engine}): carga=${r100k.loadMs}ms heapUsed=${formatMiB(r100k.heapUsedBytes)} rssMiB=${r100k.rssMiB} MiB`);
     }
   } finally {
     try {
@@ -370,11 +372,11 @@ async function main() {
   const allRuns = Array.from(mergedByTag.values());
 
   console.log('\n--- Resumen Carga & Memoria (tras gc) ---');
-  console.log('Escenario      | Ítems   | JSON MiB | Carga ms | Heap tras GC | RSS tras GC');
-  console.log('-'.repeat(78));
+  console.log('Escenario      | Engine | Ítems   | JSON MiB | Carga ms | Heap tras GC | rssMiB');
+  console.log('-'.repeat(86));
   for (const r of runs) {
     console.log(
-      `${r.tag.padEnd(14)} | ${String(r.itemCount).padStart(7)} | ${formatMiB(r.catalogJsonBytes).padStart(8)} | ${String(r.loadMs).padStart(8)} | ${formatMiB(r.heapUsedBytes).padStart(12)} | ${formatMiB(r.rssBytes).padStart(11)}`
+      `${r.tag.padEnd(14)} | ${String(r.engine || 'n/a').padEnd(6)} | ${String(r.itemCount).padStart(7)} | ${formatMiB(r.catalogJsonBytes).padStart(8)} | ${String(r.loadMs).padStart(8)} | ${formatMiB(r.heapUsedBytes).padStart(12)} | ${String(r.rssMiB ?? Number((r.rssBytes / (1024 * 1024)).toFixed(2))).padStart(6)} MiB`
     );
   }
 

@@ -130,3 +130,39 @@ Prueba ejecutada generando `public/data/catalog.extended.json` (**2,000** ítems
 | `/api/home` | 2.63 / 4.82 | 69,780 | 3.09 / 4.14 | 9,735 (`gzip`) |
 | `/api/search?q=ba` | 4.47 / 6.36 | 91,241 | 3.21 / 4.49 | 15,990 (`gzip`) |
 | `/api/genres` | 0.39 / 0.54 | 558 | 0.39 / 0.53 | 558 (`identity`) |
+
+---
+
+## 6. Parte 0 — Comparativa SQLite vs Motor Memoria con `rssMiB` (12k y 100k)
+
+Resultados medidos con `node --expose-gc scripts/bench-catalog.cjs` incorporando `rssMiB` (`process.memoryUsage().rss`) y comparando `sqlite` vs `CINECAST_CATALOG_ENGINE=memory`:
+
+### Carga y Footprint en Memoria (tras `global.gc()`)
+
+| Escenario | Engine | Ítems | JSON MiB | Carga (ms) | `heapUsed` tras GC | `rssMiB` tras GC |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `real-12119` | `sqlite` | 12,119 | 23.67 MiB | 19.32 | 11.87 MiB | 68.30 MiB |
+| `real-12119` | `memory` | 12,119 | 23.67 MiB | 145.51 | 41.72 MiB | 114.67 MiB |
+| `100k` | `sqlite` | 100,000 | 162.58 MiB | 155.64 | 11.92 MiB | 39.59 MiB |
+| `100k` | `memory` | 100,000 | 162.58 MiB | 1,505.45 | 260.47 MiB | 406.55 MiB |
+
+### Latencia y Bytes por Endpoint (200 llamadas c/u)
+
+| Escenario | Engine | Endpoint | Sin gzip `p50 / p95` (ms) | Bytes sin gzip | Gzip `p50 / p95` (ms) | Bytes wire |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| `real-12119` | `sqlite` | `/api/catalog?limit=40&fields=card` | 0.83 / 1.55 | 14,821 | 1.01 / 1.53 | 3,581 (`gzip`) |
+| `real-12119` | `sqlite` | `/api/home` | 2.29 / 3.62 | 69,780 | 2.76 / 3.56 | 9,735 (`gzip`) |
+| `real-12119` | `sqlite` | `/api/search?q=ba` | 2.80 / 5.35 | 91,241 | 3.15 / 4.13 | 15,990 (`gzip`) |
+| `real-12119` | `sqlite` | `/api/genres` | 0.39 / 0.51 | 558 | 0.38 / 0.52 | 558 (`identity`) |
+| `real-12119` | `memory` | `/api/catalog?limit=40&fields=card` | 0.52 / 0.79 | 14,821 | 0.70 / 0.93 | 3,581 (`gzip`) |
+| `real-12119` | `memory` | `/api/home` | 10.83 / 14.61 | 69,780 | 12.34 / 15.16 | 9,735 (`gzip`) |
+| `real-12119` | `memory` | `/api/search?q=ba` | 38.69 / 42.58 | 76,003 | 40.42 / 51.99 | 9,845 (`gzip`) |
+| `real-12119` | `memory` | `/api/genres` | 1.38 / 3.26 | 558 | 1.44 / 3.87 | 558 (`identity`) |
+| `100k` | `sqlite` | `/api/catalog?limit=40&fields=card` | 1.06 / 1.65 | 15,425 | 1.37 / 1.96 | 3,675 (`gzip`) |
+| `100k` | `sqlite` | `/api/home` | 2.71 / 5.39 | 72,435 | 2.96 / 3.90 | 4,153 (`gzip`) |
+| `100k` | `sqlite` | `/api/search?q=ba` | 22.15 / 29.94 | 90,951 | 22.15 / 26.39 | 6,906 (`gzip`) |
+| `100k` | `sqlite` | `/api/genres` | 0.38 / 0.48 | 572 | 0.37 / 0.49 | 572 (`identity`) |
+| `100k` | `memory` | `/api/catalog?limit=40&fields=card` | 4.21 / 6.03 | 15,425 | 4.26 / 5.59 | 3,675 (`gzip`) |
+| `100k` | `memory` | `/api/home` | 121.83 / 140.04 | 72,435 | 126.00 / 158.43 | 4,153 (`gzip`) |
+| `100k` | `memory` | `/api/search?q=ba` | 296.15 / 344.22 | 76,127 | 296.76 / 321.24 | 9,890 (`gzip`) |
+| `100k` | `memory` | `/api/genres` | 18.33 / 27.15 | 572 | 17.80 / 20.23 | 572 (`identity`) |
