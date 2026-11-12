@@ -501,9 +501,11 @@ app.whenReady().then(async () => {
     try {
       // Asegurar que PC esté en #/ sin reproductor abierto
       await winA.webContents.executeJavaScript(`
-        if (window.location.hash !== '#/') window.location.hash = '#/';
-        const closeBtn = document.querySelector('button[title*="Cerrar"], button[aria-label*="Cerrar"]');
-        if (closeBtn) closeBtn.click();
+        (() => {
+          if (window.location.hash !== '#/') window.location.hash = '#/';
+          const closeBtn = document.querySelector('button[title*="Volver atrás"], button[aria-label*="Cerrar"], button[title*="Cerrar"]');
+          if (closeBtn) closeBtn.click();
+        })();
       `);
       if (tc.isMobile) {
         await winB.webContents.executeJavaScript(`
@@ -512,7 +514,11 @@ app.whenReady().then(async () => {
       }
       await wait(800);
 
-      const targetCardSelector = `() => document.querySelectorAll('section div[class*="group relative"] div[class*="rounded-full bg-red-600"]')[${tc.cardIdx}]`;
+      const targetCardSelector = `() => {
+        const playBtn = document.querySelectorAll('section div[class*="group relative"] div[class*="rounded-full bg-red-600"]')[${tc.cardIdx}];
+        if (playBtn) return playBtn;
+        return document.querySelectorAll('div[role="button"][class*="group relative"]')[${tc.cardIdx}];
+      }`;
       const touchRes = await checkAndTouch(tc.fromWin, targetCardSelector, `play de tarjeta ${tc.name}`);
       if (!touchRes.ok) {
         results.push({ id: 1, name: `Continuar viendo - ${tc.name}`, pass: false, detail: touchRes.error });
@@ -548,9 +554,11 @@ app.whenReady().then(async () => {
 
   // Cerrar reproductor en PC tras las pruebas de Continuar viendo
   await winA.webContents.executeJavaScript(`
-    if (window.location.hash !== '#/') window.location.hash = '#/';
-    const closeBtn = document.querySelector('button[title*="Cerrar"], button[aria-label*="Cerrar"]');
-    if (closeBtn) closeBtn.click();
+    (() => {
+      if (window.location.hash !== '#/') window.location.hash = '#/';
+      const closeBtn = document.querySelector('button[title*="Volver atrás"], button[aria-label*="Cerrar"], button[title*="Cerrar"]');
+      if (closeBtn) closeBtn.click();
+    })();
   `);
   await wait(800);
 

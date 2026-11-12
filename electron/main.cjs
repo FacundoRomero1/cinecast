@@ -1045,26 +1045,55 @@ function createPlayerWindow(url) {
 // =========================================================================
 // 7. CANALES IPC PARA CONTROL NATIVO Y GESTIÓN DE EMBEDS
 // =========================================================================
-// Simular pulsación de tecla nativa con secuencia completa (keyDown + char + keyUp)
+function normalizeChromiumKey(key) {
+  const map = {
+    ArrowUp: 'Up',
+    ArrowDown: 'Down',
+    ArrowLeft: 'Left',
+    ArrowRight: 'Right',
+    navigateUp: 'Up',
+    navigateDown: 'Down',
+    navigateLeft: 'Left',
+    navigateRight: 'Right',
+    select: 'Enter',
+    enter: 'Enter',
+    back: 'Escape',
+  };
+  return map[key] || key;
+}
+
+function dispatchKeyToWc(wc, rawKey) {
+  if (!wc || wc.isDestroyed()) return false;
+  const keyCode = normalizeChromiumKey(rawKey);
+  try {
+    wc.focus();
+    wc.sendInputEvent({ type: 'keyDown', keyCode });
+    // No enviar 'char' para teclas de control o de navegación para evitar eventos corruptos en Chromium
+    if (keyCode.length === 1 && keyCode >= ' ' && keyCode <= '~') {
+      wc.sendInputEvent({ type: 'char', keyCode });
+    }
+    wc.sendInputEvent({ type: 'keyUp', keyCode });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Simular pulsación de tecla nativa con secuencia keyDown + keyUp con aceleradores de Chromium
 ipcMain.handle('send-native-key', (_event, keyCode) => {
   if (!mainWindow) return false;
+  let sent = false;
   try {
-    mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode });
-    mainWindow.webContents.sendInputEvent({ type: 'char', keyCode });
-    mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+    sent = dispatchKeyToWc(mainWindow.webContents, keyCode);
 
     // También reenviar a webviews invitados (YouTube TV, Spotify) si están activos
     const allWcs = webContents.getAllWebContents();
     for (const wc of allWcs) {
       if (wc.id !== mainWindow.webContents.id) {
-        try {
-          wc.sendInputEvent({ type: 'keyDown', keyCode });
-          wc.sendInputEvent({ type: 'char', keyCode });
-          wc.sendInputEvent({ type: 'keyUp', keyCode });
-        } catch (_) {}
+        dispatchKeyToWc(wc, keyCode);
       }
     }
-    return true;
+    return sent;
   } catch (_) {
     return false;
   }
@@ -1080,11 +1109,8 @@ ipcMain.handle('send-key-to-webview', (_event, keyPayload) => {
     for (const wc of allWcs) {
       if (mainWindow && wc.id === mainWindow.webContents.id) continue;
       const u = wc.getURL() || '';
-      if (u.includes('youtube.com') || u.includes('spotify.com') || u.includes('tv')) {
-        wc.sendInputEvent({ type: 'keyDown', keyCode });
-        wc.sendInputEvent({ type: 'char', keyCode });
-        wc.sendInputEvent({ type: 'keyUp', keyCode });
-        sent = true;
+      if (u.includes('youtube.com') || u.includes('spotify.com') || u.includes('tv') || u.includes('__test/keys.html')) {
+        sent = dispatchKeyToWc(wc, keyCode) || sent;
       }
     }
   } catch (err) {

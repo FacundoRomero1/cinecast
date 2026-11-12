@@ -908,16 +908,19 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       case 'enter':
       case 'back': {
         const keyMap: Record<string, string> = {
-          navigateUp: 'ArrowUp',
-          navigateDown: 'ArrowDown',
-          navigateLeft: 'ArrowLeft',
-          navigateRight: 'ArrowRight',
+          navigateUp: 'Up',
+          navigateDown: 'Down',
+          navigateLeft: 'Left',
+          navigateRight: 'Right',
           select: 'Enter',
           enter: 'Enter',
           back: 'Escape',
         };
         const keyCode = keyMap[cmd.action];
         if (keyCode) {
+          if (activeHub === 'youtube' || activeHub === 'spotify') {
+            window.electronAPI?.sendKeyToWebview?.({ keyCode });
+          }
           window.electronAPI?.sendNativeKey?.(keyCode);
         }
         break;

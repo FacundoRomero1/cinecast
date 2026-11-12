@@ -192,6 +192,32 @@ export function createApp(options: CreateAppOptions): Express {
 </body>
 </html>`);
     });
+
+    app.get('/__test/keys.html', (_req, res) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Key Tester</title>
+</head>
+<body style="background:#111; color:#eee; font-family:sans-serif; padding:20px;">
+  <h2>Key Tester</h2>
+  <div id="log">Esperando teclas...</div>
+  <script>
+    window.__keys = [];
+    window.addEventListener('keydown', (e) => {
+      const item = { key: e.key, keyCode: e.keyCode, time: Date.now() };
+      window.__keys.push(item);
+      const log = document.getElementById('log');
+      if (log) {
+        log.textContent = JSON.stringify(window.__keys);
+      }
+    });
+  </script>
+</body>
+</html>`);
+    });
   }
 
   return app;

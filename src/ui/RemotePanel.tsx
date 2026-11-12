@@ -47,6 +47,7 @@ export interface RemotePanelProps {
   onOpenAudioModal?: () => void;
   onOpenGuestModal?: () => void;
   onNavigateToCatalog?: () => void;
+  onOpenBigPad?: () => void;
 }
 
 function formatTime(seconds: number = 0): string {
@@ -71,6 +72,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   onOpenAudioModal,
   onOpenGuestModal,
   onNavigateToCatalog,
+  onOpenBigPad,
 }) => {
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isChaptersOpen, setIsChaptersOpen] = useState(false);
@@ -91,15 +93,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   const isYouTube = activeHub === 'youtube';
   const isSpotify = activeHub === 'spotify';
 
-  const [isPadOpen, setIsPadOpen] = useState<boolean>(() => {
-    return isYouTube || isSpotify || activeHub === 'sports';
-  });
-
-  useEffect(() => {
-    if (isYouTube || isSpotify || activeHub === 'sports') {
-      setIsPadOpen(true);
-    }
-  }, [isYouTube, isSpotify, activeHub]);
+  // Pad plegado por defecto según especificación
+  const [isPadOpen, setIsPadOpen] = useState<boolean>(false);
 
   const title =
     playbackState?.mediaTitle ||
@@ -432,33 +427,60 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         </button>
       </nav>
 
-      {/* Botón destacado Pad (Mouse y Cruceta) visible siempre */}
+      {/* Botón destacado Pad (Mouse y Cruceta) - Plegado por defecto */}
       <section aria-label="Control Pad" className="space-y-3">
-        <button
-          type="button"
-          aria-label="Pad táctil y cruceta"
-          onClick={() => setIsPadOpen((p) => !p)}
-          className={`w-full min-h-[48px] px-4 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
-            isPadOpen
-              ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
-              : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
-          }`}
-        >
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow">
-              <MousePointer className="w-4 h-4" />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Pad táctil y cruceta"
+            onClick={() => {
+              if (onOpenBigPad) {
+                onOpenBigPad();
+              } else {
+                setIsPadOpen((p) => !p);
+              }
+            }}
+            className={`flex-1 min-h-[48px] px-4 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
+              isPadOpen
+                ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
+                : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow">
+                <MousePointer className="w-4 h-4" />
+              </div>
+              <div className="text-left">
+                <span className="block text-white text-xs sm:text-sm font-extrabold">
+                  Pad
+                </span>
+                <span className="block text-[11px] text-zinc-400 font-normal">
+                  Controlar cursor y flechas en pantalla
+                </span>
+              </div>
             </div>
-            <div className="text-left">
-              <span className="block text-white text-xs sm:text-sm font-extrabold">
-                Pad táctil y cruceta TV
+            {onOpenBigPad ? (
+              <span className="min-h-[32px] px-2.5 py-1 rounded-xl bg-zinc-800 text-[11px] font-bold text-zinc-300 border border-zinc-700 flex items-center">
+                Abrir Pad
               </span>
-              <span className="block text-[11px] text-zinc-400 font-normal">
-                {isPadOpen ? 'Ocultar controles de mouse y D-Pad' : 'Controlar cursor y flechas en pantalla'}
-              </span>
-            </div>
-          </div>
-          {isPadOpen ? <ChevronUp className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
-        </button>
+            ) : isPadOpen ? (
+              <ChevronUp className="w-4 h-4 text-zinc-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-zinc-400" />
+            )}
+          </button>
+
+          {onOpenBigPad && (
+            <button
+              type="button"
+              aria-label="Alternar Pad integrado"
+              onClick={() => setIsPadOpen((p) => !p)}
+              className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 flex items-center justify-center text-zinc-400 transition"
+            >
+              {isPadOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+          )}
+        </div>
 
         {isPadOpen && (
           <div className="p-3.5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-xl">
