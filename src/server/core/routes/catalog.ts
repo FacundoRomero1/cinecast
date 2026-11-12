@@ -2,81 +2,28 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'node:crypto';
-import { extractTmdbId, type MediaServerEntry } from '../tmdb.js';
-import { normalizeGenres } from '../genres.js';
+import {
+  type CatalogItem,
+  type CatalogCardItem,
+  toCatalogCard,
+  isCatalogMemoryEngine,
+  resolveCatalogJsonPaths,
+  loadNormalizedCatalogItems,
+} from '../catalogSchema.js';
+import {
+  openCatalogDb,
+  queryCatalogByIds,
+  queryCatalogPage,
+  queryGenresList,
+  queryHomeRows,
+} from '../catalogDb.js';
 
-export interface CatalogItem {
-  id: string;
-  tmdbId: number;
-  title: string;
-  originalTitle: string;
-  originalLanguage: string;
-  spokenLanguages: string[];
-  overview: string;
-  posterPath: string;
-  posterUrl: string;
-  backdropPath: string;
-  backdropUrl: string;
-  releaseDate: string;
-  year: number;
-  genres: string[];
-  voteAverage: number;
-  rating: number;
-  streamUrl: string;
-  streamType: string;
-  quality: string;
-  source: string;
-  category: string;
-  type: string;
-  upcoming: boolean;
-  addedAt?: string | undefined;
-  servers: MediaServerEntry[];
-}
-
-export interface CatalogCardItem {
-  id: string;
-  tmdbId: number;
-  title: string;
-  posterUrl: string;
-  backdropUrl: string;
-  year: number;
-  rating: number;
-  genres: string[];
-  category: string;
-  type: string;
-  quality: string;
-  upcoming: boolean;
-}
-
-interface RawCatalogEntry {
-  id?: string;
-  tmdbId?: number | string;
-  title?: string;
-  originalTitle?: string;
-  originalLanguage?: string;
-  spokenLanguages?: string[];
-  overview?: string;
-  posterPath?: string;
-  posterUrl?: string;
-  backdropPath?: string;
-  backdropUrl?: string;
-  releaseDate?: string;
-  year?: number;
-  genres?: string[];
-  voteAverage?: number;
-  rating?: number;
-  streamUrl?: string;
-  streamType?: string;
-  quality?: string;
-  source?: string;
-  category?: string;
-  type?: string;
-  addedAt?: string;
-  servers?: MediaServerEntry[];
-}
+export type { CatalogItem, CatalogCardItem };
+export { toCatalogCard };
 
 export interface CatalogRouterOptions {
   baseDir?: string | undefined;
+  userDataPath?: string | undefined;
   posterCacheDir: string;
   userAgent?: string | undefined;
   getCatalogCache: () => CatalogItem[] | null;
@@ -85,23 +32,6 @@ export interface CatalogRouterOptions {
 
 const DEFAULT_CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-export function toCatalogCard(item: CatalogItem): CatalogCardItem {
-  return {
-    id: item.id,
-    tmdbId: item.tmdbId,
-    title: item.title,
-    posterUrl: item.posterUrl,
-    backdropUrl: item.backdropUrl,
-    year: item.year,
-    rating: item.rating,
-    genres: item.genres,
-    category: item.category,
-    type: item.type,
-    quality: item.quality,
-    upcoming: item.upcoming,
-  };
-}
 
 export function loadServerCatalogFromDisk(
   baseDir: string,
@@ -112,72 +42,18 @@ export function loadServerCatalogFromDisk(
   if (cached && cached.length > 0) {
     return cached;
   }
-  const candidates = [
-    path.join(baseDir, 'public', 'data', 'catalog.json'),
-    path.join(baseDir, 'dist', 'data', 'catalog.json'),
-    path.join(process.cwd(), 'public', 'data', 'catalog.json'),
-  ];
-  const currentYear = new Date().getFullYear();
+  const { basePath, extPath } = resolveCatalogJsonPaths(baseDir);
+  if (!basePath) return [];
 
-  for (const p of candidates) {
-    try {
-      if (fs.existsSync(p)) {
-        const raw = fs.readFileSync(p, 'utf-8');
-        const parsed: unknown = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const mapped: CatalogItem[] = (parsed as RawCatalogEntry[]).map((m) => {
-            const isTV = m.category === 'series' || m.category === 'anime' || m.type === 'series';
-            const tmdbId = Number(m.tmdbId || extractTmdbId(m.id) || 0);
-            const poster = m.posterUrl || m.posterPath || '';
-            const backdrop = m.backdropUrl || m.backdropPath || poster;
-            const rating = Number((m.rating ?? m.voteAverage ?? 7.5).toFixed(1));
-            const origLang = m.originalLanguage || (m.category === 'anime' ? 'ja' : 'es');
-            const category = m.category || (isTV ? 'series' : 'movie');
-            const year =
-              m.year || (m.releaseDate ? parseInt(m.releaseDate.slice(0, 4), 10) || 2024 : 2024);
-            const normalizedGenres = normalizeGenres(
-              Array.isArray(m.genres) ? m.genres : [],
-              category
-            );
-
-            return {
-              id: m.id || `tmdb-${category}-${tmdbId}`,
-              tmdbId,
-              title: m.title || 'Sin Título',
-              originalTitle: m.originalTitle || m.title || 'Sin Título',
-              originalLanguage: origLang,
-              spokenLanguages: m.spokenLanguages || (origLang === 'es' ? ['es'] : ['es', origLang]),
-              overview: m.overview || '',
-              posterPath: poster,
-              posterUrl: poster,
-              backdropPath: backdrop,
-              backdropUrl: backdrop,
-              releaseDate: m.releaseDate || '2024-01-01',
-              year,
-              genres: normalizedGenres,
-              voteAverage: rating,
-              rating,
-              streamUrl: m.streamUrl || '',
-              streamType: m.streamType || 'iframe',
-              quality: m.quality || (rating > 8.0 ? '4K Ultra HD' : '1080p'),
-              source: m.source || 'tmdb',
-              category,
-              type: isTV ? 'series' : 'movie',
-              upcoming: year > currentYear,
-              addedAt: m.addedAt,
-              servers: (m.servers || []).filter(
-                (s) => !s.name?.toLowerCase().includes('embed.su') && !s.url?.includes('embed.su')
-              ),
-            };
-          });
-          console.log(`[Catalog Server] Cargados ${mapped.length} títulos compactos en memoria.`);
-          setCatalogCache(mapped);
-          return mapped;
-        }
-      }
-    } catch (e) {
-      console.warn('[Catalog Server] Error al leer catálogo desde', p, e);
+  try {
+    const mapped = loadNormalizedCatalogItems(basePath, extPath);
+    if (mapped.length > 0) {
+      console.log(`[Catalog Server] Cargados ${mapped.length} títulos compactos en memoria.`);
+      setCatalogCache(mapped);
+      return mapped;
     }
+  } catch (e) {
+    console.warn('[Catalog Server] Error al leer catálogo desde', basePath, e);
   }
   return [];
 }
@@ -208,10 +84,51 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
     return loadServerCatalogFromDisk(baseDir, options.getCatalogCache, options.setCatalogCache);
   }
 
+  function tryOpenDb() {
+    if (isCatalogMemoryEngine()) return null;
+    try {
+      return openCatalogDb(baseDir, options.userDataPath);
+    } catch (e) {
+      console.warn('[Catalog Server] SQLite no disponible, usando memoria:', e);
+      return null;
+    }
+  }
+
+  function buildEtag(seed: string, urlKey: string): string {
+    const dayYear = new Date().getFullYear();
+    const h = crypto
+      .createHash('sha1')
+      .update(`${seed}|${dayYear}|${urlKey}`)
+      .digest('base64url')
+      .slice(0, 16);
+    return `W/"${h}"`;
+  }
+
+  function applyCacheHeadersAndCheck304(
+    req: { headers: Record<string, string | string[] | undefined>; originalUrl: string },
+    res: { setHeader: (k: string, v: string) => void; status: (code: number) => { end: () => void } },
+    seed: string | null
+  ): boolean {
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    if (!seed) return false;
+    const etag = buildEtag(seed, req.originalUrl);
+    res.setHeader('ETag', etag);
+    const inm = req.headers['if-none-match'];
+    const rawInm = Array.isArray(inm) ? inm.join(',') : inm || '';
+    if (rawInm && (rawInm === '*' || rawInm.split(',').map((s) => s.trim()).includes(etag))) {
+      res.status(304).end();
+      return true;
+    }
+    return false;
+  }
+
   router.get('/catalog', (req, res) => {
-    const catalog = loadServerCatalog();
     const rawIds = typeof req.query.ids === 'string' ? req.query.ids.trim() : '';
     const fields = typeof req.query.fields === 'string' ? req.query.fields.trim().toLowerCase() : '';
+    const dbOpened = tryOpenDb();
+    if (applyCacheHeadersAndCheck304(req, res, dbOpened?.sourceHash ?? 'mem')) {
+      return;
+    }
 
     if (rawIds) {
       const requestedIds = rawIds
@@ -219,26 +136,32 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
         .map((s) => s.trim())
         .filter(Boolean);
 
-      const byId = new Map<string, CatalogItem>();
-      for (const item of catalog) {
-        byId.set(item.id, item);
-        if (item.tmdbId) {
-          byId.set(String(item.tmdbId), item);
+      let items: Array<CatalogCardItem | CatalogItem>;
+      if (dbOpened) {
+        items = queryCatalogByIds(dbOpened.db, requestedIds, fields);
+      } else {
+        const catalog = loadServerCatalog();
+        const byId = new Map<string, CatalogItem>();
+        for (const item of catalog) {
+          byId.set(item.id, item);
+          if (item.tmdbId) {
+            byId.set(String(item.tmdbId), item);
+          }
         }
+
+        const matched: CatalogItem[] = [];
+        const seen = new Set<string>();
+        for (const id of requestedIds) {
+          const found = byId.get(id);
+          if (found && !seen.has(found.id)) {
+            seen.add(found.id);
+            matched.push(found);
+          }
+        }
+        items = fields === 'card' || !fields ? matched.map(toCatalogCard) : matched;
       }
 
-      const matched: CatalogItem[] = [];
-      const seen = new Set<string>();
-      for (const id of requestedIds) {
-        const found = byId.get(id);
-        if (found && !seen.has(found.id)) {
-          seen.add(found.id);
-          matched.push(found);
-        }
-      }
-
-      const items = fields === 'card' || !fields ? matched.map(toCatalogCard) : matched;
-      res.setHeader('Cache-Control', 'public, max-age=120');
+      res.setHeader('Cache-Control', 'public, max-age=60');
       res.json({
         page: 1,
         limit: items.length || 1,
@@ -276,6 +199,28 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
     const yearTo = rawYearTo ? parseInt(rawYearTo, 10) : NaN;
     const minRating = rawMinRating ? parseFloat(rawMinRating) : NaN;
 
+    if (dbOpened) {
+      const responseBody = queryCatalogPage(dbOpened.db, {
+        page,
+        limit,
+        q,
+        category,
+        requestedGenres,
+        yearFrom,
+        yearTo,
+        minRating,
+        sort: rawSort,
+        includeUpcoming,
+        onlySpanish,
+        includeFacets,
+        fields,
+      });
+      res.setHeader('Cache-Control', 'public, max-age=60');
+      res.json(responseBody);
+      return;
+    }
+
+    const catalog = loadServerCatalog();
     let filtered = catalog;
 
     if (!includeUpcoming) {
@@ -382,18 +327,31 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
       };
     }
 
-    res.setHeader('Cache-Control', 'public, max-age=120');
+    res.setHeader('Cache-Control', 'public, max-age=60');
     res.json(responseBody);
   });
 
-  router.get('/genres', (_req, res) => {
-    const catalog = loadServerCatalog();
-    const list = computeGenreList(catalog);
-    res.setHeader('Cache-Control', 'public, max-age=300');
+  router.get('/genres', (req, res) => {
+    const dbOpened = tryOpenDb();
+    if (applyCacheHeadersAndCheck304(req, res, dbOpened?.sourceHash ?? 'mem')) {
+      return;
+    }
+    const list = dbOpened ? queryGenresList(dbOpened.db) : computeGenreList(loadServerCatalog());
     res.json(list);
   });
 
   router.get('/home', (req, res) => {
+    const rawSeen = typeof req.query.seen === 'string' ? req.query.seen.trim() : '';
+    const dbOpened = tryOpenDb();
+    if (applyCacheHeadersAndCheck304(req, res, dbOpened?.sourceHash ?? 'mem')) {
+      return;
+    }
+    if (dbOpened) {
+      const rows = queryHomeRows(dbOpened.db, rawSeen);
+      res.json({ rows });
+      return;
+    }
+
     const catalog = loadServerCatalog();
     const currentYear = new Date().getFullYear();
     const available = catalog.filter((m) => !m.upcoming);
@@ -401,7 +359,6 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
     const rows: Array<{ id: string; title: string; items: CatalogCardItem[] }> = [];
 
     // 0. Recomendados para vos (si viene seen=id1,id2,...)
-    const rawSeen = typeof req.query.seen === 'string' ? req.query.seen.trim() : '';
     if (rawSeen) {
       const seenIds = rawSeen
         .split(',')
@@ -512,7 +469,7 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
       });
     }
 
-    res.setHeader('Cache-Control', 'public, max-age=120');
+    res.setHeader('Cache-Control', 'public, max-age=60');
     res.json({ rows });
   });
 

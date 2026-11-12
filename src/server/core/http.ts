@@ -1,4 +1,5 @@
 import express, { type Express, type Request } from 'express';
+import compression from 'compression';
 import path from 'path';
 import { createSyncRouter } from './routes/sync.js';
 import { createCatalogRouter, type CatalogItem, type CatalogRouterOptions } from './routes/catalog.js';
@@ -33,6 +34,7 @@ export interface CreateAppOptions {
 export function createApp(options: CreateAppOptions): Express {
   const app = express();
 
+  app.use(compression());
   app.use(express.json());
 
   // Allow CORS so downloaded portable HTML apps or ais-pre / ais-dev cross-origins can always reach the sync API
@@ -66,6 +68,7 @@ export function createApp(options: CreateAppOptions): Express {
 
   const catalogOpts: CatalogRouterOptions = {
     baseDir,
+    userDataPath: userDataDir,
     posterCacheDir,
     userAgent: options.userAgent,
     getCatalogCache,
@@ -74,6 +77,7 @@ export function createApp(options: CreateAppOptions): Express {
 
   const tmdbDetailOpts: TmdbDetailOptions = {
     baseDir,
+    userDataPath: userDataDir,
     mediaCacheDir,
     getCatalogCache,
     setCatalogCache,
@@ -81,6 +85,7 @@ export function createApp(options: CreateAppOptions): Express {
 
   const searchOpts: SearchOptions = {
     baseDir,
+    userDataPath: userDataDir,
     userAgent: options.userAgent,
     getCatalogCache,
     setCatalogCache,

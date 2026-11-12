@@ -3,9 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import { TMDB_URL, getTmdbKey, extractTmdbId } from '../tmdb.js';
 import { loadServerCatalogFromDisk, type CatalogItem } from './catalog.js';
+import { isCatalogMemoryEngine } from '../catalogSchema.js';
+import { findCatalogItemInDb, openCatalogDb } from '../catalogDb.js';
 
 export interface TmdbDetailOptions {
   baseDir?: string | undefined;
+  userDataPath?: string | undefined;
   mediaCacheDir: string;
   getCatalogCache: () => CatalogItem[] | null;
   setCatalogCache: (cache: CatalogItem[]) => void;
@@ -212,7 +215,16 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
       const detailUrl = `${TMDB_URL}/${cleanType}/${tmdbId}?api_key=${apiKey}&language=es-MX&append_to_response=credits,videos,recommendations`;
       const tmdbRes = await fetch(detailUrl, { signal: AbortSignal.timeout(7000) });
       if (!tmdbRes.ok) {
-        const cat = loadServerCatalog().find((m) => String(m.tmdbId) === tmdbId || m.id === id);
+        let cat: CatalogItem | null = null;
+        if (!isCatalogMemoryEngine()) {
+          try {
+            const opened = openCatalogDb(baseDir, options.userDataPath);
+            if (opened) cat = findCatalogItemInDb(opened.db, tmdbId, id);
+          } catch {}
+        }
+        if (!cat) {
+          cat = loadServerCatalog().find((m) => String(m.tmdbId) === tmdbId || m.id === id) || null;
+        }
         if (cat) {
           res.json(cat);
           return;

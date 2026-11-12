@@ -132,23 +132,50 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
 
   const { createApp } = await import('../src/server/core/http.js');
   const { loadServerCatalogFromDisk } = await import('../src/server/core/routes/catalog.js');
+  const { isCatalogMemoryEngine } = await import('../src/server/core/catalogSchema.js');
+  const { openCatalogDb, closeAllCatalogDbs } = await import('../src/server/core/catalogDb.js');
 
-  global.gc();
-  const memBefore = process.memoryUsage();
-
+  const isMemory = isCatalogMemoryEngine();
   let sharedCache = null;
-  const tLoad0 = performance.now();
-  const loaded = loadServerCatalogFromDisk(
-    workDir,
-    () => sharedCache,
-    (c) => {
-      sharedCache = c;
-    }
-  );
-  const loadMs = Number((performance.now() - tLoad0).toFixed(2));
+  let buildMs = 0;
+  let dbBytes = 0;
+  let itemCount = 0;
+  let loadMs = 0;
+  let memBefore;
+  let memAfter;
 
-  global.gc();
-  const memAfter = process.memoryUsage();
+  if (isMemory) {
+    global.gc();
+    memBefore = process.memoryUsage();
+    const tLoad0 = performance.now();
+    const loaded = loadServerCatalogFromDisk(
+      workDir,
+      () => sharedCache,
+      (c) => {
+        sharedCache = c;
+      }
+    );
+    loadMs = Number((performance.now() - tLoad0).toFixed(2));
+    itemCount = loaded.length;
+    global.gc();
+    memAfter = process.memoryUsage();
+  } else {
+    const tBuild0 = performance.now();
+    const first = openCatalogDb(workDir, path.join(workDir, '.cinecast-data'));
+    if (first && first.rebuilt) {
+      buildMs = Number((performance.now() - tBuild0).toFixed(2));
+    }
+    closeAllCatalogDbs();
+    global.gc();
+    memBefore = process.memoryUsage();
+    const tLoad0 = performance.now();
+    const opened = openCatalogDb(workDir, path.join(workDir, '.cinecast-data'));
+    loadMs = Number((performance.now() - tLoad0).toFixed(2));
+    itemCount = opened ? opened.itemCount : 0;
+    dbBytes = opened && fs.existsSync(opened.dbPath) ? fs.statSync(opened.dbPath).size : 0;
+    global.gc();
+    memAfter = process.memoryUsage();
+  }
 
   const app = createApp({
     baseDir: workDir,
@@ -227,8 +254,11 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
 
   const payload = {
     tag: workerTag,
-    itemCount: loaded.length,
+    engine: isMemory ? 'memory' : 'sqlite',
+    itemCount,
     catalogJsonBytes: fs.statSync(path.join(workDir, 'public', 'data', 'catalog.json')).size,
+    dbBytes,
+    buildMs,
     loadMs,
     heapUsedBytes: memAfter.heapUsed,
     heapDeltaBytes: memAfter.heapUsed - memBefore.heapUsed,
@@ -236,6 +266,10 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
     rssDeltaBytes: memAfter.rss - memBefore.rss,
     endpoints: results,
   };
+
+  if (!isMemory) {
+    closeAllCatalogDbs();
+  }
 
   console.log('__BENCH_JSON__' + JSON.stringify(payload));
 }

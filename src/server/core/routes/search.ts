@@ -8,9 +8,12 @@ import {
   type SearchableMediaItem,
 } from '../tmdb.js';
 import { loadServerCatalogFromDisk, type CatalogItem } from './catalog.js';
+import { isCatalogMemoryEngine } from '../catalogSchema.js';
+import { openCatalogDb, searchLocalCatalogFts } from '../catalogDb.js';
 
 export interface SearchOptions {
   baseDir?: string | undefined;
+  userDataPath?: string | undefined;
   userAgent?: string | undefined;
   getCatalogCache: () => CatalogItem[] | null;
   setCatalogCache: (cache: CatalogItem[]) => void;
@@ -118,17 +121,30 @@ export function createSearchRouter(options: SearchOptions): Router {
     }
 
     const qNorm = normalizeSearch(rawQ);
-    const catalog = loadServerCatalog();
+    let localMatches: SearchableMediaItem[] | null = null;
 
-    // 1. Búsqueda en catálogo local normalizada
-    const localMatches: SearchableMediaItem[] = catalog
-      .filter((m) => {
-        const t = normalizeSearch(m.title);
-        const ot = normalizeSearch(m.originalTitle);
-        const ov = normalizeSearch(m.overview);
-        return t.includes(qNorm) || ot.includes(qNorm) || ov.includes(qNorm);
-      })
-      .slice(0, 20);
+    if (!isCatalogMemoryEngine()) {
+      try {
+        const opened = openCatalogDb(baseDir, options.userDataPath);
+        if (opened) {
+          localMatches = searchLocalCatalogFts(opened.db, rawQ, 20);
+        }
+      } catch (e) {
+        console.warn('[Search] Error FTS5, fallback a memoria:', e);
+      }
+    }
+
+    if (!localMatches) {
+      const catalog = loadServerCatalog();
+      localMatches = catalog
+        .filter((m) => {
+          const t = normalizeSearch(m.title);
+          const ot = normalizeSearch(m.originalTitle);
+          const ov = normalizeSearch(m.overview);
+          return t.includes(qNorm) || ot.includes(qNorm) || ov.includes(qNorm);
+        })
+        .slice(0, 20);
+    }
 
     const corrected = await getTypoSuggestion(rawQ, options.userAgent);
     const searchTerms = [rawQ];
