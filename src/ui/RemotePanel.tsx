@@ -668,16 +668,24 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
           {/* Barra de progreso con tiempo transcurrido / total */}
           <div className="space-y-1.5 pt-1">
-            <div className="relative w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
-              <div
-                className="h-full bg-red-600 transition-all duration-300"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-            <div className="flex justify-between text-[11px] font-mono text-zinc-400">
-              <span>{formatTime(currentTime)}</span>
-              <span>{formatTime(duration)}</span>
-            </div>
+            {playbackState?.seekUnsupported ? (
+              <div className="p-2 rounded-xl bg-zinc-800/80 border border-zinc-700/60 text-center text-xs text-amber-300 font-semibold">
+                Este reproductor no permite saltar
+              </div>
+            ) : (
+              <>
+                <div className="relative w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+                  <div
+                    className="h-full bg-red-600 transition-all duration-300"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[11px] font-mono text-zinc-400">
+                  <span>{formatTime(currentTime)}</span>
+                  <span>{formatTime(duration)}</span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Fila de controles principales (Cap Ant, -10s, play/pause, +10s, Cap Sig) */}

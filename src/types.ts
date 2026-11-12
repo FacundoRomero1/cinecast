@@ -209,6 +209,7 @@ export interface PlaybackState {
   activeServerType?: 'mp4' | 'iframe' | 'hls';
   servers?: { name: string; language?: string; quality?: string; url?: string }[];
   serversExhausted?: boolean;
+  seekUnsupported?: boolean;
   subtitlesEnabled?: boolean;
   playbackMeta?: {
     title: string;
@@ -286,7 +287,7 @@ export interface ElectronAPI {
   setStreamHeaders?: (payload: { url: string; referrer?: string | null; userAgent?: string | null }) => Promise<boolean>;
   setMasterVolume?: (payload: { volume?: number; isMuted?: boolean }) => Promise<boolean>;
   getRealMediaState?: () => Promise<{ found: boolean; currentTime: number; duration: number; isPlaying: boolean; isLive: boolean; title?: string; detectedTracks?: { url: string; audio: string[]; subs: string[] } | null } | null>;
-  controlActiveMedia?: (payload: { action: string; value?: any }) => Promise<{ ok: boolean; subtitlesEnabled?: boolean }>;
+  controlActiveMedia?: (payload: { action: string; value?: any }) => Promise<{ ok: boolean; subtitlesEnabled?: boolean; currentTime?: number; isPlaying?: boolean; hasMedia?: boolean; acted?: boolean }>;
   getEmbedStatus?: () => Promise<{ ok: boolean; title?: string; cloudflare?: boolean; contentUnavailable?: boolean; src?: string; currentTime?: number | null; duration?: number | null } | null>;
   onEmbedFailed?: (callback: (payload: { code: number; desc: string; url: string }) => void) => () => void;
   probeStreams?: (urls: string[]) => Promise<Record<string, boolean>>;

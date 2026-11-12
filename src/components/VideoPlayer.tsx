@@ -452,6 +452,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const iframeLoadedAtRef = useRef<number>(Date.now());
 
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(true);
+  const [seekUnsupported, setSeekUnsupported] = useState<boolean>(false);
 
   const [signalToast, setSignalToast] = useState<string | null>(null);
   const signalToastTimerRef = useRef<any>(null);
@@ -1153,7 +1154,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => off?.();
   }, [isIframeMode, rotateWithBackoff]);
 
-  const broadcastImmediate = useCallback((playingOverride?: boolean) => {
+  const broadcastImmediate = useCallback((playingOverride?: boolean, extraOverrides?: Record<string, any>) => {
     if (!onBroadcastState) return;
     const time = (!isIframeMode && videoRef.current)
       ? videoRef.current.currentTime
@@ -1169,6 +1170,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       currentTime: time,
       duration: dur,
       isPlaying: playing,
+      seekUnsupported: extraOverrides?.seekUnsupported ?? (isIframeMode ? seekUnsupported : false),
       marathon: marathonMode,
       hasIntroTimings: introStart !== undefined && introEnd !== undefined,
       isIntroActive: introStart !== undefined && introEnd !== undefined && time >= introStart && time <= introEnd,
@@ -1275,12 +1277,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const seekRelative = async (seconds: number) => {
     if (isIframeMode) {
+      const res = await window.electronAPI?.controlActiveMedia?.({ action: 'seekRelative', value: seconds });
+      if (res && (res.ok || res.hasMedia || res.acted)) {
+        const realCur = typeof res.currentTime === 'number' && Number.isFinite(res.currentTime)
+          ? res.currentTime
+          : Math.max(0, simulatedTimeRef.current + seconds);
+        simulatedTimeRef.current = realCur;
+        setCurrentTime(realCur);
+        setSeekUnsupported(false);
+        broadcastImmediate(undefined, { seekUnsupported: false });
+        return;
+      }
+      // Reloj simulado solo como respaldo cuando NO hay un <video> accesible
       const maxDur = duration > 0 ? duration : 7200;
       const next = Math.max(0, Math.min(maxDur, simulatedTimeRef.current + seconds));
       simulatedTimeRef.current = next;
       setCurrentTime(next);
-      await window.electronAPI?.controlActiveMedia?.({ action: 'seekRelative', value: seconds });
-      broadcastImmediate();
+      setSeekUnsupported(true);
+      broadcastImmediate(undefined, { seekUnsupported: true });
       return;
     }
     if (!videoRef.current) return;
@@ -1292,11 +1306,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleSeek = async (time: number) => {
     if (isIframeMode) {
+      const res = await window.electronAPI?.controlActiveMedia?.({ action: 'seek', value: time });
+      if (res && (res.ok || res.hasMedia || res.acted)) {
+        const realCur = typeof res.currentTime === 'number' && Number.isFinite(res.currentTime)
+          ? res.currentTime
+          : Math.max(0, time);
+        simulatedTimeRef.current = realCur;
+        setCurrentTime(realCur);
+        setSeekUnsupported(false);
+        broadcastImmediate(undefined, { seekUnsupported: false });
+        return;
+      }
       const next = Math.max(0, time);
       simulatedTimeRef.current = next;
       setCurrentTime(next);
-      await window.electronAPI?.controlActiveMedia?.({ action: 'seek', value: next });
-      broadcastImmediate();
+      setSeekUnsupported(true);
+      broadcastImmediate(undefined, { seekUnsupported: true });
       return;
     }
     if (!videoRef.current) return;

@@ -132,5 +132,67 @@ export function createApp(options: CreateAppOptions): Express {
 
   app.use('/', createDownloadsRouter(downloadsOpts));
 
+  if (process.env.CINECAST_TEST === '1') {
+    app.get('/__test/embed.html', (_req, res) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(`<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Embed Test Player</title></head>
+<body style="background:#111; color:#eee; font-family:sans-serif; padding:20px;">
+  <h2>Embed Test Player (WAV 400s)</h2>
+  <video id="test-video" controls playsinline style="width:320px; height:180px; background:#000;"></video>
+  <div style="margin-top:10px;">
+    <span>CurrentTime: </span><span id="time-display">0</span>s
+  </div>
+  <script>
+    function createWavBlob(durationSeconds, sampleRate = 8000) {
+      const numSamples = durationSeconds * sampleRate;
+      const buffer = new ArrayBuffer(44 + numSamples);
+      const view = new DataView(buffer);
+
+      function writeString(offset, string) {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      }
+
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + numSamples, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate, true);
+      view.setUint16(32, 1, true);
+      view.setUint16(34, 8, true);
+      writeString(36, 'data');
+      view.setUint32(40, numSamples, true);
+
+      for (let i = 0; i < numSamples; i++) {
+        const val = Math.floor(128 + 20 * Math.sin((2 * Math.PI * 440 * i) / sampleRate));
+        view.setUint8(44 + i, val);
+      }
+
+      return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    const video = document.getElementById('test-video');
+    const display = document.getElementById('time-display');
+    const wavBlob = createWavBlob(400);
+    video.src = URL.createObjectURL(wavBlob);
+
+    video.addEventListener('timeupdate', () => {
+      display.textContent = video.currentTime.toFixed(2);
+    });
+
+    window.__testVideo = video;
+  </script>
+</body>
+</html>`);
+    });
+  }
+
   return app;
 }
