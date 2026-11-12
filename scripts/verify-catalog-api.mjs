@@ -179,6 +179,7 @@ try {
   const head0Limit5 = snapHead0 ? snapHead0['/api/catalog?limit=5'] : null;
   const head0Anime3 = snapHead0 ? snapHead0['/api/catalog?category=anime&limit=3'] : null;
 
+  const hasExtended = fs.existsSync(path.join(rootDir, 'public', 'data', 'catalog.extended.json'));
   const sameLimit5Ids =
     head0Limit5 &&
     JSON.stringify(curLimit5.items.map((i) => i.id)) ===
@@ -187,7 +188,7 @@ try {
     head0Anime3 &&
     JSON.stringify(curAnime3.items.map((i) => i.id)) ===
     JSON.stringify(head0Anime3.items.map((i) => i.id)) &&
-    curAnime3.total === head0Anime3.total;
+    (hasExtended ? curAnime3.total >= head0Anime3.total : curAnime3.total === head0Anime3.total);
 
   const page2Valid =
     curPage2.page === 2 &&
