@@ -778,33 +778,73 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             )}
           </div>
 
-          {/* Botón Saltar intro / Saltar 85 s (solo para series / anime) */}
+          {/* Botón Saltar intro / Atajos rápidos +30/+60/+85/+120s / Marcas de intro */}
           {isEpisodic && (
             <div className="pt-1">
-              {hasIntroTimings ? (
-                <button
-                  type="button"
-                  aria-label="Saltar intro"
-                  onClick={() => onSendCommand({ action: 'skipIntro' })}
-                  className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer"
-                >
-                  <FastForward className="w-4 h-4 fill-current" />
-                  <span>Saltar intro</span>
-                </button>
-              ) : (
-                <div className="space-y-1">
+              {hasIntroTimings || playbackState?.introMarks ? (
+                <div className="space-y-2">
                   <button
                     type="button"
-                    aria-label="Saltar 85 segundos"
-                    onClick={() => onSendCommand({ action: 'seekRelative', payload: 85 })}
-                    className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 font-extrabold text-xs flex items-center justify-center gap-2 border border-zinc-700/80 shadow transition active:scale-98 cursor-pointer"
+                    aria-label="Saltar intro"
+                    onClick={() => onSendCommand({ action: 'skipIntro' })}
+                    className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer"
                   >
-                    <FastForward className="w-4 h-4 text-amber-400" />
-                    <span>Saltar 85 s</span>
+                    <FastForward className="w-4 h-4 fill-current" />
+                    <span>Saltar intro</span>
                   </button>
-                  <p className="text-[10px] text-zinc-500 text-center font-medium">
-                    Este servidor no informa dónde termina la intro
-                  </p>
+                  {playbackState?.introMarks && (
+                    <div className="flex items-center justify-between text-[11px] text-zinc-400 px-1">
+                      <span>
+                        Intro: {Math.round(playbackState.introMarks.start)}s - {Math.round(playbackState.introMarks.end)}s
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onSendCommand({ action: 'clearIntroMarks' })}
+                        className="text-[10px] text-red-400 hover:text-red-300 underline"
+                      >
+                        Borrar marcas
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block text-left">
+                      Saltos rápidos de tiempo
+                    </span>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[30, 60, 85, 120].map((sec) => (
+                        <button
+                          key={sec}
+                          type="button"
+                          aria-label={`Saltar ${sec} segundos`}
+                          onClick={() => onSendCommand({ action: 'skipSeconds', payload: { seconds: sec } })}
+                          className="min-h-[44px] px-1.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-xs font-extrabold text-zinc-200 border border-zinc-700/80 transition flex items-center justify-center gap-1 active:scale-95"
+                        >
+                          <FastForward className="w-3.5 h-3.5 text-amber-400" />
+                          <span>+{sec}s</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => onSendCommand({ action: 'markIntroStart' })}
+                      className="flex-1 min-h-[44px] px-2 py-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-750 text-[11px] font-bold text-zinc-300 flex items-center justify-center gap-1 transition active:scale-95"
+                    >
+                      <span>Marcar inicio intro</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSendCommand({ action: 'markIntroEnd' })}
+                      className="flex-1 min-h-[44px] px-2 py-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-750 text-[11px] font-bold text-zinc-300 flex items-center justify-center gap-1 transition active:scale-95"
+                    >
+                      <span>Marcar fin intro</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

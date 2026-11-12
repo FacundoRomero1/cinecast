@@ -218,6 +218,7 @@ export interface PlaybackState {
     totalSeasons: number;
     episodes: Array<{ season: number; episode: number; title: string; duration?: string }>;
   };
+  introMarks?: { start: number; end: number } | null;
 }
 
 export type RemoteCommandAction =
@@ -226,12 +227,16 @@ export type RemoteCommandAction =
   | 'togglePlay'
   | 'seek'
   | 'seekRelative'
+  | 'skipSeconds'
   | 'setVolume'
   | 'toggleMute'
   | 'setAudioSettings'
   | 'setPlaybackSettings'
   | 'setMarathon'
   | 'skipIntro'
+  | 'markIntroStart'
+  | 'markIntroEnd'
+  | 'clearIntroMarks'
   | 'skipRecap'
   | 'playMedia'
   | 'playDiscoveredMovie'

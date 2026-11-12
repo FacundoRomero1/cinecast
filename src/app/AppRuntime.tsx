@@ -19,6 +19,7 @@ import { generateServersForMedia, refreshProviderHealth } from '../services/embe
 import { authService } from '../services/authService';
 import { Users } from 'lucide-react';
 import { hubFullscreen } from './hubFullscreen';
+import { getIntroMarks, setIntroStart, setIntroEnd, clearIntroMarks } from './introMarks';
 
 export type HubType = 'cinecast' | 'spotify' | 'youtube' | 'sports';
 
@@ -223,6 +224,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // YouTube State
   const [activeYouTubeVideo, setActiveYouTubeVideo] = useState<YouTubeVideo | null>(YOUTUBE_VIDEOS[0]);
   const [isYouTubePlaying, setIsYouTubePlaying] = useState<boolean>(false);
+  const lastAutoSkippedIntroKeyRef = useRef<string>('');
 
   // COPIA de App.tsx L212-234; borrar al eliminar la UI clásica
   // Last Command Received Trigger for VideoPlayer
@@ -834,7 +836,73 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'skipIntro': {
-        triggerNotification('📱 Intro saltada desde el celular ⏩');
+        const curMedia = activeMedia;
+        const seriesId = curMedia?.id || (curMedia as any)?.tmdbId || remotePlaybackState.mediaId;
+        const marks = getIntroMarks(seriesId) || remotePlaybackState.introMarks;
+        if (marks && Number.isFinite(marks.end)) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'seek', value: marks.end });
+          window.dispatchEvent(new CustomEvent('cinecast:seek', { detail: { time: marks.end } }));
+          triggerNotification(`⏩ Intro saltada a ${Math.round(marks.end)}s`);
+        } else {
+          window.electronAPI?.controlActiveMedia?.({ action: 'seekRelative', value: 85 });
+          window.dispatchEvent(new CustomEvent('cinecast:seekRelative', { detail: { seconds: 85 } }));
+          triggerNotification('📱 Intro saltada desde el celular (+85s) ⏩');
+        }
+        break;
+      }
+      case 'skipSeconds': {
+        const seconds = Number(cmd.payload?.seconds ?? cmd.payload) || 0;
+        if (seconds !== 0) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'seekRelative', value: seconds });
+          window.dispatchEvent(new CustomEvent('cinecast:seekRelative', { detail: { seconds } }));
+          triggerNotification(`📱 Salto de +${seconds}s`);
+        }
+        break;
+      }
+      case 'markIntroStart': {
+        const curMedia = activeMedia;
+        const seriesId = curMedia?.id || (curMedia as any)?.tmdbId || remotePlaybackState.mediaId;
+        (async () => {
+          let curTime = remotePlaybackState.currentTime || 0;
+          try {
+            const real = await window.electronAPI?.getRealMediaState?.();
+            if (real && typeof real.currentTime === 'number') curTime = real.currentTime;
+          } catch (_) {}
+          if (seriesId) {
+            setIntroStart(seriesId, curTime);
+            const marks = getIntroMarks(seriesId);
+            handleBroadcastPlayerState({ introMarks: marks, hasIntroTimings: true });
+            triggerNotification(`⏱ Inicio de intro marcado en ${Math.round(curTime)}s`);
+          }
+        })();
+        break;
+      }
+      case 'markIntroEnd': {
+        const curMedia = activeMedia;
+        const seriesId = curMedia?.id || (curMedia as any)?.tmdbId || remotePlaybackState.mediaId;
+        (async () => {
+          let curTime = remotePlaybackState.currentTime || 0;
+          try {
+            const real = await window.electronAPI?.getRealMediaState?.();
+            if (real && typeof real.currentTime === 'number') curTime = real.currentTime;
+          } catch (_) {}
+          if (seriesId) {
+            setIntroEnd(seriesId, curTime);
+            const marks = getIntroMarks(seriesId);
+            handleBroadcastPlayerState({ introMarks: marks, hasIntroTimings: true });
+            triggerNotification(`⏱ Fin de intro marcado en ${Math.round(curTime)}s`);
+          }
+        })();
+        break;
+      }
+      case 'clearIntroMarks': {
+        const curMedia = activeMedia;
+        const seriesId = curMedia?.id || (curMedia as any)?.tmdbId || remotePlaybackState.mediaId;
+        if (seriesId) {
+          clearIntroMarks(seriesId);
+          handleBroadcastPlayerState({ introMarks: null, hasIntroTimings: false });
+          triggerNotification(`🗑 Marcas de intro eliminadas`);
+        }
         break;
       }
       case 'setStandby': {
@@ -1227,6 +1295,40 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           : isPlayingLocally;
 
       setRemotePlaybackState((prev) => {
+        const seriesKey = activeMedia?.id || (activeMedia as any)?.tmdbId || stateUpdate.mediaId || prev.mediaId;
+        const currentIntroMarks =
+          stateUpdate.introMarks !== undefined
+            ? stateUpdate.introMarks
+            : seriesKey
+            ? getIntroMarks(seriesKey)
+            : null;
+        const hasTimings = Boolean(currentIntroMarks || stateUpdate.hasIntroTimings || stateUpdate.isIntroActive);
+
+        const curT = typeof stateUpdate.currentTime === 'number' ? stateUpdate.currentTime : prev.currentTime;
+        const autoSkipEnabled = Boolean(
+          stateUpdate.playbackSettings?.autoSkipIntro ??
+          playbackSettings.autoSkipIntro ??
+          (typeof stateUpdate.marathon === 'boolean' ? stateUpdate.marathon : prev.marathon)
+        );
+
+        if (
+          autoSkipEnabled &&
+          currentIntroMarks &&
+          Number.isFinite(currentIntroMarks.start) &&
+          Number.isFinite(currentIntroMarks.end) &&
+          currentIntroMarks.end > currentIntroMarks.start
+        ) {
+          const s = currentIntroMarks.start;
+          const e = currentIntroMarks.end;
+          const markKey = `${seriesKey}:${s}:${e}`;
+          if (curT >= s && curT <= s + 5 && lastAutoSkippedIntroKeyRef.current !== markKey) {
+            lastAutoSkippedIntroKeyRef.current = markKey;
+            window.electronAPI?.controlActiveMedia?.({ action: 'seek', value: e });
+            window.dispatchEvent(new CustomEvent('cinecast:seek', { detail: { time: e } }));
+            triggerNotification('⏩ Salto automático de intro');
+          }
+        }
+
         const fullState: PlaybackState = {
           ...prev,
           mediaId: activeMedia?.id || prev.mediaId || null,
@@ -1252,7 +1354,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             typeof stateUpdate.marathon === 'boolean'
               ? stateUpdate.marathon
               : typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true',
-          hasIntroTimings: Boolean(stateUpdate.hasIntroTimings || stateUpdate.isIntroActive),
+          hasIntroTimings: hasTimings,
+          introMarks: currentIntroMarks,
           isIntroActive: false,
           isRecapActive: false,
           nextEpisodeCountdown: null,
