@@ -48,6 +48,7 @@ import { ScreensManagerView } from './ScreensManagerView';
 import { SportsMatchesTab } from '../components/SportsMatchesTab';
 import { SportsLiveGrid } from '../components/SportsLiveGrid';
 import { SpotifyHub } from '../components/SpotifyHub';
+import { SpotifyDevice } from './SpotifyDevice';
 import { YouTubeHub } from '../components/YouTubeHub';
 import { SPOTIFY_TRACKS } from '../data/spotifyCatalog';
 import { YOUTUBE_VIDEOS } from '../data/youtubeCatalog';
@@ -1621,60 +1622,95 @@ const SpotifyView: React.FC = () => {
     triggerNotification,
   } = useAppRuntime();
 
+  const [activeTab, setActiveTab] = useState<'device' | 'webplayer'>('device');
+
   return (
-    <SpotifyHub
-      currentTrack={activeSpotifyTrack}
-      isPlaying={isSpotifyPlaying}
-      volume={audioSettings.volume}
-      isMuted={audioSettings.isMuted}
-      isScreenMode={deviceRole !== 'remote'}
-      onSelectTrack={(track) => {
-        setActiveSpotifyTrack(track);
-        setIsSpotifyPlaying(true);
-        if (deviceRole === 'remote') {
-          sendRemoteCommand({
-            action: 'playSpotifyTrack',
-            payload: { track },
-          });
-          triggerNotification(`🎵 Enviado a ${connectedScreenName}: ${track.title}`);
-        }
-      }}
-      onTogglePlay={() => {
-        setIsSpotifyPlaying((p) => !p);
-        if (deviceRole === 'remote') {
-          sendRemoteCommand({ action: isSpotifyPlaying ? 'pause' : 'play' });
-        }
-      }}
-      onNextTrack={() => {
-        const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
-        const next = SPOTIFY_TRACKS[(idx + 1) % SPOTIFY_TRACKS.length]!;
-        setActiveSpotifyTrack(next);
-        setIsSpotifyPlaying(true);
-        if (deviceRole === 'remote') {
-          sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: next } });
-        }
-      }}
-      onPrevTrack={() => {
-        const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
-        const prev =
-          SPOTIFY_TRACKS[(idx - 1 + SPOTIFY_TRACKS.length) % SPOTIFY_TRACKS.length]!;
-        setActiveSpotifyTrack(prev);
-        setIsSpotifyPlaying(true);
-        if (deviceRole === 'remote') {
-          sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: prev } });
-        }
-      }}
-      onCastTrackToScreen={(track) => {
-        setActiveSpotifyTrack(track);
-        setIsSpotifyPlaying(true);
-        sendRemoteCommand({
-          action: 'playSpotifyTrack',
-          payload: { track },
-        });
-        triggerNotification(`🎵 Reproduciendo "${track.title}" en ${connectedScreenName}`);
-      }}
-      connectedScreenName={connectedScreenName}
-    />
+    <div className="w-full flex flex-col h-full">
+      {/* Selector de modo: Dispositivo CineCast vs Web Player */}
+      <div className="flex items-center justify-center gap-2 p-2 bg-zinc-950/80 border-b border-zinc-800">
+        <button
+          type="button"
+          onClick={() => setActiveTab('device')}
+          className={`min-h-[40px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
+            activeTab === 'device'
+              ? 'bg-emerald-600 text-white shadow'
+              : 'bg-zinc-900 text-zinc-400 hover:text-white'
+          }`}
+        >
+          <span>Dispositivo CineCast (SDK)</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('webplayer')}
+          className={`min-h-[40px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 ${
+            activeTab === 'webplayer'
+              ? 'bg-emerald-600 text-white shadow'
+              : 'bg-zinc-900 text-zinc-400 hover:text-white'
+          }`}
+        >
+          <span>Web Player Oficial</span>
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {activeTab === 'device' ? (
+          <SpotifyDevice deviceName="CineCast TV" />
+        ) : (
+          <SpotifyHub
+            currentTrack={activeSpotifyTrack}
+            isPlaying={isSpotifyPlaying}
+            volume={audioSettings.volume}
+            isMuted={audioSettings.isMuted}
+            isScreenMode={deviceRole !== 'remote'}
+            onSelectTrack={(track) => {
+              setActiveSpotifyTrack(track);
+              setIsSpotifyPlaying(true);
+              if (deviceRole === 'remote') {
+                sendRemoteCommand({
+                  action: 'playSpotifyTrack',
+                  payload: { track },
+                });
+                triggerNotification(`🎵 Enviado a ${connectedScreenName}: ${track.title}`);
+              }
+            }}
+            onTogglePlay={() => {
+              setIsSpotifyPlaying((p) => !p);
+              if (deviceRole === 'remote') {
+                sendRemoteCommand({ action: isSpotifyPlaying ? 'pause' : 'play' });
+              }
+            }}
+            onNextTrack={() => {
+              const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
+              const next = SPOTIFY_TRACKS[(idx + 1) % SPOTIFY_TRACKS.length]!;
+              setActiveSpotifyTrack(next);
+              setIsSpotifyPlaying(true);
+              if (deviceRole === 'remote') {
+                sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: next } });
+              }
+            }}
+            onPrevTrack={() => {
+              const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
+              const prev =
+                SPOTIFY_TRACKS[(idx - 1 + SPOTIFY_TRACKS.length) % SPOTIFY_TRACKS.length]!;
+              setActiveSpotifyTrack(prev);
+              setIsSpotifyPlaying(true);
+              if (deviceRole === 'remote') {
+                sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: prev } });
+              }
+            }}
+            onCastTrackToScreen={(track) => {
+              setActiveSpotifyTrack(track);
+              setIsSpotifyPlaying(true);
+              sendRemoteCommand({
+                action: 'playSpotifyTrack',
+                payload: { track },
+              });
+              triggerNotification(`🎵 Reproduciendo "${track.title}" en ${connectedScreenName}`);
+            }}
+          />
+        )}
+      </div>
+    </div>
   );
 };
 

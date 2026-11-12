@@ -94,8 +94,16 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   router.get('/auth/start/spotify', async (req, res) => {
     const localIp = getLocalIpAddress() || '127.0.0.1';
     const port = process.env.PORT || 3000;
-    const rawRedirectUri = typeof req.query.redirect_uri === 'string' ? req.query.redirect_uri : '';
-    const redirectUri = rawRedirectUri || `http://${localIp}:${port}/auth/callback`;
+    const rawRedirectUri = typeof req.query.redirect_uri === 'string' ? req.query.redirect_uri.trim() : '';
+    let redirectUri = `http://127.0.0.1:${port}/auth/callback`;
+    if (rawRedirectUri) {
+      try {
+        const u = new URL(rawRedirectUri);
+        if (['127.0.0.1', 'localhost'].includes(u.hostname) || u.hostname === getLocalIpAddress()) {
+          redirectUri = rawRedirectUri;
+        }
+      } catch (_) {}
+    }
 
     const queryClientId = typeof req.query.client_id === 'string' ? req.query.client_id : '';
     let clientId =

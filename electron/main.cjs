@@ -1818,7 +1818,12 @@ app.whenReady().then(async () => {
   }
 
   // Endurecer permisos de todas las sesiones antes de crear ventanas
-  const basePerms = new Set(['fullscreen', 'clipboard-sanitized-write']);
+  const basePerms = new Set([
+    'fullscreen',
+    'clipboard-sanitized-write',
+    'mediaKeySystem',
+    'protected-media-identifier',
+  ]);
   const ytPerms = new Set(['fullscreen', 'clipboard-sanitized-write', 'mediaKeySystem']);
   const spotifyPerms = new Set([
     'fullscreen',

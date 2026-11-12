@@ -47,6 +47,13 @@ class AuthService {
     return localStorage.getItem(SPOTIFY_CLIENT_ID_KEY) || '';
   }
 
+  getMaskedSpotifyClientId(): string {
+    const raw = this.getSpotifyClientId();
+    if (!raw) return '';
+    if (raw.length <= 8) return '****';
+    return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+  }
+
   setSpotifyClientId(clientId: string) {
     localStorage.setItem(SPOTIFY_CLIENT_ID_KEY, clientId.trim());
     this.notify();
