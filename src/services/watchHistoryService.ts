@@ -69,21 +69,30 @@ class WatchHistoryService {
 
     const sNum = seasonNumber ?? episodeItem?.seasonNumber;
     const eNum = episodeNumber ?? episodeItem?.episodeNumber;
-    const isSeries = mediaItem.type === 'series' || mediaItem.category === 'series' || mediaItem.category === 'anime';
+    const isSeries =
+      mediaItem.type === 'series' ||
+      mediaItem.category === 'series' ||
+      mediaItem.category === 'anime' ||
+      Boolean(sNum || eNum);
 
-    const progressId = isSeries && sNum && eNum
-      ? `${mediaItem.id}_s${sNum}_e${eNum}`
-      : mediaItem.id;
+    // Identificador canónico único por serie (sin _sX_eY para que no se creen entradas duplicadas)
+    const canonicalMediaId = mediaItem.id.replace(/_s\d+_e\d+$/, '');
+    const progressId = canonicalMediaId;
 
     const safeDuration = duration > 0 ? duration : (episodeItem?.durationSeconds || 5400);
     const progressPercentage = Math.min(100, Math.max(0, Math.round((currentTime / safeDuration) * 100)));
 
+    const rawPoster = episodeItem?.thumbnailUrl || mediaItem.posterUrl || mediaItem.backdropUrl || '';
+    const rawBackdrop = mediaItem.backdropUrl || mediaItem.posterUrl || '';
+    const safePoster = rawPoster.includes('unsplash.com') ? '' : rawPoster;
+    const safeBackdrop = rawBackdrop.includes('unsplash.com') ? '' : rawBackdrop;
+
     const newItem: WatchProgressItem = {
       id: progressId,
-      mediaId: mediaItem.id,
+      mediaId: canonicalMediaId,
       title: mediaItem.title,
-      posterUrl: episodeItem?.thumbnailUrl || mediaItem.posterUrl || mediaItem.backdropUrl || '',
-      backdropUrl: mediaItem.backdropUrl || mediaItem.posterUrl,
+      posterUrl: safePoster,
+      backdropUrl: safeBackdrop,
       type: mediaItem.type,
       category: mediaItem.category,
       seasonNumber: sNum,
@@ -93,18 +102,32 @@ class WatchHistoryService {
       duration: Math.floor(safeDuration),
       progressPercentage,
       lastWatchedAt: Date.now(),
-      mediaItem,
+      mediaItem: {
+        ...mediaItem,
+        posterUrl: safePoster,
+        backdropUrl: safeBackdrop,
+      },
       episodeItem: episodeItem || null,
     };
 
     try {
-      const currentList = this.getAll().filter((item) => {
-        // Si es la misma serie, reemplazar la entrada anterior con el capítulo más reciente
+      const isSameSeriesOrMedia = (item: WatchProgressItem) => {
         if (isSeries) {
-          return item.mediaId !== mediaItem.id;
+          const itemMediaId = String(item.mediaId || item.id || '').replace(/_s\d+_e\d+$/, '').toLowerCase();
+          const curMediaId = canonicalMediaId.toLowerCase();
+          if (itemMediaId === curMediaId) return true;
+          const itemTmdb = item.mediaItem?.tmdbId || itemMediaId.match(/\d+$/)?.[0];
+          const curTmdb = mediaItem.tmdbId || curMediaId.match(/\d+$/)?.[0];
+          if (itemTmdb && curTmdb && String(itemTmdb) === String(curTmdb)) return true;
+          const itemTitle = (item.title || item.mediaItem?.title || '').trim().toLowerCase();
+          const curTitle = (mediaItem.title || '').trim().toLowerCase();
+          if (itemTitle && curTitle && itemTitle === curTitle) return true;
+          return false;
         }
-        return item.id !== progressId;
-      });
+        return item.id === progressId || item.mediaId === progressId;
+      };
+
+      const currentList = this.getAll().filter((item) => !isSameSeriesOrMedia(item));
 
       currentList.unshift(newItem);
       const trimmed = currentList.slice(0, MAX_HISTORY_ITEMS);
@@ -136,11 +159,48 @@ class WatchHistoryService {
       const localItems = this.getAll();
       const map = new Map<string, WatchProgressItem>();
 
-      for (const it of serverItems) map.set(it.id, it);
+      const getCanonicalKey = (it: WatchProgressItem) => {
+        const isSeries =
+          it.type === 'series' ||
+          it.category === 'series' ||
+          it.category === 'anime' ||
+          Boolean(it.seasonNumber);
+        if (!isSeries) return it.mediaId || it.id;
+        const tmdb = it.mediaItem?.tmdbId || (it.mediaId || it.id || '').match(/\d+$/)?.[0];
+        if (tmdb) return `series_tmdb_${tmdb}`;
+        const title = (it.title || it.mediaItem?.title || '').trim().toLowerCase();
+        if (title) return `series_title_${title}`;
+        return `series_${(it.mediaId || it.id || '').replace(/_s\d+_e\d+$/, '').toLowerCase()}`;
+      };
+
+      const shouldReplace = (existing: WatchProgressItem, incoming: WatchProgressItem) => {
+        const existingSeason = Number(existing.seasonNumber || 1);
+        const incomingSeason = Number(incoming.seasonNumber || 1);
+        if (incomingSeason > existingSeason) return true;
+        if (incomingSeason < existingSeason) return false;
+
+        const existingEp = Number(existing.episodeNumber || 1);
+        const incomingEp = Number(incoming.episodeNumber || 1);
+        if (incomingEp > existingEp) return true;
+        if (incomingEp < existingEp) return false;
+
+        return (incoming.lastWatchedAt || 0) >= (existing.lastWatchedAt || 0);
+      };
+
+      for (const it of serverItems) {
+        if (!it || !it.id) continue;
+        const key = getCanonicalKey(it);
+        const existing = map.get(key);
+        if (!existing || shouldReplace(existing, it)) {
+          map.set(key, it);
+        }
+      }
       for (const it of localItems) {
-        const existing = map.get(it.id);
-        if (!existing || (it.lastWatchedAt || 0) >= (existing.lastWatchedAt || 0)) {
-          map.set(it.id, it);
+        if (!it || !it.id) continue;
+        const key = getCanonicalKey(it);
+        const existing = map.get(key);
+        if (!existing || shouldReplace(existing, it)) {
+          map.set(key, it);
         }
       }
 

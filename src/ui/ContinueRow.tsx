@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { Play, Cast, X, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { MediaItem, Episode } from '../types';
 import type { WatchProgressItem } from '../services/watchHistoryService';
@@ -20,13 +20,95 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
   connectedScreenName = 'PC',
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [catalogCards, setCatalogCards] = useState<
+    Record<string, { posterUrl?: string; backdropUrl?: string }>
+  >({});
 
   if (!items || items.length === 0) return null;
 
-  // Deduplicar por id
-  const uniqueItems = items.filter(
-    (item, index, self) => index === self.findIndex((t) => t.id === item.id)
-  );
+  // Deduplicar: exactamente una sola entrada por serie (la más reciente o de mayor capítulo)
+  const uniqueItems = useMemo(() => {
+    const seen = new Set<string>();
+    const res: WatchProgressItem[] = [];
+    for (const item of items) {
+      const isSeries =
+        item.type === 'series' ||
+        item.category === 'series' ||
+        item.category === 'anime' ||
+        Boolean(item.seasonNumber);
+      const key = isSeries
+        ? item.mediaItem?.tmdbId
+          ? `tmdb_${item.mediaItem.tmdbId}`
+          : (item.mediaId || item.id).replace(/_s\d+_e\d+$/, '').toLowerCase()
+        : item.mediaId || item.id;
+      if (!seen.has(key)) {
+        seen.add(key);
+        res.push(item);
+      }
+    }
+    return res;
+  }, [items]);
+
+  useEffect(() => {
+    if (uniqueItems.length === 0) return;
+    const ids = Array.from(
+      new Set(
+        uniqueItems
+          .map((i) => i.mediaId || i.mediaItem?.id || i.id)
+          .filter(Boolean)
+          .map((id) => id.replace(/_s\d+_e\d+$/, ''))
+      )
+    );
+    if (ids.length === 0) return;
+
+    let cancelled = false;
+    fetch(`/api/catalog?ids=${encodeURIComponent(ids.join(','))}&fields=card`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d || !Array.isArray(d.items)) return;
+        const map: Record<string, { posterUrl?: string; backdropUrl?: string }> = {};
+        for (const it of d.items) {
+          if (it.id) {
+            map[it.id] = { posterUrl: it.posterUrl, backdropUrl: it.backdropUrl };
+          }
+          if (it.tmdbId) {
+            map[String(it.tmdbId)] = { posterUrl: it.posterUrl, backdropUrl: it.backdropUrl };
+            map[`tmdb-movie-${it.tmdbId}`] = { posterUrl: it.posterUrl, backdropUrl: it.backdropUrl };
+            map[`tmdb-anime-${it.tmdbId}`] = { posterUrl: it.posterUrl, backdropUrl: it.backdropUrl };
+            map[`tmdb-series-${it.tmdbId}`] = { posterUrl: it.posterUrl, backdropUrl: it.backdropUrl };
+          }
+        }
+        setCatalogCards(map);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uniqueItems]);
+
+  const resolveSafeImage = (item: WatchProgressItem) => {
+    const rawId = (item.mediaId || item.id).replace(/_s\d+_e\d+$/, '');
+    const fromCat =
+      catalogCards[rawId] ||
+      catalogCards[item.mediaId] ||
+      catalogCards[item.id] ||
+      (item.mediaItem?.tmdbId ? catalogCards[String(item.mediaItem.tmdbId)] : undefined);
+    const candidateBackdrop = fromCat?.backdropUrl || item.backdropUrl;
+    const candidatePoster = fromCat?.posterUrl || item.posterUrl;
+
+    const isSafe = (url?: string) =>
+      Boolean(
+        url &&
+          typeof url === 'string' &&
+          !url.includes('unsplash.com') &&
+          (url.startsWith('http') || url.startsWith('data:image'))
+      );
+
+    if (isSafe(candidateBackdrop)) return candidateBackdrop!;
+    if (isSafe(candidatePoster)) return candidatePoster!;
+    return createStyledPosterFallback(item.title, item.type || item.category || 'Cine');
+  };
 
   const scroll = (direction: 'left' | 'right') => {
     if (scrollRef.current) {
@@ -113,7 +195,7 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
               {/* Contenedor de Imagen y Overlay */}
               <div className="relative aspect-video bg-zinc-950 overflow-hidden">
                 <img
-                  src={item.backdropUrl || item.posterUrl}
+                  src={resolveSafeImage(item)}
                   alt={item.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => {

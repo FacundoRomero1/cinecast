@@ -25,6 +25,7 @@ import {
   Music,
   Trophy,
   Tv,
+  RefreshCw,
 } from 'lucide-react';
 import { ConnectionDiagnosticSection } from './ConnectionDiagnosticSection';
 import { localCatalogProvider, CatalogProviderError } from '../providers/localCatalogProvider';
@@ -1263,7 +1264,28 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
     deviceRole,
     setIsAudioModalOpen,
     setIsGuestModalOpen,
+    triggerNotification,
   } = useAppRuntime();
+
+  const [isRepairingHistory, setIsRepairingHistory] = useState(false);
+
+  const handleRepairHistory = async () => {
+    setIsRepairingHistory(true);
+    try {
+      const base = deviceSync.getApiBase();
+      const res = await fetch(`${base}/api/repair-history`, { method: 'POST' });
+      const data = await res.json();
+      if (data && data.ok) {
+        triggerNotification(`Historial reparado: ${data.duplicatesRemoved || 0} duplicados eliminados`);
+      } else {
+        triggerNotification('No se pudo reparar el historial');
+      }
+    } catch {
+      triggerNotification('Error de conexión al reparar historial');
+    } finally {
+      setIsRepairingHistory(false);
+    }
+  };
 
   const { isLite, preference: litePref, urlForced: liteUrlForced, setPreference: setLitePref } =
     useLiteMode();
@@ -1487,6 +1509,29 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
             <img src={qrDataUrl} alt="QR Red Local" className="w-28 h-28 rounded" />
           </div>
         )}
+      </div>
+
+      {/* Mantenimiento del historial */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+            <RefreshCw className={`w-5 h-5 ${isRepairingHistory ? 'animate-spin' : ''}`} />
+          </div>
+          <div>
+            <div className="text-sm font-bold text-white">Mantenimiento del historial</div>
+            <div className="text-xs text-zinc-400">
+              Deduplica series repetidas, preserva el último capítulo y limpia carátulas inválidas.
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleRepairHistory}
+          disabled={isRepairingHistory}
+          className="min-h-[44px] px-4 py-2 rounded-xl text-xs font-bold border border-blue-500/50 bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 transition disabled:opacity-50 shrink-0"
+        >
+          {isRepairingHistory ? 'Reparando...' : 'Reparar historial'}
+        </button>
       </div>
 
       {/* Diagnóstico de conexión */}
