@@ -13,6 +13,8 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 
 const { app, components, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const net = require('net');
+const cp = require('child_process');
 
 const baseUrl = (process.argv[2] || 'http://localhost:3000').replace(/\/+$/, '');
 
@@ -50,11 +52,39 @@ const globalTimer = setTimeout(() => {
   app.exit(1);
 }, 150000);
 
+function isPortInUse(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') resolve(true);
+      else resolve(false);
+    });
+    s.once('listening', () => {
+      s.close(() => resolve(false));
+    });
+    s.listen(port, '0.0.0.0');
+  });
+}
+
+async function waitForHealth(url, timeoutMs = 30000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) return true;
+    } catch (_) {}
+    await wait(600);
+  }
+  return false;
+}
+
 function isIgnoredError(msg) {
   if (!msg) return true;
   const lower = String(msg).toLowerCase();
   if (lower.includes('bluetooth')) return true;
   if (lower.includes('background-sync')) return true;
+  if (lower.includes('[vite]')) return true;
+  if (lower.includes('vite server')) return true;
   return false;
 }
 
@@ -84,7 +114,26 @@ async function resolveRealMovieId() {
   return 'm1';
 }
 
+let serverProcess = null;
+
 app.whenReady().then(async () => {
+  const port = 3000;
+  const inUse = await isPortInUse(port);
+  if (!inUse) {
+    console.log('[smoke-ui] Servidor no activo. Iniciando servidor...');
+    const rootDir = path.resolve(__dirname, '..');
+    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+    const env = { ...process.env, PORT: String(port), CINECAST_DISABLE_PREWARM: '1' };
+    delete env.ELECTRON_RUN_AS_NODE;
+    serverProcess = cp.spawn('node', [tsxCli, 'server.ts'], {
+      cwd: rootDir,
+      env,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    await waitForHealth(baseUrl, 30000);
+  }
+
   if (components && typeof components.whenReady === 'function') {
     try {
       await Promise.race([
@@ -289,6 +338,9 @@ app.whenReady().then(async () => {
   }
 
   clearTimeout(globalTimer);
+  if (serverProcess) {
+    try { serverProcess.kill(); } catch (_) {}
+  }
   console.log(`\n[smoke-ui] Resumen final: ${totalErrors} errores de render.`);
   win.destroy();
   app.exit(totalErrors === 0 ? 0 : 1);
