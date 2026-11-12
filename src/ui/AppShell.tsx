@@ -12,15 +12,18 @@ import {
   Youtube,
 } from 'lucide-react';
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import { useScrollRestoration } from './useScrollRestoration';
+import { getRememberedTabUrl, saveTabScroll } from './navigationMemory';
 
 export interface AppShellProps {
   children: React.ReactNode;
   bottomSlot?: React.ReactNode;
   extraBottomPadding?: boolean | undefined;
   hasMiniRemote?: boolean | undefined;
+  onOpenControl?: (() => void) | undefined;
+  isControlOpen?: boolean | undefined;
 }
 
 interface NavItemConfig {
@@ -53,8 +56,40 @@ export const AppShell: React.FC<AppShellProps> = ({
   bottomSlot,
   extraBottomPadding = false,
   hasMiniRemote = false,
+  onOpenControl,
+  isControlOpen = false,
 }) => {
   useScrollRestoration();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const handleTabClick = (item: NavItemConfig, e: React.MouseEvent) => {
+    const curPath = location.pathname;
+    const targetPath = item.to;
+
+    // Si toca el control en móvil y hay handler de panel superpuesto, abrir panel sin navegar
+    if (targetPath === '/control' && onOpenControl) {
+      e.preventDefault();
+      onOpenControl();
+      return;
+    }
+
+    // Tocar la pestaña activa lleva arriba con scroll suave
+    if (curPath === targetPath) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    // Guardar scroll actual antes de cambiar de pestaña
+    saveTabScroll(curPath, window.scrollY);
+
+    // Si la pestaña destino tiene memoria de ruta/parámetros guardada (< 30 min), navegar a ella
+    const remembered = getRememberedTabUrl(targetPath);
+    if (remembered && remembered !== targetPath) {
+      e.preventDefault();
+      navigate(remembered);
+    }
+  };
 
   return (
     <div className="min-h-[100dvh] md:min-h-screen bg-zinc-950 text-zinc-100 flex flex-col md:flex-row">
@@ -78,10 +113,12 @@ export const AppShell: React.FC<AppShellProps> = ({
                 key={item.to}
                 to={item.to}
                 end={item.to === '/'}
+                onClick={(e) => handleTabClick(item, e)}
                 className={({ isActive }) =>
-                  `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isActive
-                    ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
+                  `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+                    isActive
+                      ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
+                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
                   }`
                 }
               >
@@ -90,15 +127,31 @@ export const AppShell: React.FC<AppShellProps> = ({
               </NavLink>
             );
           })}
+
+          {onOpenControl && (
+            <button
+              type="button"
+              onClick={onOpenControl}
+              className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+                isControlOpen
+                  ? 'bg-zinc-800 text-white border border-zinc-700'
+                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
+              }`}
+            >
+              <Gamepad2 className="w-5 h-5 shrink-0 text-red-500" />
+              <span>Control Remoto</span>
+            </button>
+          )}
         </nav>
 
         <div className="p-3 border-t border-zinc-900">
           <NavLink
             to="/ajustes"
             className={({ isActive }) =>
-              `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isActive
-                ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
-                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
+              `min-h-[44px] px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+                isActive
+                  ? 'bg-red-600 text-white shadow-lg shadow-red-950/40'
+                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900'
               }`
             }
           >
@@ -108,9 +161,11 @@ export const AppShell: React.FC<AppShellProps> = ({
         </div>
       </aside>
 
-      {/* Contenido principal con padding inferior adaptado */}
+      {/* Contenido principal con padding inferior adaptado y padding derecho si la columna de control está abierta */}
       <main
-        className={`flex-1 md:pl-60 min-w-0 ${
+        className={`flex-1 md:pl-60 min-w-0 transition-[padding] duration-200 ${
+          isControlOpen ? 'md:pr-96' : ''
+        } ${
           hasMiniRemote
             ? 'pb-[calc(124px+env(safe-area-inset-bottom,0px))] md:pb-24'
             : extraBottomPadding || bottomSlot
@@ -140,15 +195,16 @@ export const AppShell: React.FC<AppShellProps> = ({
               key={item.to}
               to={item.to}
               end={item.to === '/'}
-              onClick={() => {
-                const cur = window.location.hash.replace(/^#/, '') || '/';
-                if (cur === item.to) {
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-              }}
+              onClick={(e) => handleTabClick(item, e)}
               className={({ isActive }) =>
                 `min-h-[44px] min-w-[44px] flex-1 py-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation ${
-                  isActive ? 'text-red-500' : 'text-zinc-400 hover:text-zinc-200'
+                  item.to === '/control'
+                    ? isControlOpen
+                      ? 'text-red-500'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                    : isActive
+                    ? 'text-red-500'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`
               }
             >

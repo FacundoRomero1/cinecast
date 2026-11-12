@@ -60,6 +60,8 @@ import { TitleCard } from './TitleCard';
 import { FilterBar, type FilterState } from './FilterBar';
 import { GridSkeleton, HeroSkeleton } from './Skeleton';
 import { useLiteMode, type LiteModePreference } from './liteMode';
+import { RemoteSheet } from './RemoteSheet';
+import { getTabMemory, saveTabMemory } from './navigationMemory';
 
 export interface NewAppProps {
   onDisableV2?: () => void;
@@ -328,24 +330,32 @@ const ExploreView: React.FC<ExploreViewProps> = ({
   const { isLite } = useLiteMode();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Restaurar estado inicial desde searchParams de la URL
+  // Restaurar estado inicial desde searchParams de la URL o memoria de navegación (< 30 min)
   const initialFilters = useMemo<FilterState>(() => {
-    const categoryParam = searchParams.get('category') || searchParams.get('type') || 'all';
-    const genreParam = searchParams.get('genre');
+    let sp = searchParams;
+    const hasParams = Array.from(sp.keys()).length > 0;
+    if (!hasParams) {
+      const remembered = getTabMemory('explore');
+      if (remembered?.search) {
+        sp = new URLSearchParams(remembered.search);
+      }
+    }
+    const categoryParam = sp.get('category') || sp.get('type') || 'all';
+    const genreParam = sp.get('genre');
     const genres = genreParam
       ? genreParam
           .split(',')
           .map((g) => g.trim())
           .filter(Boolean)
       : [];
-    const genreMode = searchParams.get('genreMode') === 'any' ? 'any' : 'all';
-    const yearFromParam = searchParams.get('yearFrom');
-    const yearToParam = searchParams.get('yearTo');
+    const genreMode = sp.get('genreMode') === 'any' ? 'any' : 'all';
+    const yearFromParam = sp.get('yearFrom');
+    const yearToParam = sp.get('yearTo');
     const yearFrom = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
     const yearTo = yearToParam ? parseInt(yearToParam, 10) || null : null;
-    const ratingParam = searchParams.get('rating');
+    const ratingParam = sp.get('rating');
     const minRating = ratingParam ? parseFloat(ratingParam) || 0 : 0;
-    const sortParam = (searchParams.get('sort') || 'default') as CatalogSortOption;
+    const sortParam = (sp.get('sort') || 'default') as CatalogSortOption;
 
     return {
       category: categoryParam,
@@ -409,10 +419,25 @@ const ExploreView: React.FC<ExploreViewProps> = ({
       if (next.minRating > 0) params.rating = String(next.minRating);
       if (next.sort && next.sort !== 'default') params.sort = next.sort;
 
+      const qs = new URLSearchParams(params).toString();
+      saveTabMemory('explore', {
+        fullPath: qs ? `/explorar?${qs}` : '/explorar',
+        search: qs,
+      });
+
       setSearchParams(params, { replace: true });
     },
     [setSearchParams]
   );
+
+  useEffect(() => {
+    if (Array.from(searchParams.keys()).length === 0) {
+      const remembered = getTabMemory('explore');
+      if (remembered?.search) {
+        setSearchParams(new URLSearchParams(remembered.search), { replace: true });
+      }
+    }
+  }, [searchParams, setSearchParams]);
 
   // Sincronizar desde la URL hacia los filtros si el usuario navega atrás/adelante
   useEffect(() => {
@@ -709,11 +734,28 @@ const SearchView: React.FC<SearchViewProps> = ({
 }) => {
   const { connectedScreenName } = useAppRuntime();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialQ = searchParams.get('q') || '';
+  const initialQ = useMemo(() => {
+    const fromUrl = searchParams.get('q');
+    if (fromUrl !== null && fromUrl !== undefined) return fromUrl;
+    const remembered = getTabMemory('search');
+    return (remembered?.state?.query || remembered?.search?.replace(/^q=/, '')) ?? '';
+  }, [searchParams]);
   const [query, setQuery] = useState<string>(initialQ);
   const [debouncedQuery, setDebouncedQuery] = useState<string>(initialQ.trim());
   const [results, setResults] = useState<CardItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!searchParams.get('q')) {
+      const remembered = getTabMemory('search');
+      const remQ = (remembered?.state?.query || remembered?.search?.replace(/^q=/, ''))?.trim();
+      if (remQ) {
+        setSearchParams({ q: remQ }, { replace: true });
+        setQuery(remQ);
+        setDebouncedQuery(remQ);
+      }
+    }
+  }, [searchParams, setSearchParams]);
 
   // Sincronizar hacia useSearchParams con debounce y replace: true
   useEffect(() => {
@@ -729,6 +771,11 @@ const SearchView: React.FC<SearchViewProps> = ({
           setSearchParams({}, { replace: true });
         }
       }
+      saveTabMemory('search', {
+        fullPath: trimmed ? `/buscar?q=${encodeURIComponent(trimmed)}` : '/buscar',
+        search: trimmed ? `q=${encodeURIComponent(trimmed)}` : '',
+        state: { query: trimmed },
+      });
     }, 300);
     return () => clearTimeout(timer);
   }, [query, searchParams, setSearchParams]);
@@ -1679,6 +1726,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
   useLiteMode();
   const navigate = useNavigate();
   const location = useLocation();
+  const [isRemoteSheetOpen, setIsRemoteSheetOpen] = useState<boolean>(false);
   const {
     deviceRole,
     setDeviceRole,
@@ -1809,6 +1857,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
         <AppShell
           extraBottomPadding={deviceRole === 'remote'}
           hasMiniRemote={deviceRole === 'remote' && location.pathname !== '/control'}
+          onOpenControl={() => setIsRemoteSheetOpen((p) => !p)}
+          isControlOpen={isRemoteSheetOpen}
           bottomSlot={
             deviceRole === 'remote' ? (
               <>
@@ -1830,7 +1880,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                     playbackState={remotePlaybackState}
                     currentMedia={remoteMediaItem}
                     onSendCommand={sendRemoteCommand}
-                    onNavigateToControl={() => navigate('/control')}
+                    onNavigateToControl={() => setIsRemoteSheetOpen(true)}
                     onNavigateToSettings={() => navigate('/ajustes')}
                   />
                 )}
@@ -1914,6 +1964,21 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
           </Routes>
         </AppShell>
       )}
+
+      {/* Panel superpuesto de Control Remoto (en móvil sheet 92%, en escritorio columna derecha) */}
+      <RemoteSheet
+        isOpen={isRemoteSheetOpen}
+        onClose={() => setIsRemoteSheetOpen(false)}
+        playbackState={remotePlaybackState}
+        currentMedia={remoteMediaItem}
+        currentEpisode={remoteEpisodeItem}
+        connectedScreenName={connectedScreenName}
+        onSendCommand={sendRemoteCommand}
+        onOpenCastModal={() => navigate('/pantallas')}
+        onOpenAudioModal={() => setIsAudioModalOpen(true)}
+        onOpenGuestModal={() => setIsGuestModalOpen(true)}
+        onNavigateToCatalog={() => navigate('/explorar')}
+      />
 
       {/* Modales clásicos con las mismas props de App.tsx L1675-1746 */}
       <AudioSettingsModal
