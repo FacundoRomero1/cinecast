@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { createApp } from './src/server/core/http.js';
 import { attachWebSocket } from './src/server/core/ws.js';
 import { getLocalIpAddress } from './src/server/core/net.js';
+import { createResolveRouter } from './src/server/core/resolve/router.js';
+import { startResolvePrewarm } from './src/server/core/resolve/prewarm.js';
 import type { StoredAuthData } from './src/server/core/routes/auth.js';
 
 export { getLocalIpAddress };
@@ -45,6 +47,8 @@ const app = createApp({
   },
 });
 
+app.use('/api', createResolveRouter({ baseDir: __dirname }));
+
 const server = http.createServer(app);
 attachWebSocket(server);
 
@@ -71,6 +75,13 @@ async function startServer() {
     console.log(`   ➜ Local:    http://localhost:${PORT}`);
     console.log(`   ➜ Red WiFi: http://${localIp}:${PORT}`);
     console.log(`====================================================`);
+
+    if (process.env.CINECAST_DISABLE_PREWARM !== '1') {
+      startResolvePrewarm({
+        baseUrl: `http://127.0.0.1:${PORT}`,
+        baseDir: __dirname,
+      });
+    }
   });
 }
 

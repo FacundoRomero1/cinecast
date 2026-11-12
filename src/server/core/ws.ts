@@ -31,6 +31,19 @@ interface IncomingWsMessage {
 }
 
 let pruneTimerStarted = false;
+let activeWss: WebSocketServer | null = null;
+
+export function broadcastWsEvent(payload: Record<string, unknown>): void {
+  if (!activeWss) return;
+  const serialized = JSON.stringify(payload);
+  activeWss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      try {
+        client.send(serialized);
+      } catch (_) {}
+    }
+  });
+}
 
 export function attachWebSocket(server: HttpServer): WebSocketServer {
   if (!pruneTimerStarted) {
@@ -39,6 +52,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
   }
 
   const wss = new WebSocketServer({ noServer: true });
+  activeWss = wss;
 
   server.on('upgrade', (request, socket, head) => {
     if (request.url && request.url.startsWith('/ws')) {

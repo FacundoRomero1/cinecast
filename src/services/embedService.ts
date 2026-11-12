@@ -56,6 +56,7 @@ function applyProviderRanking(servers: StreamServer[]): StreamServer[] {
   const health = readProviderHealth();
   if (!health) return servers;
 
+  const primaryWasFirst = servers[0]?.name === PRIMARY_PROVIDER;
   const slots: number[] = [];
   const rankable: Array<{ s: StreamServer; i: number }> = [];
   servers.forEach((s, i) => {
@@ -78,6 +79,14 @@ function applyProviderRanking(servers: StreamServer[]): StreamServer[] {
   slots.forEach((slot, k) => {
     result[slot] = rankable[k].s;
   });
+
+  if (primaryWasFirst && result[0]?.name !== PRIMARY_PROVIDER) {
+    const tukiIdx = result.findIndex((s) => s.name === PRIMARY_PROVIDER);
+    if (tukiIdx > 0) {
+      const [tuki] = result.splice(tukiIdx, 1);
+      result.unshift(tuki);
+    }
+  }
   return result;
 }
 
@@ -133,29 +142,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
       };
     }
 
-    // ─── PUESTO #1: Vidsrc CC (Latino / ES) ───
-    const vidsrcCcUrl = isTV
-      ? `https://vidsrc.cc/embed/tv/${tmdbId}/${season}-${episode}?lang=es`
-      : `https://vidsrc.cc/embed/movie/${tmdbId}?lang=es`;
-    servers.push({
-      name: 'Vidsrc CC (Latino / ES)',
-      url: vidsrcCcUrl,
-      type: 'iframe',
-      language: '🇲🇽 Latino / Español',
-    });
-
-    // ─── PUESTO #3: Vidsrc Pro (HD / ES) ───
-    const vidsrcProUrl = isTV
-      ? `https://vidsrc.pro/embed/tv/${tmdbId}/${season}/${episode}?lang=es`
-      : `https://vidsrc.pro/embed/movie/${tmdbId}?lang=es`;
-    servers.push({
-      name: 'Vidsrc Pro (HD / ES)',
-      url: vidsrcProUrl,
-      type: 'iframe',
-      language: '🌐 Multi / Sub ES',
-    });
-
-    // ─── PUESTO #4: TukiPlay (HD) ───
+    // ─── PUESTO #1: TukiPlay (HD) ───
     const tukiPlayUrl = isTV
       ? `https://tukiplay.com/embed/tv/${tmdbId}/${season}/${episode}`
       : `https://tukiplay.com/embed/movie/${tmdbId}`;
@@ -166,7 +153,18 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
       language: type === 'anime' ? 'Audio Original (Sub ES)' : 'Audio según servidor',
     });
 
-    // ─── PUESTO #5: VidEasy (Multi) ───
+    // ─── PUESTO #2: Vidsrc CC (Latino / ES) ───
+    const vidsrcCcUrl = isTV
+      ? `https://vidsrc.cc/embed/tv/${tmdbId}/${season}-${episode}?lang=es`
+      : `https://vidsrc.cc/embed/movie/${tmdbId}?lang=es`;
+    servers.push({
+      name: 'Vidsrc CC (Latino / ES)',
+      url: vidsrcCcUrl,
+      type: 'iframe',
+      language: '🇲🇽 Latino / Español',
+    });
+
+    // ─── PUESTO #3: VidEasy (Multi) ───
     const vidEasyUrl = isTV
       ? `https://player.videasy.net/tv/${tmdbId}/${season}/${episode}`
       : `https://player.videasy.net/movie/${tmdbId}`;
