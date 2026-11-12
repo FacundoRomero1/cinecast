@@ -77,7 +77,7 @@ export interface AppRuntimeContextValue {
   remoteMediaItem: MediaItem | null;
   remoteEpisodeItem: Episode | null;
   handlePlayLocal: (media: MediaItem, episode?: Episode | null, initialTime?: number, forceLocal?: boolean) => void;
-  handleCastMediaToScreen: (media: MediaItem, episode?: Episode) => void;
+  handleCastMediaToScreen: (media: MediaItem, episode?: Episode, initialTime?: number) => void;
   handlePlayNextEpisode: () => void;
   handlePlayPrevEpisode: () => void;
   handleBroadcastPlayerState: (stateUpdate: Partial<PlaybackState>) => void;
@@ -456,22 +456,35 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (mediaItem) {
           const sNum = Number(payload.seasonNumber ?? payload.episode?.seasonNumber ?? payload.selectedEpisode?.seasonNumber ?? 1) || 1;
           const eNum = Number(payload.episodeNumber ?? payload.episode?.episodeNumber ?? payload.selectedEpisode?.episodeNumber ?? 1) || 1;
-          const ep: Episode | null = payload.episode || payload.selectedEpisode || (
-            (payload.seasonNumber || payload.episodeNumber) ? {
-              id: `ep-${mediaItem.id}-s${sNum}-e${eNum}`,
-              title: payload.episodeTitle || `Episodio ${eNum}`,
+          const isSeries =
+            mediaItem.type === 'series' ||
+            mediaItem.category === 'series' ||
+            mediaItem.category === 'anime' ||
+            Boolean(payload.seasonNumber) ||
+            Boolean(payload.episodeNumber) ||
+            Boolean(payload.episode);
+
+          let ep: Episode | null = null;
+          if (isSeries) {
+            const candidate = payload.episode || payload.selectedEpisode || mediaItem.episodes?.find((e) => (e.seasonNumber || 1) === sNum && e.episodeNumber === eNum);
+            ep = {
+              ...(candidate || {}),
+              id: candidate?.id || `ep-${mediaItem.id}-s${sNum}-e${eNum}`,
+              title: (candidate && (candidate.seasonNumber || 1) === sNum && candidate.episodeNumber === eNum && candidate.title && !/^episodio\s+\d+$/i.test(candidate.title))
+                ? candidate.title
+                : (payload.episodeTitle || candidate?.title || `Episodio ${eNum}`),
               seasonNumber: sNum,
               episodeNumber: eNum,
-              overview: `Temporada ${sNum}, Episodio ${eNum}`,
-              duration: '24m',
-            } : null
-          ) || mediaItem.episodes?.find((e) => (e.seasonNumber || 1) === sNum && e.episodeNumber === eNum) || mediaItem.episodes?.[0] || null;
+              overview: candidate?.overview || `Temporada ${sNum}, Episodio ${eNum}`,
+              duration: candidate?.duration || '24m',
+            };
+          }
 
           if (!mediaItem.servers || mediaItem.servers.length === 0) {
             mediaItem.servers = generateServersForMedia({
               tmdbId: mediaItem.tmdbId,
               directMp4Url: mediaItem.videoUrl,
-              type: mediaItem.category === 'live_tv' ? 'live_tv' : mediaItem.type === 'series' ? 'series' : 'movie',
+              type: mediaItem.category === 'live_tv' ? 'live_tv' : isSeries ? 'series' : 'movie',
               season: ep?.seasonNumber || sNum,
               episode: ep?.episodeNumber || eNum,
             });
@@ -479,11 +492,12 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               mediaItem.videoUrl = mediaItem.servers[0].url;
             }
           }
+          const initTime = Number(payload.initialTime ?? payload.currentTime) || 0;
           setActiveMedia(mediaItem);
           setActiveEpisode(ep);
           setActiveHub('cinecast');
           setIsScreenInStandby(false);
-          setPlayerInitialTime(0);
+          setPlayerInitialTime(initTime);
           setIsPlayingLocally(true);
           triggerNotification(`🎬 Reproduciendo en Pantalla: ${mediaItem.title}`);
 
@@ -503,7 +517,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             mediaItem: mediaItem,
             episodeItem: ep || undefined,
             isPlaying: true,
-            currentTime: 0,
+            currentTime: initTime,
             duration: 0,
             buffered: 0,
             isStandby: false,
@@ -1025,7 +1039,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // COPIA de App.tsx L928-1064; borrar al eliminar la UI clásica
   // User taps "Transmitir a PC" on a movie/episode
-  const handleCastMediaToScreen = (media: MediaItem, episode?: Episode) => {
+  const handleCastMediaToScreen = (media: MediaItem, episode?: Episode, initialTime?: number) => {
     const rawEp = episode || media.episodes?.[0] || null;
     const targetEp: Episode | null = rawEp
       ? {
@@ -1035,6 +1049,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               rawEp.seasonNumber ??
                 (rawEp as any).season ??
                 (rawEp as any).season_number ??
+                (media as any).seasonNumber ??
                 1
             ) || 1,
           episodeNumber:
@@ -1042,6 +1057,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               rawEp.episodeNumber ??
                 (rawEp as any).episode ??
                 (rawEp as any).episode_number ??
+                (media as any).episodeNumber ??
                 1
             ) || 1,
         }
@@ -1087,6 +1103,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       mediaItem: media,
       episodeItem: targetEp || undefined,
       isPlaying: true,
+      currentTime: initialTime || 0,
       isStandby: false,
       servers: srvs.map((s) => ({ name: s.name, language: s.language })),
       activeServerIndex: 0,
@@ -1103,6 +1120,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         seasonNumber: targetEp?.seasonNumber || 1,
         episodeNumber: targetEp?.episodeNumber || 1,
         episodeTitle: targetEp?.title || '',
+        initialTime: initialTime || 0,
+        currentTime: initialTime || 0,
       },
     });
 
@@ -1117,7 +1136,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     forceLocal: boolean = false
   ) => {
     if (deviceRole === 'remote' && !forceLocal) {
-      handleCastMediaToScreen(media, episode || undefined);
+      handleCastMediaToScreen(media, episode || undefined, initialTime);
       return;
     }
     setActiveMedia(media);
@@ -1130,6 +1149,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               rawEp.seasonNumber ??
                 (rawEp as any).season ??
                 (rawEp as any).season_number ??
+                (media as any).seasonNumber ??
                 1
             ) || 1,
           episodeNumber:
@@ -1137,6 +1157,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               rawEp.episodeNumber ??
                 (rawEp as any).episode ??
                 (rawEp as any).episode_number ??
+                (media as any).episodeNumber ??
                 1
             ) || 1,
         }

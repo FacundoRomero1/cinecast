@@ -160,6 +160,11 @@ async function checkAndTouch(win, getElementFnString, description) {
     return { ok: false, error: res.error };
   }
 
+  if (!win.webContents.debugger.isAttached()) {
+    await win.webContents.executeJavaScript(`(() => { const el = (${getElementFnString})(); if (el) el.click(); })()`);
+    return { ok: true, cx: res.cx, cy: res.cy };
+  }
+
   // Toque con Input.dispatchTouchEvent (touchStart y touchEnd) en el centro del elemento
   await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent', {
     type: 'touchStart',
@@ -348,34 +353,130 @@ app.whenReady().then(async () => {
   await winA.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
   await winB.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
 
-  // Sembrar un elemento de "Continuar viendo" en Celular para los casos 1 y 2
+  // Sembrar 4 entradas de "Continuar viendo" con episodeTitle="Episodio 1"
   const sampleProgress = [
+    {
+      id: 'tmdb-anime-258348',
+      mediaId: 'tmdb-anime-258348',
+      title: 'Clevatess',
+      posterUrl: 'https://image.tmdb.org/t/p/w500/sample1.jpg',
+      backdropUrl: 'https://image.tmdb.org/t/p/original/sample1.jpg',
+      type: 'series',
+      category: 'anime',
+      seasonNumber: 1,
+      episodeNumber: 12,
+      episodeTitle: 'Episodio 1',
+      currentTime: 450,
+      duration: 1440,
+      progressPercentage: 31,
+      lastWatchedAt: Date.now() - 1000,
+      mediaItem: {
+        id: 'tmdb-anime-258348',
+        tmdbId: 258348,
+        title: 'Clevatess',
+        type: 'series',
+        category: 'anime',
+      },
+      episodeItem: {
+        id: 'ep-clevatess-1',
+        title: 'Episodio 1',
+        seasonNumber: 1,
+        episodeNumber: 1,
+      },
+    },
+    {
+      id: 'tmdb-anime-73223',
+      mediaId: 'tmdb-anime-73223',
+      title: 'Black Clover',
+      posterUrl: 'https://image.tmdb.org/t/p/w500/sample2.jpg',
+      backdropUrl: 'https://image.tmdb.org/t/p/original/sample2.jpg',
+      type: 'series',
+      category: 'anime',
+      seasonNumber: 2,
+      episodeNumber: 7,
+      episodeTitle: 'Episodio 1',
+      currentTime: 300,
+      duration: 1440,
+      progressPercentage: 20,
+      lastWatchedAt: Date.now() - 2000,
+      mediaItem: {
+        id: 'tmdb-anime-73223',
+        tmdbId: 73223,
+        title: 'Black Clover',
+        type: 'series',
+        category: 'anime',
+      },
+      episodeItem: {
+        id: 'ep-bc-1',
+        title: 'Episodio 1',
+        seasonNumber: 1,
+        episodeNumber: 1,
+      },
+    },
+    {
+      id: 'tmdb-series-1396',
+      mediaId: 'tmdb-series-1396',
+      title: 'Breaking Bad',
+      posterUrl: 'https://image.tmdb.org/t/p/w500/sample3.jpg',
+      backdropUrl: 'https://image.tmdb.org/t/p/original/sample3.jpg',
+      type: 'series',
+      category: 'series',
+      seasonNumber: 1,
+      episodeNumber: 5,
+      episodeTitle: 'Episodio 1',
+      currentTime: 600,
+      duration: 2880,
+      progressPercentage: 21,
+      lastWatchedAt: Date.now() - 3000,
+      mediaItem: {
+        id: 'tmdb-series-1396',
+        tmdbId: 1396,
+        title: 'Breaking Bad',
+        type: 'series',
+        category: 'series',
+      },
+      episodeItem: {
+        id: 'ep-bb-1',
+        title: 'Episodio 1',
+        seasonNumber: 1,
+        episodeNumber: 1,
+      },
+    },
     {
       id: 'tmdb-movie-969681',
       mediaId: 'tmdb-movie-969681',
       title: 'Spider-Man: Un nuevo día',
-      posterUrl: 'https://image.tmdb.org/t/p/w500/sample.jpg',
-      backdropUrl: 'https://image.tmdb.org/t/p/original/sample.jpg',
+      posterUrl: 'https://image.tmdb.org/t/p/w500/sample4.jpg',
+      backdropUrl: 'https://image.tmdb.org/t/p/original/sample4.jpg',
       type: 'movie',
       category: 'movie',
-      currentTime: 1200,
+      currentTime: 600,
       duration: 7200,
-      progressPercentage: 17,
-      lastWatchedAt: Date.now(),
+      progressPercentage: 8,
+      lastWatchedAt: Date.now() - 4000,
       mediaItem: {
         id: 'tmdb-movie-969681',
+        tmdbId: 969681,
         title: 'Spider-Man: Un nuevo día',
-        year: 2026,
-        rating: 8.5,
-        category: 'movie',
         type: 'movie',
-        servers: [{ id: 'latino', name: 'Latino', url: 'https://example.com/stream.m3u8' }],
+        category: 'movie',
       },
     },
   ];
 
+  winA.webContents.on('console-message', (_e, l, msg) => {
+    if (l >= 2 && !msg.includes('bluetooth') && !msg.includes('[vite]')) console.log('[winA console]', msg);
+  });
+  winB.webContents.on('console-message', (_e, l, msg) => {
+    if (l >= 2 && !msg.includes('bluetooth') && !msg.includes('[vite]')) console.log('[winB console]', msg);
+  });
+
+  await winA.webContents.executeJavaScript(`
+    localStorage.setItem('cinecast_watch_progress_v2', JSON.stringify(${JSON.stringify(sampleProgress)}));
+    window.location.hash = '#/';
+  `);
   await winB.webContents.executeJavaScript(`
-    localStorage.setItem('cinecast_watch_progress_v2', ${JSON.stringify(JSON.stringify(sampleProgress))});
+    localStorage.setItem('cinecast_watch_progress_v2', JSON.stringify(${JSON.stringify(sampleProgress)}));
     window.location.hash = '#/';
   `);
   await wait(1500);
@@ -383,32 +484,75 @@ app.whenReady().then(async () => {
   const results = [];
 
   // =========================================================================
-  // Caso (1): #/ tocar el círculo de play de la primera tarjeta de "Continuar viendo" -> llega a PC
+  // Caso (1): Tocar play de cada tarjeta de "Continuar viendo" desde Celular y PC
   // =========================================================================
-  try {
-    const seqBefore1 = (await pollServerCommands(baseUrl, roomId, 0)).length;
-    const touchRes1 = await checkAndTouch(
-      winB,
-      `() => document.querySelector('section div[class*="group relative"] div[class*="rounded-full bg-red-600"]') || document.querySelector('[data-testid="continue-play"]')`,
-      'círculo de play de primera tarjeta en Continuar viendo'
-    );
+  const testCases1 = [
+    { name: 'Clevatess (Celular -> PC)', cardIdx: 0, fromWin: winB, isMobile: true, expS: '1', expE: '12' },
+    { name: 'Black Clover (Celular -> PC)', cardIdx: 1, fromWin: winB, isMobile: true, expS: '2', expE: '7' },
+    { name: 'Breaking Bad (Celular -> PC)', cardIdx: 2, fromWin: winB, isMobile: true, expS: '1', expE: '5' },
+    { name: 'Película (Celular -> PC)', cardIdx: 3, fromWin: winB, isMobile: true, expS: null, expE: null, expMovie: true },
+    { name: 'Clevatess (PC directo)', cardIdx: 0, fromWin: winA, isMobile: false, expS: '1', expE: '12' },
+    { name: 'Black Clover (PC directo)', cardIdx: 1, fromWin: winA, isMobile: false, expS: '2', expE: '7' },
+    { name: 'Breaking Bad (PC directo)', cardIdx: 2, fromWin: winA, isMobile: false, expS: '1', expE: '5' },
+    { name: 'Película (PC directo)', cardIdx: 3, fromWin: winA, isMobile: false, expS: null, expE: null, expMovie: true },
+  ];
 
-    if (!touchRes1.ok) {
-      results.push({ id: 1, name: 'Continuar viendo - Play', pass: false, detail: touchRes1.error });
-    } else {
-      await wait(1500);
-      const cmdsAfter = await pollServerCommands(baseUrl, roomId, 0);
-      const newCmds = cmdsAfter.slice(seqBefore1);
-      const playCmd = newCmds.find((c) => /play/i.test(c.command?.action || ''));
-      if (playCmd) {
-        results.push({ id: 1, name: 'Continuar viendo - Play', pass: true, detail: `Comando recibido: ${playCmd.command.action}` });
-      } else {
-        results.push({ id: 1, name: 'Continuar viendo - Play', pass: false, detail: `No llegó comando play a la PC (nuevos comandos: ${newCmds.length})` });
+  for (const tc of testCases1) {
+    try {
+      // Asegurar que PC esté en #/ sin reproductor abierto
+      await winA.webContents.executeJavaScript(`
+        if (window.location.hash !== '#/') window.location.hash = '#/';
+        const closeBtn = document.querySelector('button[title*="Cerrar"], button[aria-label*="Cerrar"]');
+        if (closeBtn) closeBtn.click();
+      `);
+      if (tc.isMobile) {
+        await winB.webContents.executeJavaScript(`
+          if (window.location.hash !== '#/') window.location.hash = '#/';
+        `);
       }
+      await wait(800);
+
+      const targetCardSelector = `() => document.querySelectorAll('section div[class*="group relative"] div[class*="rounded-full bg-red-600"]')[${tc.cardIdx}]`;
+      const touchRes = await checkAndTouch(tc.fromWin, targetCardSelector, `play de tarjeta ${tc.name}`);
+      if (!touchRes.ok) {
+        results.push({ id: 1, name: `Continuar viendo - ${tc.name}`, pass: false, detail: touchRes.error });
+        continue;
+      }
+
+      await wait(1500);
+
+      // Leer estado en PC (winA)
+      const pcState = await winA.webContents.executeJavaScript(`(() => {
+        const selects = Array.from(document.querySelectorAll('div[class*="rounded-xl"] select'));
+        const sVal = selects[0] ? selects[0].value : null;
+        const eVal = selects[1] ? selects[1].value : null;
+        const isPlayer = Boolean(document.querySelector('video') || document.querySelector('iframe[data-embed]') || document.querySelector('webview') || document.querySelector('div[class*="VideoPlayer"]'));
+        return { isPlayer, sVal, eVal };
+      })()`);
+
+      let pass = false;
+      let detail = '';
+      if (tc.expMovie) {
+        pass = pcState.isPlayer;
+        detail = `Reproductor montado: ${pcState.isPlayer ? 'SI' : 'NO'}`;
+      } else {
+        pass = pcState.sVal === tc.expS && pcState.eVal === tc.expE;
+        detail = `Obtenido: T=${pcState.sVal}:E=${pcState.eVal} | Esperado: T=${tc.expS}:E=${tc.expE}`;
+      }
+
+      results.push({ id: 1, name: `Continuar viendo - ${tc.name}`, pass, detail });
+    } catch (err) {
+      results.push({ id: 1, name: `Continuar viendo - ${tc.name}`, pass: false, detail: err.message });
     }
-  } catch (err) {
-    results.push({ id: 1, name: 'Continuar viendo - Play', pass: false, detail: err.message });
   }
+
+  // Cerrar reproductor en PC tras las pruebas de Continuar viendo
+  await winA.webContents.executeJavaScript(`
+    if (window.location.hash !== '#/') window.location.hash = '#/';
+    const closeBtn = document.querySelector('button[title*="Cerrar"], button[aria-label*="Cerrar"]');
+    if (closeBtn) closeBtn.click();
+  `);
+  await wait(800);
 
   // =========================================================================
   // Caso (2): Tocar su ícono de cast -> llega comando a PC

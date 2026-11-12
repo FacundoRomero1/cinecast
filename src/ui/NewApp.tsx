@@ -205,8 +205,8 @@ const HomeView: React.FC<HomeViewProps> = ({
           onPlay={(media, episode, initialTime) => {
             handlePlayLocal(media, episode, initialTime);
           }}
-          onCast={(media, episode) => {
-            handleCastMediaToScreen(media, episode || undefined);
+          onCast={(media, episode, initialTime) => {
+            handleCastMediaToScreen(media, episode || undefined, initialTime);
           }}
           onRemove={(id) => {
             watchHistoryService.remove(id);

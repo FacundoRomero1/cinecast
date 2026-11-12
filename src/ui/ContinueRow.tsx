@@ -1,13 +1,13 @@
 import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { Play, Cast, X, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
-import type { MediaItem, Episode } from '../types';
+import type { MediaItem, Episode, MediaType } from '../types';
 import type { WatchProgressItem } from '../services/watchHistoryService';
 import { createStyledPosterFallback } from '../utils/imageUtils';
 
 export interface ContinueRowProps {
   items: WatchProgressItem[];
   onPlay: (mediaItem: MediaItem, episodeItem?: Episode | null, initialTime?: number) => void;
-  onCast?: (mediaItem: MediaItem, episodeItem?: Episode | null) => void;
+  onCast?: (mediaItem: MediaItem, episodeItem?: Episode | null, initialTime?: number) => void;
   onRemove: (id: string) => void;
   connectedScreenName?: string;
 }
@@ -172,22 +172,77 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
         ref={scrollRef}
         className="flex gap-4 overflow-x-auto pb-4 pt-1 no-scrollbar scroll-smooth"
       >
-        {uniqueItems.map((item) => {
-          const episodeLabel =
-            item.seasonNumber && item.episodeNumber
-              ? `T${item.seasonNumber}:E${item.episodeNumber}${item.episodeTitle ? ` - ${item.episodeTitle}` : ''}`
-              : null;
+        {uniqueItems.map((item, idx) => {
+          const matchContradict = item.episodeTitle ? String(item.episodeTitle).match(/^episodio\s+(\d+)$/i) : null;
+          const isContradictory = matchContradict && Number(matchContradict[1]) !== Number(item.episodeNumber);
+          const hasGenericName = Boolean(matchContradict);
+          const cleanName = (item.episodeTitle && !hasGenericName && !isContradictory) ? item.episodeTitle.trim() : null;
+
+          let episodeLabel: string | null = null;
+          if (item.seasonNumber && item.episodeNumber) {
+            episodeLabel = cleanName
+              ? `T${item.seasonNumber}:E${item.episodeNumber} · ${cleanName}`
+              : `T${item.seasonNumber}:E${item.episodeNumber}`;
+          } else if (item.episodeNumber) {
+            episodeLabel = cleanName
+              ? `Episodio ${item.episodeNumber} · ${cleanName}`
+              : `Episodio ${item.episodeNumber}`;
+          }
+
+          const isSeries =
+            item.type === 'series' ||
+            item.category === 'series' ||
+            item.category === 'anime' ||
+            Boolean(item.seasonNumber) ||
+            Boolean(item.episodeNumber);
+
+          const effectiveEp: Episode | null = isSeries && item.episodeNumber != null
+            ? {
+                id: item.episodeItem?.id || `${item.mediaItem?.id || item.id}-s${item.seasonNumber || 1}-e${item.episodeNumber}`,
+                title: cleanName || `Episodio ${item.episodeNumber}`,
+                overview: item.episodeItem?.overview || `Temporada ${item.seasonNumber || 1}, Episodio ${item.episodeNumber}`,
+                seasonNumber: item.seasonNumber || 1,
+                episodeNumber: item.episodeNumber,
+                durationSeconds: item.duration,
+              }
+            : (item.episodeItem || null);
+
+          const baseMedia: MediaItem = item.mediaItem || {
+            id: item.mediaId || item.id,
+            title: item.title,
+            type: ((item.type === 'series' || isSeries) ? 'series' : 'movie') as MediaType,
+            category: item.category,
+            overview: item.title,
+            year: new Date().getFullYear(),
+            ratingBadge: '13+',
+            matchScore: 98,
+            genres: [],
+            cast: [],
+            creatorOrDirector: '',
+            posterUrl: item.posterUrl || '',
+            backdropUrl: item.backdropUrl || '',
+          };
+
+          const mediaPayload: MediaItem = {
+            ...baseMedia,
+            id: item.mediaItem?.id || item.mediaId || item.id,
+            title: item.title,
+            type: ((item.type === 'series' || isSeries) ? 'series' : 'movie') as MediaType,
+            category: item.category,
+            posterUrl: item.posterUrl || baseMedia.posterUrl,
+            backdropUrl: item.backdropUrl || baseMedia.backdropUrl,
+          };
 
           return (
             <div
-              key={`cw-${item.id}`}
+              key={`cw-${item.id}-${idx}`}
               role="button"
               tabIndex={0}
-              onClick={() => onPlay(item.mediaItem, item.episodeItem, item.currentTime)}
+              onClick={() => onPlay(mediaPayload, effectiveEp, item.currentTime)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  onPlay(item.mediaItem, item.episodeItem, item.currentTime);
+                  onPlay(mediaPayload, effectiveEp, item.currentTime);
                 }
               }}
               className="group relative flex-none w-64 sm:w-72 bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden hover:border-red-600/60 transition-all duration-300 shadow-xl cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
@@ -270,7 +325,7 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
                       aria-label={`Enviar ${item.title} a ${connectedScreenName}`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onCast(item.mediaItem, item.episodeItem);
+                        onCast(mediaPayload, effectiveEp, item.currentTime);
                       }}
                       className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-zinc-800/90 hover:bg-red-600 text-zinc-300 hover:text-white border border-zinc-700/60 transition shrink-0 flex items-center justify-center active:scale-95"
                       title={`Enviar a ${connectedScreenName}`}

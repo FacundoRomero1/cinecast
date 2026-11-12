@@ -87,6 +87,50 @@ class WatchHistoryService {
     const safePoster = rawPoster.includes('unsplash.com') ? '' : rawPoster;
     const safeBackdrop = rawBackdrop.includes('unsplash.com') ? '' : rawBackdrop;
 
+    // Buscar nombre real del episodio en el catálogo de episodios si está disponible
+    let realEpTitle: string | undefined = undefined;
+    if (isSeries && eNum != null) {
+      const foundInMedia = mediaItem.episodes?.find(
+        (e) => (e.seasonNumber || 1) === (sNum || 1) && e.episodeNumber === eNum
+      );
+      if (foundInMedia?.title && !/^episodio\s+\d+$/i.test(foundInMedia.title)) {
+        realEpTitle = foundInMedia.title;
+      } else if (
+        episodeItem &&
+        (episodeItem.seasonNumber || 1) === (sNum || 1) &&
+        episodeItem.episodeNumber === eNum &&
+        episodeItem.title &&
+        !/^episodio\s+\d+$/i.test(episodeItem.title)
+      ) {
+        realEpTitle = episodeItem.title;
+      } else if (foundInMedia?.title) {
+        realEpTitle = foundInMedia.title;
+      } else if (
+        episodeItem &&
+        (episodeItem.seasonNumber || 1) === (sNum || 1) &&
+        episodeItem.episodeNumber === eNum &&
+        episodeItem.title
+      ) {
+        realEpTitle = episodeItem.title;
+      } else {
+        realEpTitle = `Episodio ${eNum}`;
+      }
+    }
+
+    const effectiveEpisodeItem: Episode | null = isSeries && eNum != null
+      ? {
+          id:
+            (episodeItem && (episodeItem.seasonNumber || 1) === (sNum || 1) && episodeItem.episodeNumber === eNum && episodeItem.id)
+              ? episodeItem.id
+              : `ep-${canonicalMediaId}-s${sNum || 1}-e${eNum}`,
+          title: realEpTitle || `Episodio ${eNum}`,
+          overview: episodeItem?.overview || `Temporada ${sNum || 1}, Episodio ${eNum}`,
+          seasonNumber: sNum || 1,
+          episodeNumber: eNum,
+          durationSeconds: safeDuration,
+        }
+      : (episodeItem || null);
+
     const newItem: WatchProgressItem = {
       id: progressId,
       mediaId: canonicalMediaId,
@@ -95,9 +139,9 @@ class WatchHistoryService {
       backdropUrl: safeBackdrop,
       type: mediaItem.type,
       category: mediaItem.category,
-      seasonNumber: sNum,
-      episodeNumber: eNum,
-      episodeTitle: episodeItem?.title,
+      seasonNumber: isSeries ? sNum : undefined,
+      episodeNumber: isSeries ? eNum : undefined,
+      episodeTitle: isSeries ? realEpTitle : undefined,
       currentTime: Math.floor(currentTime),
       duration: Math.floor(safeDuration),
       progressPercentage,
@@ -107,7 +151,7 @@ class WatchHistoryService {
         posterUrl: safePoster,
         backdropUrl: safeBackdrop,
       },
-      episodeItem: episodeItem || null,
+      episodeItem: effectiveEpisodeItem,
     };
 
     try {

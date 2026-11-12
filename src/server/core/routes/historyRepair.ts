@@ -25,6 +25,26 @@ function shouldReplaceSeriesItem(existing: WatchHistoryItem, incoming: WatchHist
   return (Number(incoming.lastWatchedAt) || 0) >= (Number(existing.lastWatchedAt) || 0);
 }
 
+export function repairEpisodeTitles(items: WatchHistoryItem[]): number {
+  let titlesFixed = 0;
+  for (const item of items) {
+    if (!item) continue;
+    const epNum = item.episodeNumber ?? (item.episodeItem as any)?.episodeNumber;
+    if (epNum != null && item.episodeTitle) {
+      const match = String(item.episodeTitle).match(/^Episodio\s+(\d+)$/i);
+      if (match && Number(match[1]) !== Number(epNum)) {
+        item.episodeTitle = `Episodio ${epNum}`;
+        if (item.episodeItem && typeof item.episodeItem === 'object') {
+          (item.episodeItem as any).episodeNumber = Number(epNum);
+          (item.episodeItem as any).title = `Episodio ${epNum}`;
+        }
+        titlesFixed++;
+      }
+    }
+  }
+  return titlesFixed;
+}
+
 export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): Router {
   const router = Router();
   const baseDir = options.baseDir || process.cwd();
@@ -159,14 +179,17 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
         return copy;
       });
 
-      // 5. Ordenar por última reproducción descendente
+      // 5. Corregir títulos de episodio contradictorios ("Episodio M" con M !== episodeNumber)
+      const titlesFixed = repairEpisodeTitles(cleanedList);
+
+      // 6. Ordenar por última reproducción descendente
       const repairedList = cleanedList
         .sort((a, b) => (Number(b.lastWatchedAt) || 0) - (Number(a.lastWatchedAt) || 0))
         .slice(0, 50);
 
       fs.writeFileSync(fp, JSON.stringify(repairedList, null, 2), 'utf8');
 
-      // 6. Notificar WebSocket broadcast y callback
+      // 7. Notificar WebSocket broadcast y callback
       const wsMsg = JSON.stringify({ type: 'watchHistoryUpdated', items: repairedList });
       globalDevices.forEach((client) => {
         if (client.ws && client.ws.readyState === WebSocket.OPEN) {
@@ -187,6 +210,7 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
         backupFile: backupFilename,
         totalRemaining: repairedList.length,
         duplicatesRemoved,
+        titlesFixed,
         items: repairedList,
       });
     } catch (err: any) {

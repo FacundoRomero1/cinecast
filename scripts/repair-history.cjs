@@ -169,6 +169,28 @@ const cleanedList = Array.from(seriesMap.values()).map((item) => {
   return copy;
 });
 
+function repairEpisodeTitles(items) {
+  let titlesFixed = 0;
+  for (const item of items) {
+    if (!item) continue;
+    const epNum = item.episodeNumber ?? item.episodeItem?.episodeNumber;
+    if (epNum != null && item.episodeTitle) {
+      const match = String(item.episodeTitle).match(/^Episodio\s+(\d+)$/i);
+      if (match && Number(match[1]) !== Number(epNum)) {
+        item.episodeTitle = `Episodio ${epNum}`;
+        if (item.episodeItem) {
+          item.episodeItem.episodeNumber = Number(epNum);
+          item.episodeItem.title = `Episodio ${epNum}`;
+        }
+        titlesFixed++;
+      }
+    }
+  }
+  return titlesFixed;
+}
+
+const titlesFixed = repairEpisodeTitles(cleanedList);
+
 // Ordenar por última reproducción descendente
 const repairedList = cleanedList
   .sort((a, b) => (b.lastWatchedAt || 0) - (a.lastWatchedAt || 0))
@@ -181,7 +203,10 @@ console.log('REPORTE DE REPARACIÓN DE HISTORIAL:');
 console.log(`- Ítems originales: ${rawHistory.length}`);
 console.log(`- Duplicados eliminados: ${duplicatesRemoved}`);
 console.log(`- Carátulas Unsplash corregidas: ${unsplashFixed}`);
+console.log(`- Títulos de episodio contradictorios corregidos: ${titlesFixed}`);
 console.log(`- Ítems finales únicos: ${repairedList.length}`);
 console.log(`- Archivo de respaldo: ${backupFilename}`);
 console.log('=======================================================');
+
+module.exports = { repairEpisodeTitles };
 
