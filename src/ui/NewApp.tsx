@@ -58,6 +58,7 @@ import { AppShell } from './AppShell';
 import { Hero } from './Hero';
 import { Row } from './Row';
 import { TitleCard } from './TitleCard';
+import { Switch } from './Switch';
 import { FilterBar, type FilterState } from './FilterBar';
 import { GridSkeleton, HeroSkeleton } from './Skeleton';
 import { useLiteMode, type LiteModePreference } from './liteMode';
@@ -1475,19 +1476,11 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={diagEnabled}
-          onClick={handleToggleDiag}
-          className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-bold border transition ${
-            diagEnabled
-              ? 'bg-emerald-600 text-white border-emerald-500'
-              : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
-          }`}
-        >
-          {diagEnabled ? 'Activado' : 'Desactivado'}
-        </button>
+        <Switch
+          checked={diagEnabled}
+          ariaLabel="Alternar Modo diagnóstico"
+          onChange={handleToggleDiag}
+        />
       </div>
 
       {/* IP y QR (/api/local-ip) */}

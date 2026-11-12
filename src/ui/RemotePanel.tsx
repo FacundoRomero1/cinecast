@@ -33,6 +33,7 @@ import {
 import type { Episode, MediaItem, PlaybackState, RemoteCommand } from '../types';
 import { createStyledPosterFallback } from '../utils/imageUtils';
 import { deviceSync } from '../services/deviceSync';
+import { Switch } from './Switch';
 import { generateServersForMedia } from '../services/embedService';
 import { PadSection } from './PadSection';
 
@@ -853,27 +854,16 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   Salta intro y créditos al instante, continúa temporadas sin parar
                 </p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={Boolean(playbackState?.marathon)}
-                aria-label="Alternar Modo Maratón"
-                onClick={() =>
+              <Switch
+                checked={Boolean(playbackState?.marathon)}
+                ariaLabel="Alternar Modo Maratón"
+                onChange={(enabled) =>
                   onSendCommand({
                     action: 'setMarathon',
-                    payload: { enabled: !Boolean(playbackState?.marathon) },
+                    payload: { enabled },
                   })
                 }
-                className={`w-11 h-6 rounded-full transition-colors relative shrink-0 focus:outline-none cursor-pointer ${
-                  playbackState?.marathon ? 'bg-red-600' : 'bg-zinc-700'
-                }`}
-              >
-                <span
-                  className={`inline-block w-4 h-4 rounded-full bg-white transform transition-transform ${
-                    playbackState?.marathon ? 'translate-x-6' : 'translate-x-1'
-                  } top-1 absolute shadow`}
-                />
-              </button>
+              />
             </div>
 
             {/* Saltar intro automático */}
@@ -884,29 +874,16 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   Omite la intro cuando el servidor detecta las marcas de tiempo
                 </p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
-                aria-label="Alternar salto de intro automático"
-                onClick={() =>
+              <Switch
+                checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
+                ariaLabel="Alternar salto de intro automático"
+                onChange={(autoSkipIntro) =>
                   onSendCommand({
                     action: 'setPlaybackSettings',
-                    payload: {
-                      autoSkipIntro: !Boolean(playbackState?.playbackSettings?.autoSkipIntro),
-                    },
+                    payload: { autoSkipIntro },
                   })
                 }
-                className={`w-11 h-6 rounded-full transition-colors relative shrink-0 focus:outline-none cursor-pointer ${
-                  playbackState?.playbackSettings?.autoSkipIntro ? 'bg-red-600' : 'bg-zinc-700'
-                }`}
-              >
-                <span
-                  className={`inline-block w-4 h-4 rounded-full bg-white transform transition-transform ${
-                    playbackState?.playbackSettings?.autoSkipIntro ? 'translate-x-6' : 'translate-x-1'
-                  } top-1 absolute shadow`}
-                />
-              </button>
+              />
             </div>
 
             {/* Siguiente capítulo automático */}
@@ -917,29 +894,16 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   Reproduce el próximo episodio al terminar el actual
                 </p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
-                aria-label="Alternar reproducción automática del siguiente capítulo"
-                onClick={() =>
+              <Switch
+                checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
+                ariaLabel="Alternar reproducción automática del siguiente capítulo"
+                onChange={(autoPlayNext) =>
                   onSendCommand({
                     action: 'setPlaybackSettings',
-                    payload: {
-                      autoPlayNext: !(playbackState?.playbackSettings?.autoPlayNext ?? true),
-                    },
+                    payload: { autoPlayNext },
                   })
                 }
-                className={`w-11 h-6 rounded-full transition-colors relative shrink-0 focus:outline-none cursor-pointer ${
-                  (playbackState?.playbackSettings?.autoPlayNext ?? true) ? 'bg-red-600' : 'bg-zinc-700'
-                }`}
-              >
-                <span
-                  className={`inline-block w-4 h-4 rounded-full bg-white transform transition-transform ${
-                    (playbackState?.playbackSettings?.autoPlayNext ?? true) ? 'translate-x-6' : 'translate-x-1'
-                  } top-1 absolute shadow`}
-                />
-              </button>
+              />
             </div>
           </div>
 
