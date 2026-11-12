@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { SlidersHorizontal, X, RotateCcw } from 'lucide-react';
+import { lockScroll } from './scrollLock';
 import type { CatalogSortOption, GenreCountItem } from '../providers/types';
 
 export interface FilterState {
@@ -51,8 +52,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 
   useEffect(() => {
     if (!mobileSheetOpen) return;
-    const origOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const unlock = lockScroll();
 
     // Manejo de historia: botón Atrás cierra primero el panel sin cambiar de ruta
     window.history.pushState({ ccFilterOpen: true }, '');
@@ -62,7 +62,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     window.addEventListener('popstate', handlePopState);
 
     return () => {
-      document.body.style.overflow = origOverflow;
+      unlock();
       window.removeEventListener('popstate', handlePopState);
     };
   }, [mobileSheetOpen]);

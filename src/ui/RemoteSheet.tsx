@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, ChevronRight, Gamepad2 } from 'lucide-react';
 import { RemotePanel } from './RemotePanel';
+import { lockScroll } from './scrollLock';
 import type { Episode, MediaItem, PlaybackState, RemoteCommand } from '../types';
 
 export interface RemoteSheetProps {
@@ -39,8 +40,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
     if (!isOpen) return;
 
     // Bloquear scroll de fondo mientras el panel esté abierto en móvil
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const unlock = lockScroll();
 
     // Agregar marcador en history solo si no lo tiene ya
     if (!window.history.state?.ccRemoteSheet) {
@@ -55,7 +55,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
     window.addEventListener('popstate', onPopState);
 
     return () => {
-      document.body.style.overflow = prevOverflow;
+      unlock();
       window.removeEventListener('popstate', onPopState);
     };
   }, [isOpen, onClose]);

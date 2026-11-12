@@ -42,7 +42,10 @@ export const MiniRemote: React.FC<MiniRemoteProps> = ({
       <aside
         aria-label="Mini control remoto sin pantalla"
         onClick={onNavigateToSettings}
-        className="fixed inset-x-0 bottom-[calc(60px+env(safe-area-inset-bottom,0px))] md:hidden h-[56px] bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800/80 px-4 flex items-center justify-between z-cc-minicontrol cursor-pointer transition select-none hover:bg-zinc-800/80"
+        style={{
+          bottom: 'calc(60px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-offset, 0px))',
+        }}
+        className="fixed inset-x-0 md:hidden h-[56px] bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800/80 px-4 flex items-center justify-between z-cc-minicontrol cursor-pointer transition select-none hover:bg-zinc-800/80"
       >
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="w-2.5 h-2.5 rounded-full bg-zinc-600 shrink-0" />
@@ -70,7 +73,10 @@ export const MiniRemote: React.FC<MiniRemoteProps> = ({
     <aside
       aria-label="Mini control remoto móvil"
       onClick={onNavigateToControl}
-      className="fixed inset-x-0 bottom-[calc(60px+env(safe-area-inset-bottom,0px))] md:hidden h-[56px] bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800/80 px-3 flex items-center justify-between z-cc-minicontrol cursor-pointer transition select-none hover:bg-zinc-850"
+      style={{
+        bottom: 'calc(60px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-offset, 0px))',
+      }}
+      className="fixed inset-x-0 md:hidden h-[56px] bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800/80 px-3 flex items-center justify-between z-cc-minicontrol cursor-pointer transition select-none hover:bg-zinc-850"
     >
       <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
         <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />

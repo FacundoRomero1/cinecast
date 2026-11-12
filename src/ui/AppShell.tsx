@@ -16,6 +16,8 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import { useScrollRestoration } from './useScrollRestoration';
 import { getRememberedTabUrl, saveTabScroll } from './navigationMemory';
+import { useViewportPin } from './useViewportPin';
+import { LayoutDebug } from './LayoutDebug';
 
 export interface AppShellProps {
   children: React.ReactNode;
@@ -60,6 +62,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   isControlOpen = false,
 }) => {
   useScrollRestoration();
+  useViewportPin();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -93,6 +96,7 @@ export const AppShell: React.FC<AppShellProps> = ({
 
   return (
     <div className="min-h-[100dvh] md:min-h-screen bg-zinc-950 text-zinc-100 flex flex-col md:flex-row">
+      <LayoutDebug />
       {/* Menú lateral fijo en escritorio (>= 768px) */}
       <aside
         aria-label="Navegación principal"
@@ -167,10 +171,10 @@ export const AppShell: React.FC<AppShellProps> = ({
           isControlOpen ? 'md:pr-96' : ''
         } ${
           hasMiniRemote
-            ? 'pb-[calc(124px+env(safe-area-inset-bottom,0px))] md:pb-24'
+            ? 'pb-[calc(124px+env(safe-area-inset-bottom,0px)+var(--vv-bottom-offset,0px))] md:pb-24'
             : extraBottomPadding || bottomSlot
-            ? 'pb-[calc(76px+env(safe-area-inset-bottom,0px))] md:pb-24'
-            : 'pb-[calc(68px+env(safe-area-inset-bottom,0px))] md:pb-10'
+            ? 'pb-[calc(76px+env(safe-area-inset-bottom,0px)+var(--vv-bottom-offset,0px))] md:pb-24'
+            : 'pb-[calc(68px+env(safe-area-inset-bottom,0px)+var(--vv-bottom-offset,0px))] md:pb-10'
         }`}
       >
         {children}
@@ -186,7 +190,10 @@ export const AppShell: React.FC<AppShellProps> = ({
       {/* Barra de pestañas inferior en móvil (< 768px): siempre visible, safe-area aware */}
       <nav
         aria-label="Navegación móvil"
-        className="fixed bottom-0 inset-x-0 h-[calc(60px+env(safe-area-inset-bottom,0px))] pb-[env(safe-area-inset-bottom,0px)] md:hidden bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/80 z-cc-tabbar flex items-center justify-around px-1 py-1 select-none"
+        style={{
+          bottom: 'var(--vv-bottom-offset, 0px)',
+        }}
+        className="fixed inset-x-0 h-[calc(60px+env(safe-area-inset-bottom,0px))] pb-[env(safe-area-inset-bottom,0px)] md:hidden bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/80 z-cc-tabbar flex items-center justify-around px-1 py-1 select-none"
       >
         {MOBILE_TAB_ITEMS.map((item) => {
           const Icon = item.icon;
