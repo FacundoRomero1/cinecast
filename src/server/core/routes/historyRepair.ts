@@ -42,7 +42,7 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
       const u = path.join(options.userDataPath, 'watch_history.json');
       if (fs.existsSync(u)) return u;
     }
-    const def = candidates[0];
+    const def: string = candidates[0] || path.join(process.cwd(), 'public', 'data', 'watch_history.json');
     try {
       const d = path.dirname(def);
       if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
