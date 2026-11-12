@@ -114,3 +114,19 @@ Implementación:
 - En `#/` (Inicio), la virtualización de filas + ventaneo horizontal redujo los nodos DOM de **5,015 → 1,367** (**−72.7%**) y los elementos `<img>` de **196 → 40** (**−79.6%**).
 - En `#/` con **Modo Lite (`?lite=1`)**, `usedJSHeapSize` bajó de **75.88 MiB (base) / 77.43 MiB (normal) → 51.68 MiB** (**−31.9%** respecto a la línea base).
 - En `#/explorar`, los pósters pasaron de cargarse sin proxy (`0` reqs locales) a servirse cacheados vía `/api/poster` (`w=185` / `w=154`, ~14 KB promedio por póster).
+
+---
+
+## 5. Parte 5 — Catálogo extendido (`scripts/extend-catalog.mjs --limit 2000`)
+
+Prueba ejecutada generando `public/data/catalog.extended.json` (**2,000** ítems nuevos, **3.11 MiB**) sin modificar `public/data/catalog.json` (**10,119** ítems, **20.57 MiB**), combinando **12,119** ítems totales en `data/catalog.sqlite` (`49,577,984` bytes):
+
+- Build inicial de `data/catalog.sqlite` combinado: **1,510.41 ms**.
+- Apertura cálida SQLite (`real-12119`): **20.93 ms**, `heapUsed` tras GC **11.93 MiB**, `RSS` **150.59 MiB**.
+
+| Endpoint (`real-12119`, 200 llamadas c/u) | Sin gzip `p50 / p95` (ms) | Bytes sin gzip | Gzip `p50 / p95` (ms) | Bytes wire (`Content-Encoding`) |
+| --- | ---: | ---: | ---: | ---: |
+| `/api/catalog?limit=40&fields=card` | 1.03 / 2.28 | 14,821 | 1.34 / 1.96 | 3,581 (`gzip`) |
+| `/api/home` | 2.63 / 4.82 | 69,780 | 3.09 / 4.14 | 9,735 (`gzip`) |
+| `/api/search?q=ba` | 4.47 / 6.36 | 91,241 | 3.21 / 4.49 | 15,990 (`gzip`) |
+| `/api/genres` | 0.39 / 0.54 | 558 | 0.39 / 0.53 | 558 (`identity`) |

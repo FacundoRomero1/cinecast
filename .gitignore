@@ -15,5 +15,7 @@ scratch/
 electron/core.cjs
 .cinecast-data/
 public/data/watch_history.json
+public/data/catalog.extended.json
+public/data/catalog.extended.json.tmp
 data/catalog.sqlite
 data/catalog.sqlite-*

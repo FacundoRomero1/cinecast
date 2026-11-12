@@ -252,11 +252,17 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
     await new Promise((resolve) => server.close(resolve));
   }
 
+  const baseCatalogFile = path.join(workDir, 'public', 'data', 'catalog.json');
+  const extCatalogFile = path.join(workDir, 'public', 'data', 'catalog.extended.json');
+  const catalogJsonBytes =
+    fs.statSync(baseCatalogFile).size +
+    (fs.existsSync(extCatalogFile) ? fs.statSync(extCatalogFile).size : 0);
+
   const payload = {
     tag: workerTag,
     engine: isMemory ? 'memory' : 'sqlite',
     itemCount,
-    catalogJsonBytes: fs.statSync(path.join(workDir, 'public', 'data', 'catalog.json')).size,
+    catalogJsonBytes,
     dbBytes,
     buildMs,
     loadMs,
@@ -307,9 +313,14 @@ async function main() {
   const callsPerMode = callsArg ? Math.max(1, Number(callsArg.split('=')[1]) || 100) : 100;
   const realStat = fs.statSync(realCatalogPath);
   const realItems = JSON.parse(fs.readFileSync(realCatalogPath, 'utf8'));
+  const extCatalogPath = path.join(rootDir, 'public', 'data', 'catalog.extended.json');
+  const extExists = fs.existsSync(extCatalogPath);
+  const extStat = extExists ? fs.statSync(extCatalogPath) : null;
+  const extItems = extExists ? JSON.parse(fs.readFileSync(extCatalogPath, 'utf8')) : [];
+  const combinedTotalBytes = realStat.size + (extStat ? extStat.size : 0);
 
   console.log('=== [bench-catalog] Línea base de servidor ===');
-  console.log(`catalog.json real: ${realStat.size.toLocaleString('en-US')} bytes (${formatMiB(realStat.size)}), ${realItems.length.toLocaleString('en-US')} ítems | llamadas/endpoint=${callsPerMode * 2} (${callsPerMode} sin gzip + ${callsPerMode} con gzip)`);
+  console.log(`catalog.json real: ${realStat.size.toLocaleString('en-US')} bytes (${formatMiB(realStat.size)}), ${realItems.length.toLocaleString('en-US')} ítems${extExists ? ` + catalog.extended.json (${extItems.length.toLocaleString('en-US')} ítems, total ${formatMiB(combinedTotalBytes)})` : ''} | llamadas/endpoint=${callsPerMode * 2} (${callsPerMode} sin gzip + ${callsPerMode} con gzip)`);
 
   const dir50k = path.join(scratchBase, 'syn-50k');
   const dir100k = path.join(scratchBase, 'syn-100k');
@@ -326,7 +337,8 @@ async function main() {
   const runs = [];
   try {
     if (onlySet.has('real')) {
-      const rReal = invokeWorker(`real-${realItems.length}`, rootDir, callsPerMode);
+      const realTagCount = realItems.length + (Array.isArray(extItems) ? extItems.length : 0);
+      const rReal = invokeWorker(`real-${realTagCount}`, rootDir, callsPerMode);
       runs.push(rReal);
       console.log(`[bench-catalog] ${rReal.tag}: carga=${rReal.loadMs}ms heap=${formatMiB(rReal.heapUsedBytes)} rss=${formatMiB(rReal.rssBytes)}`);
     }

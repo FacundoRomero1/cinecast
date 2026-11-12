@@ -210,7 +210,7 @@ app.whenReady().then(async () => {
 
   const andReq = catalogRequests.find((u) => u.includes('Terror') && u.includes('Comedia') && u.includes('genreMode=all'));
   const andRes = await (await fetch(`${baseUrl}/api/catalog?genre=Terror,Comedia&fields=card&limit=20`)).json();
-  const andUiMatch = pickTerror && pickComedia && Boolean(andReq) && andRes.total === 116 && multiState.chips.length >= 2;
+  const andUiMatch = pickTerror && pickComedia && Boolean(andReq) && andRes.total >= 116 && multiState.headerText.replace(/\./g, '').includes(String(andRes.total)) && multiState.chips.length >= 2;
   console.log('Multi-género Terror+Comedia (all):', { andUiMatch, total: andRes.total, multiState });
 
   // Probar Cualquiera (genreMode=any)
