@@ -132,8 +132,17 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
 
   const { createApp } = await import('../src/server/core/http.js');
   const { loadServerCatalogFromDisk } = await import('../src/server/core/routes/catalog.js');
-  const { isCatalogMemoryEngine } = await import('../src/server/core/catalogSchema.js');
+  const { isCatalogMemoryEngine, resolveCatalogDbPath } = await import('../src/server/core/catalogSchema.js');
   const { openCatalogDb, closeAllCatalogDbs } = await import('../src/server/core/catalogDb.js');
+
+  let maxRssSampledBytes = process.memoryUsage().rss;
+  let maxRssDuringBuildBytes = process.memoryUsage().rss;
+  const rssSampler = setInterval(() => {
+    try {
+      const cur = process.memoryUsage().rss;
+      if (cur > maxRssSampledBytes) maxRssSampledBytes = cur;
+    } catch (_) {}
+  }, 100);
 
   const isMemory = isCatalogMemoryEngine();
   let sharedCache = null;
@@ -160,11 +169,30 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
     global.gc();
     memAfter = process.memoryUsage();
   } else {
+    // Forzar reconstrucción para medir con exactitud buildMs y pico de RSS durante la construcción
+    const targetDbPath = resolveCatalogDbPath(workDir, path.join(workDir, '.cinecast-data'));
+    for (const suffix of ['', '-wal', '-shm']) {
+      const p = `${targetDbPath}${suffix}`;
+      if (fs.existsSync(p)) {
+        try {
+          fs.unlinkSync(p);
+        } catch (_) {}
+      }
+    }
+
+    const buildSampler = setInterval(() => {
+      try {
+        const cur = process.memoryUsage().rss;
+        if (cur > maxRssDuringBuildBytes) maxRssDuringBuildBytes = cur;
+      } catch (_) {}
+    }, 100);
+
     const tBuild0 = performance.now();
     const first = openCatalogDb(workDir, path.join(workDir, '.cinecast-data'));
     if (first && first.rebuilt) {
       buildMs = Number((performance.now() - tBuild0).toFixed(2));
     }
+    clearInterval(buildSampler);
     closeAllCatalogDbs();
     global.gc();
     memBefore = process.memoryUsage();
@@ -250,7 +278,15 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
     }
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    clearInterval(rssSampler);
   }
+
+  const ru = typeof process.resourceUsage === 'function' ? process.resourceUsage() : null;
+  const maxRssKiB = ru ? ru.maxRSS : 0;
+  const maxRssBytes = maxRssKiB * 1024;
+  const maxRssMiB = Number((maxRssBytes / (1024 * 1024)).toFixed(2));
+  const sampledPeakRssMiB = Number((maxRssSampledBytes / (1024 * 1024)).toFixed(2));
+  const buildPeakRssMiB = Number((maxRssDuringBuildBytes / (1024 * 1024)).toFixed(2));
 
   const baseCatalogFile = path.join(workDir, 'public', 'data', 'catalog.json');
   const extCatalogFile = path.join(workDir, 'public', 'data', 'catalog.extended.json');
@@ -272,6 +308,10 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
     rssBytes: memAfter.rss,
     rssMiB: Number((memAfter.rss / (1024 * 1024)).toFixed(2)),
     rssDeltaBytes: memAfter.rss - memBefore.rss,
+    maxRssKiB,
+    maxRssMiB,
+    sampledPeakRssMiB,
+    buildPeakRssMiB,
     endpoints: results,
   };
 
@@ -282,11 +322,16 @@ async function runWorker(workerTag, workDir, callsPerMode = 100) {
   console.log('__BENCH_JSON__' + JSON.stringify(payload));
 }
 
-function invokeWorker(tag, workDir, callsPerMode) {
+function invokeWorker(tag, workDir, callsPerMode, extraEnv = {}) {
   const res = spawnSync(
     process.execPath,
     ['--expose-gc', '--import', 'tsx', __filename, '--worker', tag, workDir, String(callsPerMode)],
-    { cwd: rootDir, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 }
+    {
+      cwd: rootDir,
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+      env: { ...process.env, ...extraEnv },
+    }
   );
   if (res.status !== 0) {
     console.error(`[bench-catalog] Worker "${tag}" falló (${res.status}):\n${res.stderr}\n${res.stdout}`);
@@ -337,12 +382,21 @@ async function main() {
   }
 
   const runs = [];
+  const runWithMemory = args.includes('--with-memory');
   try {
     if (onlySet.has('real')) {
       const realTagCount = realItems.length + (Array.isArray(extItems) ? extItems.length : 0);
       const rReal = invokeWorker(`real-${realTagCount}`, rootDir, callsPerMode);
       runs.push(rReal);
-      console.log(`[bench-catalog] ${rReal.tag} (${rReal.engine}): carga=${rReal.loadMs}ms heapUsed=${formatMiB(rReal.heapUsedBytes)} rssMiB=${rReal.rssMiB} MiB`);
+      console.log(`[bench-catalog] ${rReal.tag} (${rReal.engine}): carga=${rReal.loadMs}ms heapUsed=${formatMiB(rReal.heapUsedBytes)} rssMiB=${rReal.rssMiB} MiB picoMaxRSS=${rReal.maxRssMiB} MiB`);
+
+      if (runWithMemory) {
+        const rRealMem = invokeWorker(`real-${realTagCount}-mem`, rootDir, callsPerMode, {
+          CINECAST_CATALOG_ENGINE: 'memory',
+        });
+        runs.push(rRealMem);
+        console.log(`[bench-catalog] ${rRealMem.tag} (${rRealMem.engine}): carga=${rRealMem.loadMs}ms heapUsed=${formatMiB(rRealMem.heapUsedBytes)} rssMiB=${rRealMem.rssMiB} MiB picoMaxRSS=${rRealMem.maxRssMiB} MiB`);
+      }
     }
 
     if (onlySet.has('50k')) {
@@ -350,7 +404,7 @@ async function main() {
       await buildSyntheticCatalog(realItems, 50000, path.join(dir50k, 'public', 'data', 'catalog.json'));
       const r50k = invokeWorker('50k', dir50k, callsPerMode);
       runs.push(r50k);
-      console.log(`[bench-catalog] ${r50k.tag}: carga=${r50k.loadMs}ms heap=${formatMiB(r50k.heapUsedBytes)} rss=${formatMiB(r50k.rssBytes)}`);
+      console.log(`[bench-catalog] ${r50k.tag}: carga=${r50k.loadMs}ms heap=${formatMiB(r50k.heapUsedBytes)} rss=${formatMiB(r50k.rssBytes)} picoMaxRSS=${r50k.maxRssMiB} MiB`);
     }
 
     if (onlySet.has('100k')) {
@@ -363,7 +417,15 @@ async function main() {
       }
       const r100k = invokeWorker('100k', dir100k, callsPerMode);
       runs.push(r100k);
-      console.log(`[bench-catalog] ${r100k.tag} (${r100k.engine}): carga=${r100k.loadMs}ms heapUsed=${formatMiB(r100k.heapUsedBytes)} rssMiB=${r100k.rssMiB} MiB`);
+      console.log(`[bench-catalog] ${r100k.tag} (${r100k.engine}): carga=${r100k.loadMs}ms heapUsed=${formatMiB(r100k.heapUsedBytes)} rssMiB=${r100k.rssMiB} MiB picoMaxRSS=${r100k.maxRssMiB} MiB`);
+
+      if (runWithMemory) {
+        const r100kMem = invokeWorker('100k-mem', dir100k, callsPerMode, {
+          CINECAST_CATALOG_ENGINE: 'memory',
+        });
+        runs.push(r100kMem);
+        console.log(`[bench-catalog] ${r100kMem.tag} (${r100kMem.engine}): carga=${r100kMem.loadMs}ms heapUsed=${formatMiB(r100kMem.heapUsedBytes)} rssMiB=${r100kMem.rssMiB} MiB picoMaxRSS=${r100kMem.maxRssMiB} MiB`);
+      }
     }
   } finally {
     if (args.includes('--clean')) {
@@ -379,11 +441,11 @@ async function main() {
   const allRuns = Array.from(mergedByTag.values());
 
   console.log('\n--- Resumen Carga & Memoria (tras gc) ---');
-  console.log('Escenario      | Engine | Ítems   | JSON MiB | Carga ms | Heap tras GC | rssMiB');
-  console.log('-'.repeat(86));
+  console.log('Escenario        | Engine | Ítems   | JSON MiB | Carga ms | Heap tras GC | rssMiB     | Pico maxRSS | Pico sampled');
+  console.log('-'.repeat(116));
   for (const r of runs) {
     console.log(
-      `${r.tag.padEnd(14)} | ${String(r.engine || 'n/a').padEnd(6)} | ${String(r.itemCount).padStart(7)} | ${formatMiB(r.catalogJsonBytes).padStart(8)} | ${String(r.loadMs).padStart(8)} | ${formatMiB(r.heapUsedBytes).padStart(12)} | ${String(r.rssMiB ?? Number((r.rssBytes / (1024 * 1024)).toFixed(2))).padStart(6)} MiB`
+      `${r.tag.padEnd(16)} | ${String(r.engine || 'n/a').padEnd(6)} | ${String(r.itemCount).padStart(7)} | ${formatMiB(r.catalogJsonBytes).padStart(8)} | ${String(r.loadMs).padStart(8)} | ${formatMiB(r.heapUsedBytes).padStart(12)} | ${String(r.rssMiB ?? Number((r.rssBytes / (1024 * 1024)).toFixed(2))).padStart(6)} MiB | ${String(r.maxRssMiB != null ? `${r.maxRssMiB} MiB` : 'n/a').padStart(11)} | ${String(r.sampledPeakRssMiB != null ? `${r.sampledPeakRssMiB} MiB` : 'n/a').padStart(12)}`
     );
   }
 

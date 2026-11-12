@@ -202,3 +202,24 @@ En `src/server/core/catalogDb.ts` se aplicaron PRAGMAs quirúrgicos de reducció
 **Conclusión de Parte 5**:
 La configuración SQLite con `cache_size = -4096`, `mmap_size = 0` y `temp_store = FILE` reduce el consumo de memoria física (RSS) a **65.79 MiB en 12k** y lo contiene en apenas **68.71 MiB en 100k** (reducción del 83.1% frente a los 406.55 MiB del motor en memoria).
 
+---
+
+## 8. Parte 6 — Medición de Pico de Memoria (`maxRSS` y Muestreo 100 ms) en Construcción y Servicio
+
+Medición instrumentada en `scripts/bench-catalog.cjs` capturando el high-water mark del sistema operativo vía `process.resourceUsage().maxRSS` e intervalo de muestreo de `process.memoryUsage().rss` cada 100 ms durante la construcción de la base desde el catálogo combinado (12,119 ítems) y el catálogo sintético a escala (100,000 ítems), comparando el motor `sqlite` vs `memory`:
+
+### Tabla Comparativa de Pico de Memoria (SQLite vs Memoria en 12k y 100k)
+
+| Escenario | Motor | Ítems | JSON MiB | Tiempo Carga / Build (ms) | `heapUsed` tras GC | `RSS` tras GC | Pico `maxRSS` (OS) | Pico Muestreado (100 ms) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `real-12119` | `sqlite` | 12,119 | 23.67 MiB | 36.82 | 12.10 MiB | 135.79 MiB | **199.84 MiB** | 199.57 MiB |
+| `real-12119` | `memory` | 12,119 | 23.67 MiB | 163.80 | 41.88 MiB | 101.41 MiB | **190.52 MiB** | 187.17 MiB |
+| `100k` | `sqlite` | 100,000 | 162.58 MiB | 157.42 | 12.08 MiB | 41.43 MiB | **880.63 MiB** | 840.53 MiB |
+| `100k` | `memory` | 100,000 | 162.58 MiB | 1,170.07 | 260.63 MiB | 438.11 MiB | **768.88 MiB** | 580.46 MiB |
+
+### Análisis del Umbral de 250 MiB
+- En el catálogo real combinado de **12k** (12,119 ítems), el pico máximo de RSS durante la reconstrucción completa y arranque del servidor alcanza **199.84 MiB** en SQLite (190.52 MiB en memoria).
+- **El pico en 12k queda por debajo del umbral de 250 MiB** (margen de 50.16 MiB), por lo que no se requiere streaming ni particionado por tramos para la operación normal.
+- En reposo tras GC, SQLite mantiene un consumo de heap JS minúsculo de **12.08 MiB en 100k** frente a **260.63 MiB** del motor en memoria (−95.4%).
+
+
