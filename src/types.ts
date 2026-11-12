@@ -199,6 +199,8 @@ export interface PlaybackState {
   activeHub?: HubType;
   audioSettings: AudioSettings;
   playbackSettings: PlaybackSettings;
+  marathon?: boolean;
+  hasIntroTimings?: boolean;
   isIntroActive: boolean;
   isRecapActive: boolean;
   nextEpisodeCountdown: number | null;
@@ -227,6 +229,7 @@ export type RemoteCommandAction =
   | 'toggleMute'
   | 'setAudioSettings'
   | 'setPlaybackSettings'
+  | 'setMarathon'
   | 'skipIntro'
   | 'skipRecap'
   | 'playMedia'

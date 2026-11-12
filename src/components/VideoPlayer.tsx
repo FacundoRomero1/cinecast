@@ -530,6 +530,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
   };
 
+  useEffect(() => {
+    const onMarathon = (e: Event) => {
+      const custom = e as CustomEvent<{ enabled?: boolean }>;
+      const nextVal =
+        typeof custom.detail?.enabled === 'boolean'
+          ? custom.detail.enabled
+          : typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true';
+      setMarathonMode(nextVal);
+      onBroadcastState?.({ marathon: nextVal });
+    };
+    window.addEventListener('cinecast:marathon', onMarathon);
+    return () => window.removeEventListener('cinecast:marathon', onMarathon);
+  }, [onBroadcastState]);
+
   // Referencias sincronizadas para evitar valores viejos por closures en broadcastImmediate
   const subtitlesEnabledRef = useRef(subtitlesEnabled);
   const availableServersRef = useRef(availableServers);
@@ -1155,6 +1169,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       currentTime: time,
       duration: dur,
       isPlaying: playing,
+      marathon: marathonMode,
+      hasIntroTimings: introStart !== undefined && introEnd !== undefined,
       isIntroActive: introStart !== undefined && introEnd !== undefined && time >= introStart && time <= introEnd,
       isRecapActive: recapStart !== undefined && recapEnd !== undefined && time >= recapStart && time <= recapEnd,
       servers: availableServersRef.current.map((s) => ({ name: s.name, language: s.language })),

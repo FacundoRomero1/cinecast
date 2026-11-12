@@ -18,7 +18,9 @@ import {
   RotateCcw,
   RotateCw,
   Server,
+  SkipBack,
   SkipForward,
+  FastForward,
   Sliders,
   Subtitles,
   Trophy,
@@ -311,6 +313,26 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
       cancelled = true;
     };
   }, [isEpisodic, tmdbId, selectedSeason, currentMedia?.episodes]);
+
+  const totalKnownSeasons =
+    playbackState?.playbackMeta?.totalSeasons || seasons.length || 1;
+  const totalKnownEpisodes =
+    episodes.length > 0
+      ? episodes.length
+      : playbackState?.playbackMeta?.episodes?.length || 0;
+
+  const hasPrevEpisode =
+    isEpisodic && ((seasonNum || 1) > 1 || (episodeNum || 1) > 1);
+
+  const hasNextEpisode =
+    isEpisodic &&
+    (totalKnownEpisodes > 0 && totalKnownSeasons > 0
+      ? (seasonNum || 1) < totalKnownSeasons || (episodeNum || 1) < totalKnownEpisodes
+      : true);
+
+  const hasIntroTimings = Boolean(
+    playbackState?.hasIntroTimings || playbackState?.isIntroActive
+  );
 
   const handleTestSignal = () => {
     setPingSuccess(true);
@@ -657,13 +679,30 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             </div>
           </div>
 
-          {/* Fila de controles principales (-10s, play/pause, +10s) */}
-          <div className="flex items-center justify-center gap-4 pt-1">
+          {/* Fila de controles principales (Cap Ant, -10s, play/pause, +10s, Cap Sig) */}
+          <div className="flex items-center justify-center gap-2 sm:gap-3 pt-1">
+            {isEpisodic && (
+              <button
+                type="button"
+                aria-label="Capítulo anterior"
+                disabled={!hasPrevEpisode}
+                title={hasPrevEpisode ? 'Capítulo anterior' : 'Primer capítulo'}
+                onClick={() => onSendCommand({ action: 'prevEpisode' })}
+                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${
+                  hasPrevEpisode
+                    ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
+                    : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
+                }`}
+              >
+                <SkipBack className="w-5 h-5" />
+              </button>
+            )}
+
             <button
               type="button"
               aria-label="Retroceder 10 segundos"
               onClick={() => onSendCommand({ action: 'seekRelative', payload: -10 })}
-              className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 flex items-center justify-center transition active:scale-95 shadow"
+              className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 flex items-center justify-center transition active:scale-95 shadow cursor-pointer"
             >
               <RotateCcw className="w-5 h-5" />
             </button>
@@ -672,7 +711,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               type="button"
               aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
               onClick={() => onSendCommand({ action: isPlaying ? 'pause' : 'play' })}
-              className="min-w-[58px] min-h-[58px] rounded-2xl bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition active:scale-95 shadow-lg shadow-red-950/50"
+              className="min-w-[58px] min-h-[58px] rounded-2xl bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition active:scale-95 shadow-lg shadow-red-950/50 cursor-pointer"
             >
               {isPlaying ? (
                 <Pause className="w-6 h-6 fill-current" />
@@ -685,11 +724,60 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               type="button"
               aria-label="Adelantar 10 segundos"
               onClick={() => onSendCommand({ action: 'seekRelative', payload: 10 })}
-              className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 flex items-center justify-center transition active:scale-95 shadow"
+              className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 flex items-center justify-center transition active:scale-95 shadow cursor-pointer"
             >
               <RotateCw className="w-5 h-5" />
             </button>
+
+            {isEpisodic && (
+              <button
+                type="button"
+                aria-label="Capítulo siguiente"
+                disabled={!hasNextEpisode}
+                title={hasNextEpisode ? 'Capítulo siguiente' : 'Último capítulo'}
+                onClick={() => onSendCommand({ action: 'nextEpisode' })}
+                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${
+                  hasNextEpisode
+                    ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
+                    : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
+                }`}
+              >
+                <SkipForward className="w-5 h-5" />
+              </button>
+            )}
           </div>
+
+          {/* Botón Saltar intro / Saltar 85 s (solo para series / anime) */}
+          {isEpisodic && (
+            <div className="pt-1">
+              {hasIntroTimings ? (
+                <button
+                  type="button"
+                  aria-label="Saltar intro"
+                  onClick={() => onSendCommand({ action: 'skipIntro' })}
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer"
+                >
+                  <FastForward className="w-4 h-4 fill-current" />
+                  <span>Saltar intro</span>
+                </button>
+              ) : (
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    aria-label="Saltar 85 segundos"
+                    onClick={() => onSendCommand({ action: 'seekRelative', payload: 85 })}
+                    className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 font-extrabold text-xs flex items-center justify-center gap-2 border border-zinc-700/80 shadow transition active:scale-98 cursor-pointer"
+                  >
+                    <FastForward className="w-4 h-4 text-amber-400" />
+                    <span>Saltar 85 s</span>
+                  </button>
+                  <p className="text-[10px] text-zinc-500 text-center font-medium">
+                    Este servidor no informa dónde termina la intro
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Fila secundaria: Volumen + Subtítulos + Pantalla Completa */}
           <div className="p-3 rounded-xl bg-zinc-850/80 border border-zinc-800 space-y-3">
@@ -742,6 +830,115 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               >
                 <Maximize2 className="w-4 h-4" />
                 <span>Completa</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Toggles / automatización: Modo Maratón, Auto Saltar Intro, Auto Siguiente */}
+          <div className="p-3 rounded-xl bg-zinc-850/80 border border-zinc-800 space-y-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+              Automatización de reproducción
+            </span>
+
+            {/* Modo Maratón */}
+            <div className="flex items-center justify-between min-h-[44px] gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-zinc-200">Modo Maratón</span>
+                  <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-red-600/30 text-red-400 border border-red-500/30">
+                    Recomendado
+                  </span>
+                </div>
+                <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
+                  Salta intro y créditos al instante, continúa temporadas sin parar
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(playbackState?.marathon)}
+                aria-label="Alternar Modo Maratón"
+                onClick={() =>
+                  onSendCommand({
+                    action: 'setMarathon',
+                    payload: { enabled: !Boolean(playbackState?.marathon) },
+                  })
+                }
+                className={`w-11 h-6 rounded-full transition-colors relative shrink-0 focus:outline-none cursor-pointer ${
+                  playbackState?.marathon ? 'bg-red-600' : 'bg-zinc-700'
+                }`}
+              >
+                <span
+                  className={`inline-block w-4 h-4 rounded-full bg-white transform transition-transform ${
+                    playbackState?.marathon ? 'translate-x-6' : 'translate-x-1'
+                  } top-1 absolute shadow`}
+                />
+              </button>
+            </div>
+
+            {/* Saltar intro automático */}
+            <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
+              <div className="min-w-0 flex-1">
+                <span className="text-xs font-bold text-zinc-200">Saltar intro automático</span>
+                <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
+                  Omite la intro cuando el servidor detecta las marcas de tiempo
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
+                aria-label="Alternar salto de intro automático"
+                onClick={() =>
+                  onSendCommand({
+                    action: 'setPlaybackSettings',
+                    payload: {
+                      autoSkipIntro: !Boolean(playbackState?.playbackSettings?.autoSkipIntro),
+                    },
+                  })
+                }
+                className={`w-11 h-6 rounded-full transition-colors relative shrink-0 focus:outline-none cursor-pointer ${
+                  playbackState?.playbackSettings?.autoSkipIntro ? 'bg-red-600' : 'bg-zinc-700'
+                }`}
+              >
+                <span
+                  className={`inline-block w-4 h-4 rounded-full bg-white transform transition-transform ${
+                    playbackState?.playbackSettings?.autoSkipIntro ? 'translate-x-6' : 'translate-x-1'
+                  } top-1 absolute shadow`}
+                />
+              </button>
+            </div>
+
+            {/* Siguiente capítulo automático */}
+            <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
+              <div className="min-w-0 flex-1">
+                <span className="text-xs font-bold text-zinc-200">Siguiente capítulo automático</span>
+                <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
+                  Reproduce el próximo episodio al terminar el actual
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
+                aria-label="Alternar reproducción automática del siguiente capítulo"
+                onClick={() =>
+                  onSendCommand({
+                    action: 'setPlaybackSettings',
+                    payload: {
+                      autoPlayNext: !(playbackState?.playbackSettings?.autoPlayNext ?? true),
+                    },
+                  })
+                }
+                className={`w-11 h-6 rounded-full transition-colors relative shrink-0 focus:outline-none cursor-pointer ${
+                  (playbackState?.playbackSettings?.autoPlayNext ?? true) ? 'bg-red-600' : 'bg-zinc-700'
+                }`}
+              >
+                <span
+                  className={`inline-block w-4 h-4 rounded-full bg-white transform transition-transform ${
+                    (playbackState?.playbackSettings?.autoPlayNext ?? true) ? 'translate-x-6' : 'translate-x-1'
+                  } top-1 absolute shadow`}
+                />
               </button>
             </div>
           </div>

@@ -802,6 +802,23 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setPlaybackSettings((prev) => ({ ...prev, ...newSettings }));
         break;
       }
+      case 'setMarathon': {
+        const enabled = Boolean(cmd.payload?.enabled);
+        try {
+          localStorage.setItem('cinecast_marathon_mode', String(enabled));
+        } catch {}
+        window.dispatchEvent(new CustomEvent('cinecast:marathon', { detail: { enabled } }));
+        setRemotePlaybackState((prev) => {
+          const nextState = {
+            ...prev,
+            marathon: enabled,
+          };
+          deviceSync.broadcastPlaybackState(nextState);
+          return nextState;
+        });
+        triggerNotification(`🏃 Modo Maratón ${enabled ? 'ACTIVADO' : 'Desactivado'}`);
+        break;
+      }
       case 'skipIntro': {
         triggerNotification('📱 Intro saltada desde el celular ⏩');
         break;
@@ -823,11 +840,15 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'nextEpisode': {
-        handlePlayNextEpisode();
+        if (!isPlayingLocally) {
+          handlePlayNextEpisode();
+        }
         break;
       }
       case 'prevEpisode': {
-        handlePlayPrevEpisode();
+        if (!isPlayingLocally) {
+          handlePlayPrevEpisode();
+        }
         break;
       }
       case 'jumpToEpisode': {
@@ -1203,6 +1224,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           activeHub,
           audioSettings,
           playbackSettings,
+          marathon:
+            typeof stateUpdate.marathon === 'boolean'
+              ? stateUpdate.marathon
+              : typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true',
+          hasIntroTimings: Boolean(stateUpdate.hasIntroTimings || stateUpdate.isIntroActive),
           isIntroActive: false,
           isRecapActive: false,
           nextEpisodeCountdown: null,
