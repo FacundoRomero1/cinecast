@@ -1,7 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { CardItem } from '../providers/types';
 import { TitleCard } from './TitleCard';
+import type { PosterWidth } from './liteMode';
 
 export interface RowProps {
   title: string;
@@ -10,6 +11,8 @@ export interface RowProps {
   onPlayItem?: ((item: CardItem) => void) | undefined;
   onCastItem?: ((item: CardItem) => void) | undefined;
   connectedScreenName?: string | undefined;
+  lite?: boolean | undefined;
+  posterWidth?: PosterWidth | undefined;
 }
 
 export const Row: React.FC<RowProps> = ({
@@ -19,19 +22,42 @@ export const Row: React.FC<RowProps> = ({
   onPlayItem,
   onCastItem,
   connectedScreenName,
+  lite = false,
+  posterWidth = 185,
 }) => {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const initialCount = lite ? 8 : 10;
+  const [visibleCount, setVisibleCount] = useState<number>(initialCount);
+
+  useEffect(() => {
+    setVisibleCount(initialCount);
+  }, [items, initialCount]);
 
   if (!items || items.length === 0) return null;
+
+  const visibleItems = items.slice(0, visibleCount);
+
+  const expandIfNeeded = () => {
+    setVisibleCount((prev) => (prev < items.length ? Math.min(items.length, prev + 10) : prev));
+  };
 
   const scrollByAmount = (direction: 'left' | 'right') => {
     const el = scrollerRef.current;
     if (!el) return;
+    if (direction === 'right') expandIfNeeded();
     const delta = Math.max(320, Math.floor(el.clientWidth * 0.75));
     el.scrollBy({
       left: direction === 'left' ? -delta : delta,
-      behavior: 'smooth',
+      behavior: lite ? 'auto' : 'smooth',
     });
+  };
+
+  const handleHorizontalScroll = () => {
+    const el = scrollerRef.current;
+    if (!el || visibleCount >= items.length) return;
+    if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 260) {
+      expandIfNeeded();
+    }
   };
 
   return (
@@ -63,9 +89,10 @@ export const Row: React.FC<RowProps> = ({
 
       <div
         ref={scrollerRef}
-        className="flex gap-3.5 overflow-x-auto no-scrollbar scroll-smooth px-4 sm:px-8 pb-2"
+        onScroll={handleHorizontalScroll}
+        className={`flex gap-3.5 overflow-x-auto no-scrollbar ${lite ? '' : 'scroll-smooth'} px-4 sm:px-8 pb-2`}
       >
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <div key={item.id} className="w-[148px] sm:w-[172px] shrink-0">
             <TitleCard
               item={item}
@@ -73,6 +100,7 @@ export const Row: React.FC<RowProps> = ({
               onPlay={onPlayItem}
               onCast={onCastItem}
               connectedScreenName={connectedScreenName}
+              posterWidth={posterWidth}
             />
           </div>
         ))}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Info, Play, Star, Tv } from 'lucide-react';
 import type { CardItem } from '../providers/types';
+import { getPosterProxyUrl } from './liteMode';
 
 export interface HeroProps {
   item: CardItem | null;
@@ -23,7 +24,7 @@ export const Hero: React.FC<HeroProps> = ({
 
   const isSeries =
     item.type === 'series' || item.category === 'series' || item.category === 'anime';
-  const coverUrl = item.backdropUrl || item.posterUrl;
+  const coverUrl = getPosterProxyUrl(item.backdropUrl || item.posterUrl, 342);
   const shortSynopsis =
     overview && overview.trim().length > 0
       ? overview

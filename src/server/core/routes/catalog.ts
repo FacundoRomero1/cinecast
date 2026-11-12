@@ -488,21 +488,75 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
     res.json({ rows });
   });
 
+  const posterCacheMaxBytes = Math.max(
+    16 * 1024 * 1024,
+    (Number(process.env.CINECAST_POSTER_CACHE_MB) || 500) * 1024 * 1024
+  );
+  let posterPruneRunning = false;
+  let lastPosterPruneMs = 0;
+
+  function schedulePosterCachePrune(): void {
+    const now = Date.now();
+    if (posterPruneRunning || now - lastPosterPruneMs < 30_000) return;
+    posterPruneRunning = true;
+    lastPosterPruneMs = now;
+    setImmediate(() => {
+      try {
+        const entries = fs.readdirSync(posterCacheDir);
+        const files: Array<{ filePath: string; size: number; atimeMs: number }> = [];
+        let totalSize = 0;
+        for (const name of entries) {
+          if (!name.endsWith('.jpg')) continue;
+          const filePath = path.join(posterCacheDir, name);
+          try {
+            const st = fs.statSync(filePath);
+            if (!st.isFile()) continue;
+            totalSize += st.size;
+            files.push({ filePath, size: st.size, atimeMs: st.atimeMs || st.mtimeMs });
+          } catch {}
+        }
+        if (totalSize > posterCacheMaxBytes) {
+          const targetBytes = Math.floor(posterCacheMaxBytes * 0.9);
+          files.sort((a, b) => a.atimeMs - b.atimeMs);
+          for (const f of files) {
+            if (totalSize <= targetBytes) break;
+            try {
+              fs.unlinkSync(f.filePath);
+              totalSize -= f.size;
+            } catch {}
+          }
+        }
+      } catch {} finally {
+        posterPruneRunning = false;
+      }
+    });
+  }
+
   router.get('/poster', async (req, res) => {
-    let targetUrl = typeof req.query.url === 'string' ? req.query.url : '';
-    const tmdbPath = typeof req.query.path === 'string' ? req.query.path : '';
+    const rawW = typeof req.query.w === 'string' ? parseInt(req.query.w, 10) : NaN;
+    const width: 154 | 185 | 342 =
+      rawW === 154 ? 154 : rawW === 342 ? 342 : 185;
+
+    let targetUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    const tmdbPath = typeof req.query.path === 'string' ? req.query.path.trim() : '';
     if (!targetUrl && tmdbPath) {
-      targetUrl = `https://image.tmdb.org/t/p/w200${tmdbPath.startsWith('/') ? '' : '/'}${tmdbPath}`;
+      targetUrl = `https://image.tmdb.org/t/p/w${width}${tmdbPath.startsWith('/') ? '' : '/'}${tmdbPath}`;
     }
-    if (!targetUrl || typeof targetUrl !== 'string' || !targetUrl.startsWith('http')) {
+    if (!targetUrl || (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://'))) {
       res.status(400).send('Parámetro url inválido');
       return;
     }
 
-    const hash = crypto.createHash('md5').update(targetUrl).digest('hex');
+    if (/^https:\/\/image\.tmdb\.org\/t\/p\/(?:w\d+|original)\//i.test(targetUrl)) {
+      targetUrl = targetUrl.replace(/(\/t\/p\/)(?:w\d+|original)(\/)/i, `$1w${width}$2`);
+    }
+
+    const hash = crypto.createHash('md5').update(`${width}|${targetUrl}`).digest('hex');
     const cacheFile = path.join(posterCacheDir, `${hash}.jpg`);
 
     if (fs.existsSync(cacheFile)) {
+      const now = new Date();
+      fs.utimes(cacheFile, now, now, () => {});
       res.setHeader('Content-Type', 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
       fs.createReadStream(cacheFile).pipe(res);
@@ -519,7 +573,9 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
         return;
       }
       const buffer = Buffer.from(await upstream.arrayBuffer());
-      fs.writeFile(cacheFile, buffer, () => {});
+      fs.writeFile(cacheFile, buffer, () => {
+        schedulePosterCachePrune();
+      });
       res.setHeader('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
       res.send(buffer);

@@ -15,6 +15,7 @@ import type {
 
 export type CatalogProviderErrorCode =
   | 'TIMEOUT'
+  | 'ABORTED'
   | 'HTTP_ERROR'
   | 'NETWORK_ERROR'
   | 'INVALID_RESPONSE';
@@ -124,10 +125,23 @@ function normalizeFacets(raw: unknown): CatalogFacets | undefined {
   };
 }
 
-async function fetchJsonWithTimeout(pathAndQuery: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
+async function fetchJsonWithTimeout(
+  pathAndQuery: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  externalSignal?: AbortSignal
+): Promise<unknown> {
+  if (externalSignal?.aborted) {
+    throw new CatalogProviderError(`Solicitud abortada en ${pathAndQuery}`, 'ABORTED', pathAndQuery);
+  }
   const base = deviceSync.getApiBase();
   const url = `${base}${pathAndQuery.startsWith('/') ? pathAndQuery : `/${pathAndQuery}`}`;
   const controller = new AbortController();
+  let abortedExternally = false;
+  const onExtAbort = () => {
+    abortedExternally = true;
+    controller.abort();
+  };
+  externalSignal?.addEventListener('abort', onExtAbort, { once: true });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -150,6 +164,13 @@ async function fetchJsonWithTimeout(pathAndQuery: string, timeoutMs = DEFAULT_TI
       throw err;
     }
     if (err instanceof DOMException && err.name === 'AbortError') {
+      if (abortedExternally) {
+        throw new CatalogProviderError(
+          `Solicitud abortada en ${pathAndQuery}`,
+          'ABORTED',
+          pathAndQuery
+        );
+      }
       throw new CatalogProviderError(
         `Tiempo de espera agotado (${timeoutMs} ms) en ${pathAndQuery}`,
         'TIMEOUT',
@@ -164,14 +185,18 @@ async function fetchJsonWithTimeout(pathAndQuery: string, timeoutMs = DEFAULT_TI
     );
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExtAbort);
   }
 }
+
+const MAX_QUERY_CACHE_PAGES = 6;
 
 export class LocalCatalogProvider implements CatalogProvider {
   public readonly id = 'local-catalog';
   public readonly capabilities = {
     offline: true,
   };
+  private readonly queryCache = new Map<string, CatalogQueryResult>();
 
   public async getHome(seen?: string[]): Promise<HomeResponse> {
     const params = new URLSearchParams();
@@ -234,12 +259,19 @@ export class LocalCatalogProvider implements CatalogProvider {
     }
 
     const endpoint = `/api/catalog?${params.toString()}`;
-    const raw = await fetchJsonWithTimeout(endpoint);
+    const cached = this.queryCache.get(endpoint);
+    if (cached) {
+      this.queryCache.delete(endpoint);
+      this.queryCache.set(endpoint, cached);
+      return cached;
+    }
+
+    const raw = await fetchJsonWithTimeout(endpoint, DEFAULT_TIMEOUT_MS, q.signal);
     if (!isRecord(raw) || !Array.isArray(raw.items)) {
       throw new CatalogProviderError('Respuesta inválida de /api/catalog', 'INVALID_RESPONSE', endpoint);
     }
 
-    return {
+    const parsed: CatalogQueryResult = {
       page: toNumberSafe(raw.page, 1),
       limit: toNumberSafe(raw.limit, 40),
       total: toNumberSafe(raw.total, 0),
@@ -247,6 +279,16 @@ export class LocalCatalogProvider implements CatalogProvider {
       items: raw.items.map(normalizeCardItem),
       facets: normalizeFacets(raw.facets),
     };
+
+    if (this.queryCache.size >= MAX_QUERY_CACHE_PAGES) {
+      const oldestKey = this.queryCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.queryCache.delete(oldestKey);
+      }
+    }
+    this.queryCache.set(endpoint, parsed);
+
+    return parsed;
   }
 
   public async getGenres(): Promise<GenreCountItem[]> {

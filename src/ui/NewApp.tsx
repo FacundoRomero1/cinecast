@@ -8,7 +8,7 @@ import {
   useParams,
   useSearchParams,
 } from 'react-router-dom';
-import { VirtuosoGrid } from 'react-virtuoso';
+import { Virtuoso, VirtuosoGrid } from 'react-virtuoso';
 import QRCode from 'qrcode';
 import {
   Search as SearchIcon,
@@ -27,7 +27,7 @@ import {
   Tv,
 } from 'lucide-react';
 import { ConnectionDiagnosticSection } from './ConnectionDiagnosticSection';
-import { localCatalogProvider } from '../providers/localCatalogProvider';
+import { localCatalogProvider, CatalogProviderError } from '../providers/localCatalogProvider';
 import type { CardItem, CatalogSortOption, GenreCountItem, HomeRow } from '../providers/types';
 import { watchHistoryService } from '../services/watchHistoryService';
 import { deviceSync } from '../services/deviceSync';
@@ -59,6 +59,7 @@ import { Row } from './Row';
 import { TitleCard } from './TitleCard';
 import { FilterBar, type FilterState } from './FilterBar';
 import { GridSkeleton, HeroSkeleton } from './Skeleton';
+import { useLiteMode, type LiteModePreference } from './liteMode';
 
 export interface NewAppProps {
   onDisableV2?: () => void;
@@ -97,6 +98,7 @@ const HomeView: React.FC<HomeViewProps> = ({
     sendRemoteCommand,
   } = useAppRuntime();
 
+  const { isLite } = useLiteMode();
   const [rows, setRows] = useState<HomeRow[]>([]);
   const [heroSynopsis, setHeroSynopsis] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
@@ -285,17 +287,25 @@ const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </div>
 
-      {rows.map((row) => (
-        <Row
-          key={row.id}
-          title={row.title}
-          items={row.items}
-          onSelectItem={onSelectItem}
-          onPlayItem={onPlayItem}
-          onCastItem={onCastItem}
-          connectedScreenName={connectedScreenName}
-        />
-      ))}
+      <Virtuoso
+        useWindowScroll
+        data={rows}
+        overscan={isLite ? 100 : 200}
+        defaultItemHeight={310}
+        itemContent={(_index, row) => (
+          <Row
+            key={row.id}
+            title={row.title}
+            items={row.items}
+            onSelectItem={onSelectItem}
+            onPlayItem={onPlayItem}
+            onCastItem={onCastItem}
+            connectedScreenName={connectedScreenName}
+            lite={isLite}
+            posterWidth={isLite ? 154 : 185}
+          />
+        )}
+      />
     </div>
   );
 };
@@ -307,6 +317,7 @@ interface ExploreViewProps {
 }
 
 const PAGE_SIZE = 48;
+const MAX_EXPLORE_ITEMS = 600;
 
 const ExploreView: React.FC<ExploreViewProps> = ({
   onSelectItem,
@@ -314,6 +325,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
   onCastItem,
 }) => {
   const { connectedScreenName } = useAppRuntime();
+  const { isLite } = useLiteMode();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Restaurar estado inicial desde searchParams de la URL
@@ -450,6 +462,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
   const [loadingInitial, setLoadingInitial] = useState<boolean>(true);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
   const loadingMoreRef = useRef<boolean>(false);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
 
   const buildQueryParams = useCallback(
     (targetPage: number) => ({
@@ -468,15 +481,22 @@ const ExploreView: React.FC<ExploreViewProps> = ({
   );
 
   useEffect(() => {
+    const controller = new AbortController();
+    if (loadMoreAbortRef.current) {
+      loadMoreAbortRef.current.abort();
+      loadMoreAbortRef.current = null;
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
     let cancelled = false;
     setLoadingInitial(true);
     setPage(1);
 
     localCatalogProvider
-      .query(buildQueryParams(1))
+      .query({ ...buildQueryParams(1), signal: controller.signal })
       .then((res) => {
         if (cancelled) return;
-        setItems(res.items);
+        setItems(res.items.slice(0, MAX_EXPLORE_ITEMS));
         setTotal(res.total);
         setTotalPages(res.totalPages);
         if (res.facets && res.facets.genres) {
@@ -488,11 +508,11 @@ const ExploreView: React.FC<ExploreViewProps> = ({
           setFacetGenres([]);
         }
       })
-      .catch(() => {
-        if (!cancelled) {
-          setItems([]);
-          setTotal(0);
-        }
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof CatalogProviderError && err.code === 'ABORTED') return;
+        setItems([]);
+        setTotal(0);
       })
       .finally(() => {
         if (!cancelled) setLoadingInitial(false);
@@ -500,31 +520,53 @@ const ExploreView: React.FC<ExploreViewProps> = ({
 
     return () => {
       cancelled = true;
+      controller.abort();
+      if (loadMoreAbortRef.current) {
+        loadMoreAbortRef.current.abort();
+        loadMoreAbortRef.current = null;
+      }
     };
   }, [buildQueryParams]);
 
   const loadNextPage = useCallback(() => {
-    if (loadingInitial || loadingMoreRef.current || page >= totalPages) return;
+    if (
+      loadingInitial ||
+      loadingMoreRef.current ||
+      page >= totalPages ||
+      items.length >= MAX_EXPLORE_ITEMS
+    ) {
+      return;
+    }
     const nextPage = page + 1;
+    const controller = new AbortController();
+    if (loadMoreAbortRef.current) loadMoreAbortRef.current.abort();
+    loadMoreAbortRef.current = controller;
     loadingMoreRef.current = true;
     setLoadingMore(true);
 
     localCatalogProvider
-      .query({ ...buildQueryParams(nextPage), facets: false })
+      .query({ ...buildQueryParams(nextPage), facets: false, signal: controller.signal })
       .then((res) => {
+        if (controller.signal.aborted) return;
         setItems((prev) => {
+          if (prev.length >= MAX_EXPLORE_ITEMS) return prev;
           const existingIds = new Set(prev.map((i) => i.id));
           const fresh = res.items.filter((i) => !existingIds.has(i.id));
-          return [...prev, ...fresh];
+          return [...prev, ...fresh].slice(0, MAX_EXPLORE_ITEMS);
         });
         setPage(nextPage);
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        if (err instanceof CatalogProviderError && err.code === 'ABORTED') return;
+      })
       .finally(() => {
+        if (loadMoreAbortRef.current === controller) {
+          loadMoreAbortRef.current = null;
+        }
         loadingMoreRef.current = false;
         setLoadingMore(false);
       });
-  }, [buildQueryParams, loadingInitial, page, totalPages]);
+  }, [buildQueryParams, items.length, loadingInitial, page, totalPages]);
 
   return (
     <div className="p-4 sm:p-8">
@@ -620,7 +662,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
             useWindowScroll
             totalCount={items.length}
             endReached={loadNextPage}
-            overscan={400}
+            overscan={isLite ? 100 : 200}
             listClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4"
             itemContent={(index) => {
               const item = items[index];
@@ -632,6 +674,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
                   onPlay={onPlayItem}
                   onCast={onCastItem}
                   connectedScreenName={connectedScreenName}
+                  posterWidth={isLite ? 154 : 185}
                 />
               );
             }}
@@ -639,6 +682,12 @@ const ExploreView: React.FC<ExploreViewProps> = ({
           {loadingMore && (
             <div className="py-6 text-center text-xs text-zinc-400 font-medium">
               Cargando más títulos...
+            </div>
+          )}
+          {!loadingMore && items.length >= MAX_EXPLORE_ITEMS && total > MAX_EXPLORE_ITEMS && (
+            <div className="py-6 text-center text-xs text-zinc-400">
+              Mostrando los primeros {MAX_EXPLORE_ITEMS} de {total.toLocaleString('es-AR')} títulos.
+              Usá los filtros o el buscador para acotar la lista.
             </div>
           )}
         </>
@@ -1169,6 +1218,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
     setIsGuestModalOpen,
   } = useAppRuntime();
 
+  const { isLite, preference: litePref, urlForced: liteUrlForced, setPreference: setLitePref } =
+    useLiteMode();
   const [diagEnabled, setDiagEnabled] = useState<boolean>(() => diagnosticService.isEnabled());
   const [localIp, setLocalIp] = useState<string>('127.0.0.1');
   const [port, setPort] = useState<number>(3000);
@@ -1299,6 +1350,47 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
             </div>
           </div>
         </button>
+      </div>
+
+      {/* Modo ligero (Lite) */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+            <Layers className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-sm font-bold text-white">
+              Modo ligero (Lite) {isLite ? '• Activo' : ''}
+            </div>
+            <div className="text-xs text-zinc-400">
+              Reduce animaciones, sombras e imágenes para televisores y celulares de baja potencia.
+              {liteUrlForced ? ' (Forzado por URL ?lite=...)' : ''}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 bg-zinc-950/70 border border-zinc-800 rounded-xl p-1 shrink-0">
+          {(
+            [
+              { value: 'auto', label: 'Auto' },
+              { value: 'on', label: 'Activado' },
+              { value: 'off', label: 'Desactivado' },
+            ] as { value: LiteModePreference; label: string }[]
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setLitePref(opt.value)}
+              aria-pressed={litePref === opt.value}
+              className={`min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                litePref === opt.value
+                  ? 'bg-amber-600 text-white shadow'
+                  : 'text-zinc-300 hover:bg-zinc-800'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Interruptor de Modo diagnóstico */}
@@ -1584,6 +1676,7 @@ interface NewAppContentProps {
 }
 
 const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
+  useLiteMode();
   const navigate = useNavigate();
   const location = useLocation();
   const {

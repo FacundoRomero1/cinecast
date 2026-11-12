@@ -28,6 +28,7 @@ export interface CatalogQuery {
   limit?: number | undefined;
   includeUpcoming?: boolean | undefined;
   facets?: boolean | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export interface CatalogFacets {

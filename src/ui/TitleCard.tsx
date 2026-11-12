@@ -1,6 +1,7 @@
 import React from 'react';
 import { Play, Star, Trash2, Tv } from 'lucide-react';
 import type { CardItem } from '../providers/types';
+import { getPosterProxyUrl, type PosterWidth } from './liteMode';
 
 export interface TitleCardProps {
   item: CardItem;
@@ -9,6 +10,7 @@ export interface TitleCardProps {
   onCast?: ((item: CardItem) => void) | undefined;
   onRemove?: ((item: CardItem) => void) | undefined;
   connectedScreenName?: string | undefined;
+  posterWidth?: PosterWidth | undefined;
   className?: string | undefined;
 }
 
@@ -19,10 +21,12 @@ export const TitleCard: React.FC<TitleCardProps> = ({
   onCast,
   onRemove,
   connectedScreenName,
+  posterWidth = 185,
   className = '',
 }) => {
   const isSeries =
     item.type === 'series' || item.category === 'series' || item.category === 'anime';
+  const posterSrc = getPosterProxyUrl(item.posterUrl, posterWidth);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -41,12 +45,13 @@ export const TitleCard: React.FC<TitleCardProps> = ({
       onKeyDown={handleKeyDown}
       className={`group relative flex flex-col rounded-xl bg-zinc-900/80 border border-zinc-800/80 overflow-hidden cursor-pointer select-none transition-transform duration-200 hover:scale-[1.03] hover:border-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 min-h-[44px] min-w-[44px] touch-manipulation ${className}`}
     >
-      <div className="relative aspect-[2/3] w-full bg-zinc-900 overflow-hidden">
-        {item.posterUrl ? (
+      <div className="relative cc-poster-placeholder aspect-[2/3] w-full bg-zinc-900 overflow-hidden">
+        {posterSrc ? (
           <img
-            src={item.posterUrl}
+            src={posterSrc}
             alt={item.title}
             loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
         ) : (

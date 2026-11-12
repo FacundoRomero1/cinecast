@@ -86,3 +86,31 @@ Implementación:
 - `/api/home` bajó de **127.36 ms (`p50`) → 2.27 ms** (−98.2%) y de **72,435 B → 4,153 B** con gzip (−94.3%).
 - `/api/search?q=ba` bajó de **295.39 ms (`p50`) → 23.01 ms** (−92.2%).
 - `/api/catalog?limit=40&fields=card` bajó de **3.04 ms → 0.83 ms** y **15,425 B → 3,675 B** con gzip (−76.2%).
+
+---
+
+## 4. Parte 4 — Cliente liviano, proxy `/api/poster` por ancho y Modo Lite (`scripts/bench-client.cjs`)
+
+Implementación:
+- Servidor `/api/poster` (`src/server/core/routes/catalog.ts`): parámetro `w` (`154 | 185 | 342`, default `185`), reescritura de ancho TMDB (`/t/p/w.../`), clave de caché por `(w, url)`, actualización de `atime` en hit y poda LRU en disco controlada por `CINECAST_POSTER_CACHE_MB` (default `500 MiB`).
+- Cliente (`src/ui/liteMode.ts`, `TitleCard.tsx`, `Hero.tsx`, `Row.tsx`, `NewApp.tsx`, `tokens.css`, `localCatalogProvider.ts`):
+  - Pósters con `loading="lazy"`, `decoding="async"`, placeholder 2:3 (`.cc-poster-placeholder`) y URL `/api/poster?url=...&w=154|185|342`.
+  - Inicio (`HomeView`): virtualización vertical de filas con `<Virtuoso useWindowScroll>` (`overscan` 200 / 100 en Lite) + ventaneo horizontal inicial por fila (10 tarjetas, 8 en Lite, expansión progresiva de +10 al desplazarse o avanzar).
+  - Explorar (`ExploreView`): `AbortController` por consulta/página, caché LRU de 6 páginas en `LocalCatalogProvider`, tope de **600 ítems** en DOM con aviso de acotar filtros y `overscan` 200 / 100 en Lite.
+  - Modo Lite (`?lite=1|0`, selector en Ajustes `Auto | Activado | Desactivado`, autodetección para TV / baja RAM / `prefers-reduced-motion`): desactiva transiciones, animaciones, `backdrop-filter` y sombras (`.cc-lite`), usa `w=154` en grillas/filas y reduce `overscan` e ítems iniciales por fila.
+
+### Comparativa Cliente Electron 390×844 CPU 4x (Línea Base vs Parte 4 Normal vs Parte 4 Lite)
+
+| Ruta | Escenario | Nodos DOM (`*`) | Cantidad `<img>` | `usedJSHeapSize` | Reqs `/api/poster` | Bytes `/api/poster` | `scrollY / scrollHeight` |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `#/explorar` | Línea Base | 759 | 8 | 49,938,238 (47.62 MiB) | 0 | 0 (0.00 MiB) | 25,320 / 32,028 |
+| `#/explorar` | Parte 4 Normal | 762 | 8 | 64,480,528 (61.49 MiB) | 158 | 2,232,386 (2.13 MiB) | 25,320 / 32,028 |
+| `#/explorar` | Parte 4 Lite (`?lite=1`) | 762 | 8 | 64,570,984 (61.58 MiB) | 160 | 2,263,705 (2.16 MiB) | 25,320 / 32,028 |
+| `#/` (Inicio) | Línea Base | 5,015 | 196 | 79,563,512 (75.88 MiB) | 0 | 0 (0.00 MiB) | 3,334 / 4,178 |
+| `#/` (Inicio) | Parte 4 Normal | 1,367 | 40 | 81,195,175 (77.43 MiB) | 31 | 497,098 (0.47 MiB) | 3,235 / 4,079 |
+| `#/` (Inicio) | Parte 4 Lite (`?lite=1`) | 1,367 | 40 | 54,191,473 (51.68 MiB) | 31 | 496,476 (0.47 MiB) | 3,196 / 4,040 |
+
+**Hallazgos medidos en Parte 4**:
+- En `#/` (Inicio), la virtualización de filas + ventaneo horizontal redujo los nodos DOM de **5,015 → 1,367** (**−72.7%**) y los elementos `<img>` de **196 → 40** (**−79.6%**).
+- En `#/` con **Modo Lite (`?lite=1`)**, `usedJSHeapSize` bajó de **75.88 MiB (base) / 77.43 MiB (normal) → 51.68 MiB** (**−31.9%** respecto a la línea base).
+- En `#/explorar`, los pósters pasaron de cargarse sin proxy (`0` reqs locales) a servirse cacheados vía `/api/poster` (`w=185` / `w=154`, ~14 KB promedio por póster).
