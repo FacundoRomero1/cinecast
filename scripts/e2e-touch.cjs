@@ -261,14 +261,14 @@ app.whenReady().then(async () => {
   if (!inUse) {
     console.log(`[e2e-touch] Servidor no activo en puerto ${port}. Iniciando servidor dev...`);
     const rootDir = path.join(__dirname, '..');
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const env = { ...process.env };
+    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+    const env = { ...process.env, PORT: String(port), CINECAST_DISABLE_PREWARM: '1' };
     delete env.ELECTRON_RUN_AS_NODE;
-    spawnedServer = cp.spawn(npmCmd, ['run', 'dev'], {
+    spawnedServer = cp.spawn('node', [tsxCli, 'server.ts'], {
       cwd: rootDir,
       env,
-      shell: true,
       stdio: 'ignore',
+      windowsHide: true,
     });
     const ready = await waitForHealth(`http://localhost:${port}`, 40000);
     if (!ready) {
