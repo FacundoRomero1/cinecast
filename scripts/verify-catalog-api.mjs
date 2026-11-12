@@ -142,24 +142,24 @@ try {
     `[Prueba e] fields=card sin overview ni servers: ${passE ? 'PASA' : 'FALLA'} (devueltos=${cardItems.length}, keys=${Object.keys(cardItems[0] || {}).join(',')})`
   );
 
-  // (f) /api/home devuelve filas no vacías y, con seen= de 5 ids reales de tipo terror, la primera fila es "Recomendados para vos" sin esos ids
+  // (f) /api/home devuelve filas no vacías y, con seen= de 5 ids reales de tipo terror, incluye recomendaciones o "Porque viste" sin esos ids
   const homeBase = await getJson('/api/home');
   const baseRows = homeBase.rows || [];
-  const baseNonEmpty = baseRows.length >= 9 && baseRows.every((r) => Array.isArray(r.items) && r.items.length > 0);
+  const baseNonEmpty = baseRows.length >= 6 && baseRows.every((r) => Array.isArray(r.items) && r.items.length > 0);
 
   const terrorFiveIds = terrorItems.slice(0, 5).map((m) => m.id);
   const homeSeen = await getJson(`/api/home?seen=${encodeURIComponent(terrorFiveIds.join(','))}`);
   const seenRows = homeSeen.rows || [];
-  const firstRow = seenRows[0];
+  const recRow = seenRows.find((r) => r.title === 'Recomendados para vos' || r.title.startsWith('Porque viste')) || seenRows[0];
   const firstIsRec =
-    firstRow &&
-    firstRow.title === 'Recomendados para vos' &&
-    Array.isArray(firstRow.items) &&
-    firstRow.items.length > 0 &&
-    firstRow.items.every((item) => !terrorFiveIds.includes(item.id) && !('overview' in item) && !('servers' in item));
-  const passF = baseNonEmpty && firstIsRec;
+    recRow &&
+    (recRow.title === 'Recomendados para vos' || recRow.title.startsWith('Porque viste')) &&
+    Array.isArray(recRow.items) &&
+    recRow.items.length > 0 &&
+    recRow.items.every((item) => !terrorFiveIds.includes(item.id) && !('overview' in item) && !('servers' in item));
+  const passF = baseNonEmpty && Boolean(firstIsRec);
   console.log(
-    `[Prueba f] /api/home y Recomendados para vos con seen=(5 ids terror): ${passF ? 'PASA' : 'FALLA'} (filas sin seen=${baseRows.length}, filas con seen=${seenRows.length}, 1ra fila="${firstRow?.title}", items en 1ra fila=${firstRow?.items?.length}, vistos excluidos=${firstIsRec})`
+    `[Prueba f] /api/home y Recomendaciones con seen=(5 ids terror): ${passF ? 'PASA' : 'FALLA'} (filas sin seen=${baseRows.length}, filas con seen=${seenRows.length}, fila encontrada="${recRow?.title}", items en fila=${recRow?.items?.length}, vistos excluidos=${firstIsRec})`
   );
   console.log(
     `  Filas de /api/home?seen=...: ${seenRows.map((r) => `${r.title} (${r.items.length})`).join(' | ')}`

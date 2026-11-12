@@ -17,6 +17,7 @@ import {
   queryGenresList,
   queryHomeRows,
 } from '../catalogDb.js';
+import { buildCuratedHome } from '../homeCuration.js';
 
 export type { CatalogItem, CatalogCardItem };
 export { toCatalogCard };
@@ -355,12 +356,35 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
     res.json(list);
   });
 
-  router.get('/home', (req, res) => {
+  router.get('/home', async (req, res) => {
     const rawSeen = typeof req.query.seen === 'string' ? req.query.seen.trim() : '';
+    const isLegacyV1 = req.query.v === '1';
     const dbOpened = tryOpenDb();
+
     if (applyCacheHeadersAndCheck304(req, res, dbOpened?.sourceHash ?? 'mem')) {
       return;
     }
+
+    if (!isLegacyV1) {
+      try {
+        const catalog = loadServerCatalog();
+        const seenIds = rawSeen
+          ? rawSeen.split(',').map((s) => s.trim()).filter(Boolean)
+          : [];
+        const dateStr = typeof req.query.date === 'string' ? req.query.date.trim() : undefined;
+        const rows = await buildCuratedHome({ catalog, seenIds, dateStr, baseDir });
+        res.json({ rows });
+        return;
+      } catch (err) {
+        console.error('[Catalog Server] Error generando home curado, cayendo a legacy:', err);
+        if (dbOpened) {
+          const rows = queryHomeRows(dbOpened.db, rawSeen);
+          res.json({ rows });
+          return;
+        }
+      }
+    }
+
     if (dbOpened) {
       const rows = queryHomeRows(dbOpened.db, rawSeen);
       res.json({ rows });
