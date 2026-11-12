@@ -204,6 +204,9 @@ export class LocalCatalogProvider implements CatalogProvider {
     if (q.category && q.category !== 'all') params.set('category', q.category);
     if (Array.isArray(q.genre) && q.genre.length > 0) {
       params.set('genre', q.genre.join(','));
+      if (q.genreMode) params.set('genreMode', q.genreMode);
+    } else if (q.genreMode === 'any') {
+      params.set('genreMode', 'any');
     }
     if (typeof q.yearFrom === 'number' && Number.isFinite(q.yearFrom)) {
       params.set('yearFrom', String(q.yearFrom));

@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { extractTmdbId, type MediaServerEntry } from './tmdb.js';
 import { normalizeGenres } from './genres.js';
 
-export const CATALOG_SCHEMA_VERSION = '3';
+export const CATALOG_SCHEMA_VERSION = '4';
 
 export interface CatalogItem {
   id: string;
@@ -436,18 +436,19 @@ export function rebuildCatalogDatabase(
       CREATE INDEX idx_items_id ON items(id);
       CREATE INDEX idx_items_tmdb_id ON items(tmdb_id);
       CREATE INDEX idx_items_upcoming_seq ON items(upcoming, seq);
-      CREATE INDEX idx_items_upcoming_cat_rating ON items(upcoming, category, rating DESC, seq ASC);
-      CREATE INDEX idx_items_upcoming_year_rating ON items(upcoming, year DESC, rating DESC, seq ASC);
-      CREATE INDEX idx_items_upcoming_rating ON items(upcoming, rating DESC, seq ASC);
+      CREATE INDEX idx_items_upcoming_cat_rating ON items(upcoming, category, rating DESC, id ASC);
+      CREATE INDEX idx_items_upcoming_year_rating ON items(upcoming, year DESC, rating DESC, id ASC);
+      CREATE INDEX idx_items_upcoming_rating ON items(upcoming, rating DESC, id ASC);
       CREATE INDEX idx_items_cat_year ON items(category, year);
-      CREATE INDEX idx_items_cat_rating ON items(category, rating DESC, seq ASC);
-      CREATE INDEX idx_items_rating ON items(rating DESC, seq ASC);
-      CREATE INDEX idx_items_year_rating ON items(year DESC, rating DESC, seq ASC);
-      CREATE INDEX idx_items_added_ms ON items(added_at_ms DESC, seq ASC);
+      CREATE INDEX idx_items_cat_rating ON items(category, rating DESC, id ASC);
+      CREATE INDEX idx_items_rating ON items(rating DESC, id ASC);
+      CREATE INDEX idx_items_year_rating ON items(year DESC, rating DESC, id ASC);
+      CREATE INDEX idx_items_added_ms ON items(added_at_ms DESC, id ASC);
       CREATE INDEX idx_items_added_at ON items(added_at DESC);
-      CREATE INDEX idx_items_title_rank ON items(title_rank ASC, seq ASC);
+      CREATE INDEX idx_items_title_rank ON items(title_rank ASC, id ASC);
       CREATE INDEX idx_items_lang ON items(original_language);
       CREATE INDEX idx_item_genres_lower_seq ON item_genres(genre_lower, item_seq);
+      CREATE INDEX idx_item_genres_seq_lower ON item_genres(item_seq, genre_lower);
       CREATE INDEX idx_item_genres_genre_seq ON item_genres(genre, item_seq);
       CREATE INDEX idx_item_genres_seq ON item_genres(item_seq);
       INSERT INTO items_fts(items_fts) VALUES('rebuild');

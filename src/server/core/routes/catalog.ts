@@ -195,6 +195,8 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
       .split(',')
       .map((g) => g.trim().toLowerCase())
       .filter(Boolean);
+    const rawGenreMode = typeof req.query.genreMode === 'string' ? req.query.genreMode.trim().toLowerCase() : 'all';
+    const genreMode: 'all' | 'any' = rawGenreMode === 'any' ? 'any' : 'all';
     const yearFrom = rawYearFrom ? parseInt(rawYearFrom, 10) : NaN;
     const yearTo = rawYearTo ? parseInt(rawYearTo, 10) : NaN;
     const minRating = rawMinRating ? parseFloat(rawMinRating) : NaN;
@@ -206,6 +208,7 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
         q,
         category,
         requestedGenres,
+        genreMode,
         yearFrom,
         yearTo,
         minRating,
@@ -215,7 +218,6 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
         includeFacets,
         fields,
       });
-      res.setHeader('Cache-Control', 'public, max-age=60');
       res.json(responseBody);
       return;
     }
@@ -241,13 +243,6 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
       filtered = filtered.filter((m) => m.originalLanguage === 'es');
     }
 
-    if (requestedGenres.length > 0) {
-      const reqSet = new Set(requestedGenres);
-      filtered = filtered.filter((m) =>
-        m.genres.some((g) => reqSet.has(g.toLowerCase()))
-      );
-    }
-
     if (!Number.isNaN(yearFrom)) {
       filtered = filtered.filter((m) => m.year >= yearFrom);
     }
@@ -270,19 +265,34 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
       });
     }
 
+    const facetBaseBeforeGenres = filtered;
+    const uniqueReqGenres = Array.from(new Set(requestedGenres));
+    if (uniqueReqGenres.length > 0) {
+      if (genreMode === 'any') {
+        const reqSet = new Set(uniqueReqGenres);
+        filtered = filtered.filter((m) => m.genres.some((g) => reqSet.has(g.toLowerCase())));
+      } else {
+        filtered = filtered.filter((m) => {
+          const itemGenres = new Set(m.genres.map((g) => g.toLowerCase()));
+          return uniqueReqGenres.every((g) => itemGenres.has(g));
+        });
+      }
+    }
+
+    const cmpId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
     if (rawSort && rawSort !== 'default') {
       filtered = [...filtered];
       if (rawSort === 'rating') {
-        filtered.sort((a, b) => b.rating - a.rating);
+        filtered.sort((a, b) => b.rating - a.rating || cmpId(a.id, b.id));
       } else if (rawSort === 'year') {
-        filtered.sort((a, b) => b.year - a.year || b.rating - a.rating);
+        filtered.sort((a, b) => b.year - a.year || b.rating - a.rating || cmpId(a.id, b.id));
       } else if (rawSort === 'title') {
-        filtered.sort((a, b) => a.title.localeCompare(b.title, 'es'));
+        filtered.sort((a, b) => a.title.localeCompare(b.title, 'es') || cmpId(a.id, b.id));
       } else if (rawSort === 'added') {
         filtered.sort((a, b) => {
           const ta = a.addedAt ? Date.parse(a.addedAt) || 0 : 0;
           const tb = b.addedAt ? Date.parse(b.addedAt) || 0 : 0;
-          return tb - ta;
+          return tb - ta || cmpId(a.id, b.id);
         });
       }
     }
@@ -303,13 +313,19 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
 
     if (includeFacets) {
       const genreCounts: Record<string, number> = {};
-      let minYear: number | null = null;
-      let maxYear: number | null = null;
-
-      for (const item of filtered) {
+      for (const g of computeGenreList(catalog)) {
+        genreCounts[g.name] = 0;
+      }
+      const facetSource = genreMode === 'any' ? facetBaseBeforeGenres : filtered;
+      for (const item of facetSource) {
         for (const g of item.genres) {
           genreCounts[g] = (genreCounts[g] ?? 0) + 1;
         }
+      }
+
+      let minYear: number | null = null;
+      let maxYear: number | null = null;
+      for (const item of filtered) {
         if (typeof item.year === 'number' && Number.isFinite(item.year)) {
           if (minYear === null || item.year < minYear) minYear = item.year;
           if (maxYear === null || item.year > maxYear) maxYear = item.year;
@@ -327,7 +343,6 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
       };
     }
 
-    res.setHeader('Cache-Control', 'public, max-age=60');
     res.json(responseBody);
   });
 

@@ -19,6 +19,7 @@ export interface CatalogQuery {
   q?: string | undefined;
   category?: string | undefined;
   genre?: string[] | undefined;
+  genreMode?: 'all' | 'any' | undefined;
   yearFrom?: number | undefined;
   yearTo?: number | undefined;
   minRating?: number | undefined;

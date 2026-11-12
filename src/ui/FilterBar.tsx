@@ -5,6 +5,7 @@ import type { CatalogSortOption, GenreCountItem } from '../providers/types';
 export interface FilterState {
   category: string;
   genres: string[];
+  genreMode?: 'all' | 'any';
   yearFrom: number | null;
   yearTo: number | null;
   decade?: number | null;
@@ -94,6 +95,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     onChange({
       category: 'all',
       genres: [],
+      genreMode: 'all',
       yearFrom: null,
       yearTo: null,
       decade: null,
@@ -102,12 +104,66 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     });
   };
 
-  const activeFiltersCount =
-    (value.category !== 'all' ? 1 : 0) +
-    value.genres.length +
-    (value.yearFrom !== null || value.yearTo !== null || (value.decade !== null && value.decade !== undefined) ? 1 : 0) +
-    (value.minRating > 0 ? 1 : 0) +
-    (value.sort !== 'default' ? 1 : 0);
+  const genreMode: 'all' | 'any' = value.genreMode === 'any' ? 'any' : 'all';
+
+  const activeChips = useMemo(() => {
+    const chips: Array<{ key: string; label: string; onRemove: () => void }> = [];
+    if (value.category !== 'all') {
+      const catLabel = CATEGORIES.find((c) => c.id === value.category)?.label || value.category;
+      chips.push({
+        key: `cat-${value.category}`,
+        label: `Tipo: ${catLabel}`,
+        onRemove: () => onChange({ ...value, category: 'all' }),
+      });
+    }
+    for (const g of value.genres) {
+      chips.push({
+        key: `genre-${g}`,
+        label: g,
+        onRemove: () => onChange({ ...value, genres: value.genres.filter((x) => x !== g) }),
+      });
+    }
+    if (value.yearFrom !== null && value.yearTo !== null && value.yearFrom === value.yearTo) {
+      chips.push({
+        key: 'year-exact',
+        label: `Año: ${value.yearFrom}`,
+        onRemove: () => onChange({ ...value, yearFrom: null, yearTo: null, decade: null }),
+      });
+    } else {
+      if (value.yearFrom !== null) {
+        chips.push({
+          key: 'year-from',
+          label: `Desde: ${value.yearFrom}`,
+          onRemove: () => onChange({ ...value, yearFrom: null, decade: null }),
+        });
+      }
+      if (value.yearTo !== null) {
+        chips.push({
+          key: 'year-to',
+          label: `Hasta: ${value.yearTo}`,
+          onRemove: () => onChange({ ...value, yearTo: null, decade: null }),
+        });
+      }
+    }
+    if (value.minRating > 0) {
+      chips.push({
+        key: 'rating',
+        label: `Rating: ${value.minRating}+ ★`,
+        onRemove: () => onChange({ ...value, minRating: 0 }),
+      });
+    }
+    if (value.sort !== 'default') {
+      const sortLabel = SORTS.find((s) => s.id === value.sort)?.label || value.sort;
+      chips.push({
+        key: 'sort',
+        label: `Orden: ${sortLabel}`,
+        onRemove: () => onChange({ ...value, sort: 'default' }),
+      });
+    }
+    return chips;
+  }, [value, onChange]);
+
+  const activeFiltersCount = activeChips.length;
 
   const renderControls = () => (
     <div className="space-y-4">
@@ -274,27 +330,72 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         </div>
       </div>
 
-      {/* Fila 2: Géneros con resultados (selección múltiple) */}
+      {/* Fila 2: Géneros con resultados (selección múltiple + modo Todos / Cualquiera) */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-zinc-400 font-medium mr-1">Géneros:</span>
+        <div
+          role="group"
+          aria-label="Modo de combinación de géneros"
+          className="inline-flex items-center rounded-xl bg-zinc-900 border border-zinc-800 p-0.5 mr-1"
+        >
+          <button
+            type="button"
+            tabIndex={0}
+            aria-pressed={genreMode === 'all'}
+            onClick={() => onChange({ ...value, genreMode: 'all' })}
+            className={`min-h-[36px] px-2.5 py-1 rounded-lg text-[11px] font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+              genreMode === 'all'
+                ? 'bg-red-600 text-white shadow'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            Todos
+          </button>
+          <button
+            type="button"
+            tabIndex={0}
+            aria-pressed={genreMode === 'any'}
+            onClick={() => onChange({ ...value, genreMode: 'any' })}
+            className={`min-h-[36px] px-2.5 py-1 rounded-lg text-[11px] font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+              genreMode === 'any'
+                ? 'bg-red-600 text-white shadow'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            Cualquiera
+          </button>
+        </div>
+
         {availableGenres.map((g) => {
           const selected = value.genres.includes(g.name);
+          const isDisabled = g.count === 0 && !selected;
           return (
             <button
               key={g.name}
               type="button"
-              tabIndex={0}
-              onClick={() => toggleGenre(g.name)}
+              tabIndex={isDisabled ? -1 : 0}
+              disabled={isDisabled}
+              aria-disabled={isDisabled}
+              data-genre-name={g.name}
+              onClick={() => {
+                if (!isDisabled) toggleGenre(g.name);
+              }}
               className={`min-h-[44px] min-w-[44px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition inline-flex items-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
                 selected
                   ? 'bg-red-600 text-white border-red-500 shadow'
+                  : isDisabled
+                  ? 'bg-zinc-950/60 text-zinc-600 border-zinc-900 opacity-45 cursor-not-allowed'
                   : 'bg-zinc-900/80 text-zinc-300 border-zinc-800 hover:border-zinc-700 hover:text-white'
               }`}
             >
               <span>{g.name}</span>
               <span
                 className={`text-[10px] px-1.5 py-0.5 rounded-md ${
-                  selected ? 'bg-black/30 text-white' : 'bg-zinc-800 text-zinc-400'
+                  selected
+                    ? 'bg-black/30 text-white'
+                    : isDisabled
+                    ? 'bg-zinc-900 text-zinc-600'
+                    : 'bg-zinc-800 text-zinc-400'
                 }`}
               >
                 {g.count}
@@ -334,6 +435,38 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           {totalResults.toLocaleString('es-AR')} títulos
         </span>
       </div>
+
+      {/* Chips de filtros activos + Limpiar todo */}
+      {activeChips.length > 0 && (
+        <div
+          data-testid="active-filter-chips"
+          className="flex flex-wrap items-center gap-2 mt-3"
+        >
+          <span className="text-[11px] text-zinc-500 font-semibold">Activos:</span>
+          {activeChips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              tabIndex={0}
+              aria-label={`Quitar filtro ${chip.label}`}
+              onClick={chip.onRemove}
+              className="min-h-[44px] md:min-h-[36px] px-3 py-1 rounded-full bg-red-600/15 hover:bg-red-600/25 border border-red-500/40 text-red-200 text-xs font-semibold inline-flex items-center gap-1.5 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation"
+            >
+              <span>{chip.label}</span>
+              <X className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          ))}
+          <button
+            type="button"
+            tabIndex={0}
+            onClick={resetFilters}
+            className="min-h-[44px] md:min-h-[36px] px-3 py-1 rounded-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation"
+          >
+            <RotateCcw className="w-3 h-3" aria-hidden="true" />
+            <span>Limpiar todo</span>
+          </button>
+        </div>
+      )}
 
       {/* Panel inferior en móvil */}
       {mobileSheetOpen && (

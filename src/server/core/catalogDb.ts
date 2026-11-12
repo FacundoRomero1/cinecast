@@ -41,6 +41,7 @@ export interface CatalogQueryParams {
   q: string;
   category: string;
   requestedGenres: string[];
+  genreMode: 'all' | 'any';
   yearFrom: number;
   yearTo: number;
   minRating: number;
@@ -196,11 +197,11 @@ export function queryCatalogByIds(
 }
 
 export function queryCatalogPage(db: SqliteDatabaseLike, params: CatalogQueryParams): Record<string, unknown> {
-  const conditions: string[] = [];
-  const sqlParams: unknown[] = [];
+  const baseConditions: string[] = [];
+  const baseSqlParams: unknown[] = [];
 
   if (!params.includeUpcoming) {
-    conditions.push('upcoming = 0');
+    baseConditions.push('upcoming = 0');
   }
 
   if (params.category && params.category !== 'all') {
@@ -208,49 +209,63 @@ export function queryCatalogPage(db: SqliteDatabaseLike, params: CatalogQueryPar
     if (params.category === 'movies' || params.category === 'movie') targetCat = 'movie';
     else if (params.category === 'series' || params.category === 'tv') targetCat = 'series';
     else if (params.category === 'anime') targetCat = 'anime';
-    conditions.push('category = ?');
-    sqlParams.push(targetCat);
+    baseConditions.push('category = ?');
+    baseSqlParams.push(targetCat);
   }
 
   if (params.onlySpanish) {
-    conditions.push("original_language = 'es'");
-  }
-
-  if (params.requestedGenres.length > 0) {
-    const placeholders = params.requestedGenres.map(() => '?').join(', ');
-    conditions.push(
-      `EXISTS (SELECT 1 FROM item_genres ig WHERE ig.item_seq = items.seq AND ig.genre_lower IN (${placeholders}))`
-    );
-    sqlParams.push(...params.requestedGenres);
+    baseConditions.push("original_language = 'es'");
   }
 
   if (!Number.isNaN(params.yearFrom)) {
-    conditions.push('year >= ?');
-    sqlParams.push(params.yearFrom);
+    baseConditions.push('year >= ?');
+    baseSqlParams.push(params.yearFrom);
   }
   if (!Number.isNaN(params.yearTo)) {
-    conditions.push('year <= ?');
-    sqlParams.push(params.yearTo);
+    baseConditions.push('year <= ?');
+    baseSqlParams.push(params.yearTo);
   }
   if (!Number.isNaN(params.minRating)) {
-    conditions.push('rating >= ?');
-    sqlParams.push(params.minRating);
+    baseConditions.push('rating >= ?');
+    baseSqlParams.push(params.minRating);
   }
 
   if (params.q) {
-    conditions.push(
+    baseConditions.push(
       '(INSTR(title_lower, ?) > 0 OR INSTR(original_title_lower, ?) > 0 OR INSTR(overview_lower, ?) > 0)'
     );
-    sqlParams.push(params.q, params.q, params.q);
+    baseSqlParams.push(params.q, params.q, params.q);
+  }
+
+  const conditions = [...baseConditions];
+  const sqlParams = [...baseSqlParams];
+  const uniqueGenres = Array.from(new Set(params.requestedGenres));
+
+  if (uniqueGenres.length > 0) {
+    if (params.genreMode === 'any') {
+      const placeholders = uniqueGenres.map(() => '?').join(', ');
+      conditions.push(
+        `EXISTS (SELECT 1 FROM item_genres ig WHERE ig.item_seq = items.seq AND ig.genre_lower IN (${placeholders}))`
+      );
+      sqlParams.push(...uniqueGenres);
+    } else {
+      for (const g of uniqueGenres) {
+        conditions.push(
+          'EXISTS (SELECT 1 FROM item_genres ig WHERE ig.item_seq = items.seq AND ig.genre_lower = ?)'
+        );
+        sqlParams.push(g);
+      }
+    }
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const baseWhereClause = baseConditions.length > 0 ? `WHERE ${baseConditions.join(' AND ')}` : '';
 
   let orderBy = 'ORDER BY seq ASC';
-  if (params.sort === 'rating') orderBy = 'ORDER BY rating DESC, seq ASC';
-  else if (params.sort === 'year') orderBy = 'ORDER BY year DESC, rating DESC, seq ASC';
-  else if (params.sort === 'title') orderBy = 'ORDER BY title_rank ASC, seq ASC';
-  else if (params.sort === 'added') orderBy = 'ORDER BY added_at_ms DESC, seq ASC';
+  if (params.sort === 'rating') orderBy = 'ORDER BY rating DESC, id ASC, seq ASC';
+  else if (params.sort === 'year') orderBy = 'ORDER BY year DESC, rating DESC, id ASC, seq ASC';
+  else if (params.sort === 'title') orderBy = 'ORDER BY title_rank ASC, id ASC, seq ASC';
+  else if (params.sort === 'added') orderBy = 'ORDER BY added_at_ms DESC, id ASC, seq ASC';
 
   let total = 0;
   let countRow: Record<string, unknown> | undefined;
@@ -292,14 +307,21 @@ export function queryCatalogPage(db: SqliteDatabaseLike, params: CatalogQueryPar
 
   if (params.includeFacets) {
     const genreCounts: Record<string, number> = {};
+    const allSummaryRows = db.prepare('SELECT name FROM genres_summary ORDER BY name_rank ASC').all();
+    for (const sr of allSummaryRows) {
+      genreCounts[String(sr.name)] = 0;
+    }
+
+    const facetWhere = params.genreMode === 'any' ? baseWhereClause : whereClause;
+    const facetParams = params.genreMode === 'any' ? baseSqlParams : sqlParams;
     const genreRows = db
       .prepare(
         `SELECT g.genre AS genre, COUNT(*) AS cnt
          FROM item_genres g
-         WHERE g.item_seq IN (SELECT seq FROM items ${whereClause})
+         WHERE g.item_seq IN (SELECT seq FROM items ${facetWhere})
          GROUP BY g.genre`
       )
-      .all(...sqlParams);
+      .all(...facetParams);
 
     for (const r of genreRows) {
       genreCounts[String(r.genre)] = Number(r.cnt ?? 0);

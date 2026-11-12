@@ -326,6 +326,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
           .map((g) => g.trim())
           .filter(Boolean)
       : [];
+    const genreMode = searchParams.get('genreMode') === 'any' ? 'any' : 'all';
     const yearFromParam = searchParams.get('yearFrom');
     const yearToParam = searchParams.get('yearTo');
     const yearFrom = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
@@ -337,6 +338,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     return {
       category: categoryParam,
       genres,
+      genreMode,
       yearFrom,
       yearTo,
       minRating,
@@ -345,17 +347,47 @@ const ExploreView: React.FC<ExploreViewProps> = ({
   }, []);
 
   const [filters, setFilters] = useState<FilterState>(initialFilters);
+  const [lastFilterHint, setLastFilterHint] = useState<{ label: string; revert: (f: FilterState) => FilterState } | null>(null);
 
   // Sincronizar cambios en los filtros con los parámetros de la URL usando replace: true
   const updateFilters = useCallback(
     (next: FilterState) => {
-      setFilters(next);
+      setFilters((prev) => {
+        if (next.genres.length > prev.genres.length) {
+          const added = next.genres.find((g) => !prev.genres.includes(g));
+          if (added) {
+            setLastFilterHint({
+              label: `género "${added}"`,
+              revert: (f) => ({ ...f, genres: f.genres.filter((x) => x !== added) }),
+            });
+          }
+        } else if (next.category !== prev.category && next.category !== 'all') {
+          setLastFilterHint({
+            label: `tipo "${next.category}"`,
+            revert: (f) => ({ ...f, category: 'all' }),
+          });
+        } else if (next.minRating > prev.minRating && next.minRating > 0) {
+          setLastFilterHint({
+            label: `rating ${next.minRating}+`,
+            revert: (f) => ({ ...f, minRating: 0 }),
+          });
+        } else if (next.yearFrom !== prev.yearFrom || next.yearTo !== prev.yearTo) {
+          if (next.yearFrom !== null || next.yearTo !== null) {
+            setLastFilterHint({
+              label: 'rango de año',
+              revert: (f) => ({ ...f, yearFrom: null, yearTo: null, decade: null }),
+            });
+          }
+        }
+        return next;
+      });
       const params: Record<string, string> = {};
       if (next.category && next.category !== 'all') {
         params.category = next.category;
         params.type = next.category;
       }
       if (next.genres && next.genres.length > 0) params.genre = next.genres.join(',');
+      if (next.genreMode === 'any') params.genreMode = 'any';
       if (next.yearFrom !== null && next.yearFrom !== undefined) {
         params.yearFrom = String(next.yearFrom);
       }
@@ -380,6 +412,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
           .map((g) => g.trim())
           .filter(Boolean)
       : [];
+    const nextGenreMode: 'all' | 'any' = searchParams.get('genreMode') === 'any' ? 'any' : 'all';
     const yearFromParam = searchParams.get('yearFrom');
     const yearToParam = searchParams.get('yearTo');
     const nextYearFrom = yearFromParam ? parseInt(yearFromParam, 10) || null : null;
@@ -391,14 +424,16 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     setFilters((prev) => {
       const sameCategory = prev.category === categoryParam;
       const sameGenres = JSON.stringify(prev.genres) === JSON.stringify(nextGenres);
+      const sameGenreMode = (prev.genreMode || 'all') === nextGenreMode;
       const sameYearFrom = prev.yearFrom === nextYearFrom;
       const sameYearTo = prev.yearTo === nextYearTo;
       const sameRating = prev.minRating === nextRating;
       const sameSort = prev.sort === sortParam;
-      if (sameCategory && sameGenres && sameYearFrom && sameYearTo && sameRating && sameSort) return prev;
+      if (sameCategory && sameGenres && sameGenreMode && sameYearFrom && sameYearTo && sameRating && sameSort) return prev;
       return {
         category: categoryParam,
         genres: nextGenres,
+        genreMode: nextGenreMode,
         yearFrom: nextYearFrom,
         yearTo: nextYearTo,
         minRating: nextRating,
@@ -420,6 +455,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     (targetPage: number) => ({
       category: filters.category === 'all' ? undefined : filters.category,
       genre: filters.genres.length > 0 ? filters.genres : undefined,
+      genreMode: filters.genreMode === 'any' ? ('any' as const) : ('all' as const),
       yearFrom: filters.yearFrom !== null && filters.yearFrom !== undefined ? filters.yearFrom : undefined,
       yearTo: filters.yearTo !== null && filters.yearTo !== undefined ? filters.yearTo : undefined,
       minRating: filters.minRating > 0 ? filters.minRating : undefined,
@@ -446,7 +482,6 @@ const ExploreView: React.FC<ExploreViewProps> = ({
         if (res.facets && res.facets.genres) {
           const list: GenreCountItem[] = Object.entries(res.facets.genres)
             .map(([name, count]) => ({ name, count }))
-            .filter((g) => g.count > 0)
             .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'es'));
           setFacetGenres(list);
         } else {
@@ -510,13 +545,74 @@ const ExploreView: React.FC<ExploreViewProps> = ({
       {loadingInitial ? (
         <GridSkeleton count={12} />
       ) : items.length === 0 ? (
-        <div className="py-20 text-center rounded-2xl bg-zinc-900/50 border border-zinc-800 p-8">
-          <p className="text-base font-bold text-white mb-1">
-            No hay títulos que coincidan con estos filtros
-          </p>
-          <p className="text-xs text-zinc-400">
-            Prueba quitando algún género o ampliando la década seleccionada.
-          </p>
+        <div className="py-16 text-center rounded-2xl bg-zinc-900/50 border border-zinc-800 p-8 space-y-4">
+          <div>
+            <p className="text-base font-bold text-white mb-1">
+              No hay títulos que coincidan con estos filtros
+            </p>
+            <p className="text-xs text-zinc-400">
+              Prueba quitando algún filtro o ampliando los criterios seleccionados.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {(() => {
+              const fallbackRemove = (() => {
+                if (filters.genres.length > 0) {
+                  return {
+                    label: `género "${filters.genres[filters.genres.length - 1]}"`,
+                    revert: (f: FilterState) => ({ ...f, genres: f.genres.slice(0, -1) }),
+                  };
+                }
+                if (filters.yearFrom !== null || filters.yearTo !== null) {
+                  return {
+                    label: 'rango de año',
+                    revert: (f: FilterState) => ({ ...f, yearFrom: null, yearTo: null, decade: null }),
+                  };
+                }
+                if (filters.minRating > 0) {
+                  return {
+                    label: `rating ${filters.minRating}+`,
+                    revert: (f: FilterState) => ({ ...f, minRating: 0 }),
+                  };
+                }
+                if (filters.category !== 'all') {
+                  return {
+                    label: `tipo "${filters.category}"`,
+                    revert: (f: FilterState) => ({ ...f, category: 'all' }),
+                  };
+                }
+                return null;
+              })();
+              const hint = lastFilterHint ?? fallbackRemove;
+              return hint ? (
+                <button
+                  type="button"
+                  onClick={() => updateFilters(hint.revert(filters))}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                >
+                  Quitar último filtro ({hint.label})
+                </button>
+              ) : null;
+            })()}
+            <button
+              type="button"
+              onClick={() =>
+                updateFilters({
+                  category: 'all',
+                  genres: [],
+                  genreMode: 'all',
+                  yearFrom: null,
+                  yearTo: null,
+                  decade: null,
+                  minRating: 0,
+                  sort: 'default',
+                })
+              }
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-bold border border-zinc-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+            >
+              Limpiar todo
+            </button>
+          </div>
         </div>
       ) : (
         <>

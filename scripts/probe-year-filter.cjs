@@ -1,7 +1,46 @@
 const { app, components, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
+const http = require('http');
+const express = require('express');
+const { createApp } = require('../electron/core.cjs');
 
-const baseUrl = (process.argv[2] || 'http://localhost:3000').replace(/\/+$/, '');
+let baseUrl = (process.argv[2] || '').replace(/\/+$/, '');
+let internalServer = null;
+
+async function ensureServerReady() {
+  if (baseUrl && !baseUrl.startsWith('internal:')) {
+    return;
+  }
+  const rootDir = path.resolve(__dirname, '..');
+  const expressApp = createApp({
+    baseDir: rootDir,
+    userDataPath: path.join(rootDir, '.cinecast-data'),
+    diagnostics: {
+      getMode: () => false,
+      setMode: () => {},
+      getNoCorsFix: () => false,
+      setNoCorsFix: () => {},
+      onChange: () => {},
+    },
+  });
+  const distDir = path.join(rootDir, 'dist');
+  expressApp.use(express.static(distDir));
+  expressApp.get('*', (_req, res) => {
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+  internalServer = http.createServer(expressApp);
+  await new Promise((resolve) => internalServer.listen(0, '127.0.0.1', resolve));
+  const { port } = internalServer.address();
+  baseUrl = `http://127.0.0.1:${port}`;
+}
+
+function stopLocalServer() {
+  if (!internalServer) return;
+  try {
+    internalServer.close();
+  } catch {}
+  internalServer = null;
+}
 
 // Handlers IPC para preload.cjs
 ipcMain.handle('get-local-ip', () => ({ ip: '127.0.0.1', port: 3000 }));
@@ -25,6 +64,8 @@ ipcMain.handle('send-native-trackpad-event', () => true);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 app.whenReady().then(async () => {
+  try {
+  await ensureServerReady();
   if (components && typeof components.whenReady === 'function') {
     try {
       await Promise.race([
@@ -128,12 +169,87 @@ app.whenReady().then(async () => {
   const passHash = filterState.hash.includes('yearFrom=2019') && filterState.hash.includes('yearTo=2019');
   console.log(`URL hash contiene yearFrom=2019&yearTo=2019: ${passHash ? 'PASA' : 'FALLA'} (${filterState.hash})`);
 
-  const pass = selectRes.success && passUrlParams && allYear2019 && passHash;
+  // Parte B: Terror + Comedia (genreMode=all default -> 116, genreMode=any -> 3728, chips X, 0-count disabled)
+  console.log('\n=== PARTE B: Prueba Automática Multi-Género Terror + Comedia ===');
+  await win.loadURL(`${baseUrl}/?ui=nuevo#/explorar`);
+  await wait(2000);
+  catalogRequests.length = 0;
+
+  const pickTerror = await win.webContents.executeJavaScript(`
+    (function() {
+      const btn = document.querySelector('button[data-genre-name="Terror"]');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()
+  `);
+  await wait(1000);
+  const pickComedia = await win.webContents.executeJavaScript(`
+    (function() {
+      const btn = document.querySelector('button[data-genre-name="Comedia"]');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()
+  `);
+  await wait(1200);
+
+  const multiState = await win.webContents.executeJavaScript(`
+    (function() {
+      const chips = Array.from(document.querySelectorAll('[data-testid="active-filter-chips"] button[aria-label^="Quitar filtro"]')).map(b => b.getAttribute('aria-label'));
+      const disabledBtns = Array.from(document.querySelectorAll('button[data-genre-name][disabled]')).map(b => b.getAttribute('data-genre-name'));
+      const headerText = (document.body.innerText.match(/\\d[\\d.,]*\\s*títulos encontrados/i) || [''])[0];
+      return {
+        hash: window.location.hash,
+        chips,
+        disabledBtnsCount: disabledBtns.length,
+        headerText,
+      };
+    })()
+  `);
+
+  const andReq = catalogRequests.find((u) => u.includes('Terror') && u.includes('Comedia') && u.includes('genreMode=all'));
+  const andRes = await (await fetch(`${baseUrl}/api/catalog?genre=Terror,Comedia&fields=card&limit=20`)).json();
+  const andUiMatch = pickTerror && pickComedia && Boolean(andReq) && andRes.total === 116 && multiState.chips.length >= 2;
+  console.log('Multi-género Terror+Comedia (all):', { andUiMatch, total: andRes.total, multiState });
+
+  // Probar Cualquiera (genreMode=any)
+  catalogRequests.length = 0;
+  await win.webContents.executeJavaScript(`
+    (function() {
+      const btn = Array.from(document.querySelectorAll('[aria-label="Modo de combinación de géneros"] button')).find(b => b.textContent.trim() === 'Cualquiera');
+      if (btn) btn.click();
+    })()
+  `);
+  await wait(1000);
+  const anyReq = catalogRequests.find((u) => u.includes('genreMode=any'));
+  console.log('Modo Cualquiera (genreMode=any) emitido:', Boolean(anyReq));
+
+  // Probar quitar chip Terror con X
+  await win.webContents.executeJavaScript(`
+    (function() {
+      const chip = document.querySelector('[data-testid="active-filter-chips"] button[aria-label="Quitar filtro Terror"]');
+      if (chip) chip.click();
+    })()
+  `);
+  await wait(800);
+  const hashAfterChip = await win.webContents.executeJavaScript('window.location.hash');
+  const passTerrorComedia = andUiMatch && Boolean(anyReq) && !hashAfterChip.includes('Terror') && hashAfterChip.includes('Comedia');
+  console.log(`Terror + Comedia E2E: ${passTerrorComedia ? 'PASA' : 'FALLA'} (hash tras X=${hashAfterChip})`);
+
+  const pass = selectRes.success && passUrlParams && allYear2019 && passHash && passTerrorComedia;
 
   console.log('\n========================================');
-  console.log(`RESUMEN FILTRO AÑO POR AÑO: ${pass ? 'PASA' : 'FALLA'}`);
+  console.log(`RESUMEN FILTRO AÑO + MULTI-GÉNERO: ${pass ? 'PASA' : 'FALLA'}`);
   console.log('========================================');
 
+  stopLocalServer();
   app.quit();
   process.exit(pass ? 0 : 1);
+  } catch (err) {
+    console.error('[probe-year-filter] Error:', err);
+    stopLocalServer();
+    app.quit();
+    process.exit(1);
+  }
 });
