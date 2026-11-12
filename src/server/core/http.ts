@@ -7,6 +7,7 @@ import { createTmdbDetailRouter, type TmdbDetailOptions } from './routes/tmdb-de
 import { createSearchRouter, type SearchOptions } from './routes/search.js';
 import { createSportsRouter, type SportsOptions } from './routes/sports.js';
 import { createHistoryRouter, type HistoryOptions } from './routes/history.js';
+import { createHistoryRepairRouter } from './routes/historyRepair.js';
 import { createDiagnosticsRouter, type DiagnosticsOptions } from './routes/diagnostics.js';
 import { createDownloadsRouter, type DownloadsOptions } from './routes/downloads.js';
 import { createArchiveRouter } from './routes/archive.js';
@@ -118,6 +119,7 @@ export function createApp(options: CreateAppOptions): Express {
   app.use('/api', createSearchRouter(searchOpts));
   app.use('/api', createSportsRouter(sportsOpts));
   app.use('/api', createHistoryRouter(historyOpts));
+  app.use('/api', createHistoryRepairRouter(historyOpts));
   app.use('/api', createDiagnosticsRouter(options.diagnostics));
   app.use('/api', createArchiveRouter());
   app.use('/api', createAccountsRouter(accountsOpts));
