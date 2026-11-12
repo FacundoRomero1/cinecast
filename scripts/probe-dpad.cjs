@@ -155,8 +155,8 @@ async function run() {
   await wait(500);
 
   // Determinar si usamos la lógica corregida o la vieja:
-  // Si existe el dispatch nuevo en main.cjs / AppRuntime, úsalo; si no, el viejo
-  const useCorrected = process.env.DPAD_CORRECTED === '1';
+  // Por defecto usa la lógica corregida (DPAD_CORRECTED !== '0'); DPAD_CORRECTED=0 para simular línea base
+  const useCorrected = process.env.DPAD_CORRECTED !== '0';
 
   screenWs.on('message', (data) => {
     try {
