@@ -39,12 +39,38 @@ const GOOGLE_CLIENT_ID_KEY = 'cinecast_google_client_id';
 
 class AuthService {
   private listeners: (() => void)[] = [];
+  private cachedSpotifyClientId: string = '';
 
-  // Obtener Client IDs (desde .env o localStorage)
+  constructor() {
+    this.syncSpotifyClientIdFromAccounts();
+  }
+
+  async syncSpotifyClientIdFromAccounts(): Promise<string> {
+    try {
+      if (typeof window !== 'undefined' && typeof fetch === 'function') {
+        const res = await fetch('/api/accounts');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && typeof data.spotifyClientId === 'string' && data.spotifyClientId.trim()) {
+            this.cachedSpotifyClientId = data.spotifyClientId.trim();
+            if (!localStorage.getItem(SPOTIFY_CLIENT_ID_KEY)) {
+              localStorage.setItem(SPOTIFY_CLIENT_ID_KEY, this.cachedSpotifyClientId);
+            }
+            this.notify();
+            return this.cachedSpotifyClientId;
+          }
+        }
+      }
+    } catch (_) {}
+    return this.getSpotifyClientId();
+  }
+
+  // Obtener Client IDs (desde .env, localStorage o /api/accounts)
   getSpotifyClientId(): string {
     const fromEnv = (import.meta as any).env?.VITE_SPOTIFY_CLIENT_ID;
     if (fromEnv && fromEnv !== 'your_spotify_client_id_here') return fromEnv;
-    return localStorage.getItem(SPOTIFY_CLIENT_ID_KEY) || '';
+    const fromStorage = typeof localStorage !== 'undefined' ? localStorage.getItem(SPOTIFY_CLIENT_ID_KEY) : '';
+    return fromStorage || this.cachedSpotifyClientId || '';
   }
 
   getMaskedSpotifyClientId(): string {
@@ -55,7 +81,20 @@ class AuthService {
   }
 
   setSpotifyClientId(clientId: string) {
-    localStorage.setItem(SPOTIFY_CLIENT_ID_KEY, clientId.trim());
+    const trimmed = clientId.trim();
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(SPOTIFY_CLIENT_ID_KEY, trimmed);
+    }
+    this.cachedSpotifyClientId = trimmed;
+    try {
+      if (typeof fetch === 'function') {
+        fetch('/api/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spotifyClientId: trimmed }),
+        }).catch(() => {});
+      }
+    } catch (_) {}
     this.notify();
   }
 
@@ -121,15 +160,58 @@ class AuthService {
     return localStorage.getItem(SPOTIFY_TOKEN_KEY);
   }
 
+  async checkSpotifyStatus(): Promise<{ connected: boolean; profile: UserProfile | null }> {
+    try {
+      const res = await fetch('/api/auth/status');
+      if (res.ok) {
+        const data = await res.json();
+        const sp = data?.spotify;
+        if (sp?.connected) {
+          if (sp.profile) {
+            localStorage.setItem(SPOTIFY_USER_KEY, JSON.stringify(sp.profile));
+          }
+          this.notify();
+          return { connected: true, profile: sp.profile || null };
+        }
+      }
+    } catch (_) {}
+    const localTok = typeof localStorage !== 'undefined' ? localStorage.getItem(SPOTIFY_TOKEN_KEY) : null;
+    const localUser = typeof localStorage !== 'undefined' ? localStorage.getItem(SPOTIFY_USER_KEY) : null;
+    return {
+      connected: Boolean(localTok),
+      profile: localUser ? JSON.parse(localUser) : null,
+    };
+  }
+
   loginWithSpotify() {
     const clientId = this.getSpotifyClientId();
     const serverAuthUrl = `/auth/start/spotify${clientId ? `?client_id=${encodeURIComponent(clientId)}` : ''}`;
-    window.location.href = serverAuthUrl;
+    const fullUrl =
+      typeof window !== 'undefined' && serverAuthUrl.startsWith('/')
+        ? `${window.location.origin}${serverAuthUrl}`
+        : serverAuthUrl;
+
+    if (typeof (window as any).electronAPI?.openExternal === 'function') {
+      (window as any).electronAPI.openExternal(fullUrl);
+    } else if (typeof window !== 'undefined') {
+      window.open(fullUrl, '_blank');
+    }
   }
 
-  logoutSpotify() {
-    localStorage.removeItem(SPOTIFY_TOKEN_KEY);
-    localStorage.removeItem(SPOTIFY_USER_KEY);
+  async logoutSpotify() {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(SPOTIFY_TOKEN_KEY);
+      localStorage.removeItem(SPOTIFY_USER_KEY);
+    }
+    try {
+      if (typeof fetch === 'function') {
+        await fetch('/api/auth/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: 'spotify' }),
+        });
+      }
+    } catch (_) {}
     this.notify();
   }
 

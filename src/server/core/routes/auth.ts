@@ -541,6 +541,29 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
     });
   });
 
+  router.post('/api/auth/disconnect', async (req, res) => {
+    try {
+      const provider = String(req.body?.provider || 'spotify').toLowerCase();
+      const current = loadAccountsFromFile(accountsFilePath);
+      current.accounts = (current.accounts || []).map((acc) => {
+        if (acc.provider === provider) {
+          return {
+            ...acc,
+            connected: false,
+            tokens: null,
+            profile: undefined,
+            updatedAt: Date.now(),
+          };
+        }
+        return acc;
+      });
+      saveAccountsToFile(accountsFilePath, current);
+      res.json({ ok: true, provider });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err) });
+    }
+  });
+
   return router;
 }
 

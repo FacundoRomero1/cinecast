@@ -22,6 +22,50 @@ const MAX_REQUESTS_PER_MINUTE = 60;
 const memoryLogs: ClientLogEntry[] = [];
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
+function maskSecretString(str: string): string {
+  if (typeof str !== 'string') return str;
+  // Match potential client IDs (hex strings of 32 chars)
+  let result = str.replace(/\b([a-f0-9]{4})[a-f0-9]{24}([a-f0-9]{4})\b/gi, '$1...$2');
+  // Match tokens like BQ... or generic long tokens (20+ chars)
+  result = result.replace(/([a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]{20,}([a-zA-Z0-9_-]{4})/g, (_match, prefix, suffix) => {
+    return `${prefix}...${suffix}`;
+  });
+  return result;
+}
+
+export function sanitizeLogValue(val: any): any {
+  if (val === null || val === undefined) return val;
+  if (typeof val === 'string') {
+    return maskSecretString(val);
+  }
+  if (Array.isArray(val)) {
+    return val.map(sanitizeLogValue);
+  }
+  if (typeof val === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+      const lower = k.toLowerCase();
+      if (
+        lower.includes('token') ||
+        lower.includes('secret') ||
+        lower.includes('authorization') ||
+        lower.includes('clientid') ||
+        lower.includes('client_id')
+      ) {
+        if (typeof v === 'string') {
+          cleaned[k] = v.length > 8 ? `${v.slice(0, 4)}...${v.slice(-4)}` : '****';
+        } else {
+          cleaned[k] = '[REDACTED]';
+        }
+      } else {
+        cleaned[k] = sanitizeLogValue(v);
+      }
+    }
+    return cleaned;
+  }
+  return val;
+}
+
 export function isPrivateIp(rawIp: string): boolean {
   if (!rawIp) return false;
   const ip = rawIp.replace(/^::ffff:/, '').trim();
@@ -145,7 +189,8 @@ export function createClientLogRouter(): Router {
       });
     }
 
-    memoryLogs.push(...itemsToAdd);
+    const sanitized = itemsToAdd.map((entry) => sanitizeLogValue(entry));
+    memoryLogs.push(...sanitized);
     if (memoryLogs.length > MAX_ENTRIES) {
       memoryLogs.splice(0, memoryLogs.length - MAX_ENTRIES);
     }
@@ -174,7 +219,7 @@ export function createClientLogRouter(): Router {
         .reverse()
         .map((entry, idx) => {
           const type = entry.type || entry.level || 'info';
-          const info = JSON.stringify(entry.env || entry.event || entry.data || entry.message || entry);
+          const info = JSON.stringify(entry);
           return `<tr>
             <td>${idx + 1}</td>
             <td>${entry.receivedAt}</td>

@@ -48,7 +48,7 @@ import { ScreensManagerView } from './ScreensManagerView';
 import { SportsMatchesTab } from '../components/SportsMatchesTab';
 import { SportsLiveGrid } from '../components/SportsLiveGrid';
 import { SpotifyHub } from '../components/SpotifyHub';
-import { SpotifyDevice } from './SpotifyDevice';
+import { SpotifyDevice, SpotifySettingsSection } from './SpotifyDevice';
 import { YouTubeHub } from '../components/YouTubeHub';
 import { SPOTIFY_TRACKS } from '../data/spotifyCatalog';
 import { YOUTUBE_VIDEOS } from '../data/youtubeCatalog';
@@ -1527,6 +1527,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
           {isRepairingHistory ? 'Reparando...' : 'Reparar historial'}
         </button>
       </div>
+
+      {/* Sección Spotify (dispositivo CineCast) */}
+      <SpotifySettingsSection isScreen={deviceRole === 'screen' || deviceRole === 'hybrid'} />
 
       {/* Diagnóstico de conexión */}
       <ConnectionDiagnosticSection />
