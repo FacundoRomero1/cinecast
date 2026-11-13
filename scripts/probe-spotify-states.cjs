@@ -284,8 +284,8 @@ async function run() {
     localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
     localStorage.setItem('cinecast_spotify_token', 'mock_token_for_connecting');
   `);
-  await win.loadURL(`${baseUrl}/#/musica`);
-  await wait(1000);
+  await win.webContents.reload();
+  await wait(2000);
 
   // Simular causas de error sin pantalla negra ni spinner eterno
   const errorTestResults = await win.webContents.executeJavaScript(`
@@ -318,20 +318,20 @@ async function run() {
   // ESTADO 5: connected con track Bohemian Rhapsody y Desconectar
   // ==========================================
   console.log('[probe-spotify-states] Evaluando Estado 5: connected...');
-  await win.loadURL(`${baseUrl}/#/musica`);
-  await wait(800);
+  await win.webContents.executeJavaScript(`
+    localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
+    localStorage.setItem('cinecast_spotify_token', 'mock_access_token_12345');
+    localStorage.setItem('cinecast_spotify_user', JSON.stringify({
+      id: 'user_123',
+      name: 'Facundo Test',
+      email: 'test@cinecast.local',
+      premium: true,
+    }));
+  `);
+  await win.webContents.reload();
+  await wait(2000);
   await win.webContents.executeJavaScript(`
     (() => {
-      // Mock de autenticación exitosa
-      localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
-      localStorage.setItem('cinecast_spotify_token', 'mock_access_token_12345');
-      localStorage.setItem('cinecast_spotify_user', JSON.stringify({
-        id: 'user_123',
-        name: 'Facundo Test',
-        email: 'test@cinecast.local',
-        premium: true,
-      }));
-
       // Mock del SDK
       window.Spotify = {
         Player: function(options) {
