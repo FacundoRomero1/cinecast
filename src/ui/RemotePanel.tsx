@@ -1025,7 +1025,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 <div className="grid grid-cols-4 gap-2 pt-1">
                   <button
                     type="button"
-                    aria-label="Retroceder 60 segundos"
+                    aria-label="Salto rápido -60s"
                     disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: -60 })}
                     className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1034,7 +1034,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   </button>
                   <button
                     type="button"
-                    aria-label="Retroceder 10 segundos"
+                    aria-label="Salto rápido -10s"
                     disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: -10 })}
                     className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1043,7 +1043,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   </button>
                   <button
                     type="button"
-                    aria-label="Avanzar 10 segundos"
+                    aria-label="Salto rápido +10s"
                     disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: 10 })}
                     className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1052,7 +1052,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   </button>
                   <button
                     type="button"
-                    aria-label="Avanzar 60 segundos"
+                    aria-label="Salto rápido +60s"
                     disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: 60 })}
                     className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
