@@ -430,7 +430,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
                 <h3 className="text-base font-extrabold text-white">Falta autorizar tu cuenta</h3>
                 {maskedClientId && (
                   <span className="font-mono text-[11px] bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400">
-                    ID: {maskedClientId}
+                    Client ID: {maskedClientId}
                   </span>
                 )}
               </div>
@@ -580,6 +580,11 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
                     <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
                       Activo
                     </span>
+                    {maskedClientId && (
+                      <span className="font-mono text-[10px] bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400">
+                        Client ID: {maskedClientId}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-zinc-400">
                     {userProfile ? `Conectado como: ${userProfile.name}` : 'Dispositivo activo y listo para reproducir'}
