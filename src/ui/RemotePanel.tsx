@@ -80,6 +80,79 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   const [isChaptersOpen, setIsChaptersOpen] = useState(false);
   const [isServersOpen, setIsServersOpen] = useState(false);
   const [pingSuccess, setPingSuccess] = useState(false);
+  const [isAudioSheetOpen, setIsAudioSheetOpen] = useState(false);
+  const [showFineTuning, setShowFineTuning] = useState(false);
+
+  const [audioOpts, setAudioOpts] = useState<{
+    volume: number;
+    preset: 'dialogos' | 'nocturno' | 'estandar';
+    bassDb: number;
+    midDb: number;
+    trebleDb: number;
+    compressorEnabled: boolean;
+  }>({
+    volume: playbackState?.audioSettings?.volume ?? 100,
+    preset: 'estandar',
+    bassDb: playbackState?.audioSettings?.bassGain ?? 0,
+    midDb: playbackState?.audioSettings?.midGain ?? 0,
+    trebleDb: playbackState?.audioSettings?.trebleGain ?? 0,
+    compressorEnabled: false,
+  });
+
+  const handleUpdateAudioOpts = (changes: Partial<typeof audioOpts>) => {
+    const updated = { ...audioOpts, ...changes };
+    if (changes.preset === 'dialogos') {
+      updated.bassDb = -6;
+      updated.midDb = 6;
+      updated.trebleDb = 2;
+      updated.compressorEnabled = true;
+    } else if (changes.preset === 'nocturno') {
+      updated.bassDb = -4;
+      updated.midDb = 3;
+      updated.trebleDb = 0;
+      updated.compressorEnabled = true;
+    } else if (changes.preset === 'estandar') {
+      updated.bassDb = 0;
+      updated.midDb = 0;
+      updated.trebleDb = 0;
+      updated.compressorEnabled = false;
+    }
+    setAudioOpts(updated);
+    onSendCommand({
+      action: 'setAudioSettings',
+      payload: {
+        volume: updated.volume,
+        preset: updated.preset,
+        bassGain: updated.bassDb,
+        midGain: updated.midDb,
+        trebleGain: updated.trebleDb,
+        compressorEnabled: updated.compressorEnabled,
+      },
+    });
+  };
+
+  const handleResetAudioOpts = () => {
+    const resetValues = {
+      volume: 100,
+      preset: 'estandar' as const,
+      bassDb: 0,
+      midDb: 0,
+      trebleDb: 0,
+      compressorEnabled: false,
+    };
+    setAudioOpts(resetValues);
+    onSendCommand({
+      action: 'setAudioSettings',
+      payload: {
+        volume: 100,
+        preset: 'estandar',
+        bassGain: 0,
+        midGain: 0,
+        trebleGain: 0,
+        compressorEnabled: false,
+      },
+    });
+  };
 
   const isConnected = Boolean(
     connectedScreenName &&
@@ -1059,75 +1132,18 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             )}
           </div>
 
-          {/* Botón Saltar intro / Atajos rápidos +30/+60/+85/+120s / Marcas de intro */}
-          {isEpisodic && (
+          {/* Botón Saltar intro (exclusivo con hasIntroTimings) */}
+          {isEpisodic && hasIntroTimings && (
             <div className="pt-1">
-              {hasIntroTimings || playbackState?.introMarks ? (
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    aria-label="Saltar intro"
-                    onClick={() => onSendCommand({ action: 'skipIntro' })}
-                    className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer"
-                  >
-                    <FastForward className="w-4 h-4 fill-current" />
-                    <span>Saltar intro</span>
-                  </button>
-                  {playbackState?.introMarks && (
-                    <div className="flex items-center justify-between text-[11px] text-zinc-400 px-1">
-                      <span>
-                        Intro: {Math.round(playbackState.introMarks.start)}s - {Math.round(playbackState.introMarks.end)}s
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onSendCommand({ action: 'clearIntroMarks' })}
-                        className="text-[10px] text-red-400 hover:text-red-300 underline"
-                      >
-                        Borrar marcas
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block text-left">
-                      Saltos rápidos de tiempo
-                    </span>
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {[30, 60, 85, 120].map((sec) => (
-                        <button
-                          key={sec}
-                          type="button"
-                          aria-label={`Saltar ${sec} segundos`}
-                          onClick={() => onSendCommand({ action: 'skipSeconds', payload: { seconds: sec } })}
-                          className="min-h-[44px] px-1.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-xs font-extrabold text-zinc-200 border border-zinc-700/80 transition flex items-center justify-center gap-1 active:scale-95"
-                        >
-                          <FastForward className="w-3.5 h-3.5 text-amber-400" />
-                          <span>+{sec}s</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => onSendCommand({ action: 'markIntroStart' })}
-                      className="flex-1 min-h-[44px] px-2 py-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-750 text-[11px] font-bold text-zinc-300 flex items-center justify-center gap-1 transition active:scale-95"
-                    >
-                      <span>Marcar inicio intro</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onSendCommand({ action: 'markIntroEnd' })}
-                      className="flex-1 min-h-[44px] px-2 py-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-750 text-[11px] font-bold text-zinc-300 flex items-center justify-center gap-1 transition active:scale-95"
-                    >
-                      <span>Marcar fin intro</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+              <button
+                type="button"
+                aria-label="Saltar intro"
+                onClick={() => onSendCommand({ action: 'skipIntro' })}
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer"
+              >
+                <FastForward className="w-4 h-4 fill-current" />
+                <span>Saltar intro</span>
+              </button>
             </div>
           )}
 
@@ -1441,11 +1457,11 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             <div className="grid grid-cols-2 gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => onOpenAudioModal?.()}
+                onClick={() => setIsAudioSheetOpen(true)}
                 className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center gap-2 transition"
               >
-                <Moon className="w-4 h-4 text-purple-400" />
-                <span>Modo noche</span>
+                <Sliders className="w-4 h-4 text-purple-400" />
+                <span>Opciones de audio</span>
               </button>
 
               <button
@@ -1543,6 +1559,200 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           </div>
         )}
       </section>
+
+      {/* Modal / Panel de Opciones de Audio */}
+      {isAudioSheetOpen && (
+        <div
+          role="dialog"
+          aria-label="Panel Opciones de audio"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setIsAudioSheetOpen(false)}
+        >
+          <div
+            className="w-full max-w-md max-h-[85vh] flex flex-col rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl overflow-hidden text-zinc-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Cabecera */}
+            <div className="shrink-0 px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-purple-400" />
+                <h3 className="font-extrabold text-sm text-white">Opciones de audio</h3>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar opciones de audio"
+                onClick={() => setIsAudioSheetOpen(false)}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-zinc-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-4 text-xs">
+              {/* 1. Volumen General 0 - 200 % */}
+              <div className="p-3.5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2">
+                <div className="flex items-center justify-between font-bold">
+                  <span className="text-zinc-200">Volumen general</span>
+                  <span className={`font-mono text-sm ${audioOpts.volume > 100 ? 'text-amber-400' : 'text-white'}`}>
+                    {audioOpts.volume}% {audioOpts.volume > 100 && '(Boost + Compresor)'}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={audioOpts.volume}
+                  onChange={(e) => handleUpdateAudioOpts({ volume: Number(e.target.value) })}
+                  className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                />
+                <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
+                  <span>0%</span>
+                  <span>100% (Normal)</span>
+                  <span className="text-amber-400">200% (Boost)</span>
+                </div>
+              </div>
+
+              {/* 2. Presets */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">
+                  Perfiles de audio
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateAudioOpts({ preset: 'dialogos' })}
+                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${
+                      audioOpts.preset === 'dialogos'
+                        ? 'bg-purple-950/60 border-purple-500 text-white shadow'
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
+                    }`}
+                  >
+                    <span className="font-extrabold text-xs">Diálogos claros</span>
+                    <span className="text-[10px] text-zinc-400 mt-1">Realce 1-3kHz</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateAudioOpts({ preset: 'nocturno' })}
+                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${
+                      audioOpts.preset === 'nocturno'
+                        ? 'bg-purple-950/60 border-purple-500 text-white shadow'
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
+                    }`}
+                  >
+                    <span className="font-extrabold text-xs">Nocturno</span>
+                    <span className="text-[10px] text-zinc-400 mt-1">Compresión alta</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateAudioOpts({ preset: 'estandar' })}
+                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${
+                      audioOpts.preset === 'estandar'
+                        ? 'bg-purple-950/60 border-purple-500 text-white shadow'
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
+                    }`}
+                  >
+                    <span className="font-extrabold text-xs">Estándar</span>
+                    <span className="text-[10px] text-zinc-400 mt-1">Plano original</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 3. Ajustes finos plegables */}
+              <div className="p-3 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setShowFineTuning(!showFineTuning)}
+                  className="w-full flex items-center justify-between text-xs font-bold text-zinc-200"
+                >
+                  <span>Ajustes finos (Ecualizador & Dinámica)</span>
+                  <span>{showFineTuning ? '▲' : '▼'}</span>
+                </button>
+
+                {showFineTuning && (
+                  <div className="space-y-3 pt-2 border-t border-zinc-800">
+                    <div>
+                      <div className="flex justify-between text-[11px] text-zinc-300 mb-1">
+                        <span>Graves (Bass)</span>
+                        <span className="font-mono text-zinc-400">{audioOpts.bassDb > 0 ? `+${audioOpts.bassDb}` : audioOpts.bassDb} dB</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-12"
+                        max="12"
+                        value={audioOpts.bassDb}
+                        onChange={(e) => handleUpdateAudioOpts({ bassDb: Number(e.target.value) })}
+                        className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[11px] text-zinc-300 mb-1">
+                        <span>Medios / Voces</span>
+                        <span className="font-mono text-zinc-400">{audioOpts.midDb > 0 ? `+${audioOpts.midDb}` : audioOpts.midDb} dB</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-12"
+                        max="12"
+                        value={audioOpts.midDb}
+                        onChange={(e) => handleUpdateAudioOpts({ midDb: Number(e.target.value) })}
+                        className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[11px] text-zinc-300 mb-1">
+                        <span>Agudos / Claridad</span>
+                        <span className="font-mono text-zinc-400">{audioOpts.trebleDb > 0 ? `+${audioOpts.trebleDb}` : audioOpts.trebleDb} dB</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-12"
+                        max="12"
+                        value={audioOpts.trebleDb}
+                        onChange={(e) => handleUpdateAudioOpts({ trebleDb: Number(e.target.value) })}
+                        className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] text-zinc-300">Compresor dinámico</span>
+                      <input
+                        type="checkbox"
+                        checked={audioOpts.compressorEnabled}
+                        onChange={(e) => handleUpdateAudioOpts({ compressorEnabled: e.target.checked })}
+                        className="w-4 h-4 rounded bg-zinc-800 border-zinc-700 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón Restablecer audio */}
+              <button
+                type="button"
+                onClick={handleResetAudioOpts}
+                className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-700 text-xs font-bold text-zinc-300 transition active:scale-98"
+              >
+                Restablecer audio
+              </button>
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-3 bg-zinc-950 border-t border-zinc-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsAudioSheetOpen(false)}
+                className="min-h-[44px] px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-extrabold transition"
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
