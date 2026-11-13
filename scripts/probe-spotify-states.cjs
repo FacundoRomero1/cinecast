@@ -154,7 +154,12 @@ async function run() {
       const text = document.body.innerText || '';
       const hasMissingTitle = text.includes('Falta el Client ID');
       const hasSettingsBtn = Boolean(document.querySelector('button[aria-label="Falta el Client ID"], button') && text.includes('Configurar en Ajustes'));
-      return { hasMissingTitle, hasSettingsBtn, textPreview: text.slice(0, 300) };
+      const ls = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        ls[k] = localStorage.getItem(k);
+      }
+      return { hasMissingTitle, hasSettingsBtn, ls, textPreview: text.slice(0, 300) };
     })()
   `);
 
