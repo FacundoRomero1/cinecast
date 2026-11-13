@@ -132,23 +132,21 @@ async function run() {
   console.log('[probe-spotify-states] Evaluando Estado 1: missing_client_id...');
   await win.loadURL(`${baseUrl}/#/musica`);
   win.showInactive();
-  await wait(2000);
+  await wait(1500);
 
   // Asegurar que localStorage y servidor no tengan client_id
+  await fetch(`${baseUrl}/api/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spotifyClientId: '' }),
+  }).catch(() => {});
   await win.webContents.executeJavaScript(`
-    (async () => {
-      localStorage.removeItem('cinecast_spotify_client_id');
-      localStorage.removeItem('cinecast_spotify_token');
-      localStorage.removeItem('cinecast_spotify_user');
-      await fetch('/api/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spotifyClientId: '' }),
-      }).catch(() => {});
-      window.location.reload();
-    })();
+    localStorage.removeItem('cinecast_spotify_client_id');
+    localStorage.removeItem('cinecast_spotify_token');
+    localStorage.removeItem('cinecast_spotify_user');
   `);
-  await wait(2500);
+  await win.webContents.reload();
+  await wait(2000);
 
   const missingDom = await win.webContents.executeJavaScript(`
     (() => {
@@ -293,11 +291,15 @@ async function run() {
       const results = {};
 
       // Causa (a): no cargó sdk.scdn.co
-      const scriptEl = document.getElementById('spotify-player-sdk');
+      let scriptEl = document.getElementById('spotify-player-sdk');
+      results.hasScript = Boolean(scriptEl);
+      results.hasOnerror = Boolean(scriptEl && scriptEl.onerror);
       if (scriptEl && scriptEl.onerror) {
-        scriptEl.onerror(new Error('Network error loading sdk'));
+        try { scriptEl.onerror(new Event('error')); } catch (_) {}
+      } else if (scriptEl) {
+        scriptEl.dispatchEvent(new Event('error'));
       }
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 800));
       let text = document.body.innerText || '';
       results.causeA = text.includes('sdk.scdn.co') && text.includes('Reintentar');
       results.textPreview = text.slice(0, 300);
