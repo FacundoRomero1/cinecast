@@ -7,6 +7,8 @@ export interface ConnectedClient {
   deviceName: string;
   deviceType: 'screen' | 'remote' | 'hybrid';
   lastSeen: number;
+  isAlive?: boolean | undefined;
+  lastPingSent?: number | undefined;
 }
 
 export type PlaybackCommandPayload = Record<string, unknown>;
@@ -136,27 +138,29 @@ export function recordAndBroadcastCommand(
   command: PlaybackCommandPayload,
   targetDeviceId?: string,
   msgId?: string
-): void {
+): { delivered: boolean; screenCount: number } {
   const uniqueId = msgId || `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  if (seenCommandIds.has(uniqueId)) return;
-  seenCommandIds.add(uniqueId);
-  if (seenCommandIds.size > 500) {
-    const first = seenCommandIds.values().next().value;
-    if (first) seenCommandIds.delete(first);
-  }
+  const isDuplicate = seenCommandIds.has(uniqueId);
+  if (!isDuplicate) {
+    seenCommandIds.add(uniqueId);
+    if (seenCommandIds.size > 500) {
+      const first = seenCommandIds.values().next().value;
+      if (first) seenCommandIds.delete(first);
+    }
 
-  commandSeqCounter += 1;
-  const queued: QueuedCommand = {
-    seq: commandSeqCounter,
-    id: uniqueId,
-    roomId,
-    fromDevice,
-    targetDeviceId,
-    command,
-    timestamp: Date.now(),
-  };
-  commandHistory.push(queued);
-  if (commandHistory.length > 100) commandHistory.shift();
+    commandSeqCounter += 1;
+    const queued: QueuedCommand = {
+      seq: commandSeqCounter,
+      id: uniqueId,
+      roomId,
+      fromDevice,
+      targetDeviceId,
+      command,
+      timestamp: Date.now(),
+    };
+    commandHistory.push(queued);
+    if (commandHistory.length > 100) commandHistory.shift();
+  }
 
   const forwardPayload = JSON.stringify({
     type: 'command',
@@ -166,13 +170,19 @@ export function recordAndBroadcastCommand(
     command,
   });
 
+  let screensReached = 0;
   globalDevices.forEach((client) => {
-    if (client.deviceId !== fromDevice && client.ws && client.ws.readyState === WebSocket.OPEN) {
+    const isScreen = client.deviceType === 'screen' || client.deviceType === 'hybrid';
+    const matchesTarget = targetDeviceId ? client.deviceId === targetDeviceId : isScreen;
+    if (client.deviceId !== fromDevice && matchesTarget && client.ws && client.ws.readyState === WebSocket.OPEN) {
       try {
         client.ws.send(forwardPayload);
+        screensReached++;
       } catch (_) {}
     }
   });
+
+  return { delivered: screensReached > 0, screenCount: screensReached };
 }
 
 export function recordAndBroadcastState(

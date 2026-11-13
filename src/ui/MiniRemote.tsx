@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Play, Pause, ChevronRight, Tv, Radio } from 'lucide-react';
 import type { MediaItem, PlaybackState } from '../types';
+import { deviceSync } from '../services/deviceSync';
 
 export interface MiniRemoteProps {
   connectedScreenName?: string;
@@ -25,6 +26,17 @@ export const MiniRemote: React.FC<MiniRemoteProps> = ({
     connectedScreenName !== 'Sin pantalla' &&
     connectedScreenName !== 'Ninguna'
   );
+
+  const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'disconnected'>(
+    isConnected ? 'connected' : 'disconnected'
+  );
+
+  useEffect(() => {
+    const unsub = deviceSync.onConnectionStatus((info) => {
+      setConnState(info.state);
+    });
+    return () => unsub();
+  }, []);
 
   const isPlaying = Boolean(playbackState?.isPlaying);
   const title =
@@ -79,7 +91,15 @@ export const MiniRemote: React.FC<MiniRemoteProps> = ({
       className="fixed inset-x-0 md:hidden h-[56px] bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800/80 px-3 flex items-center justify-between z-cc-minicontrol cursor-pointer transition select-none hover:bg-zinc-850"
     >
       <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
-        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+        <span
+          className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+            !isConnected || connState === 'disconnected'
+              ? 'bg-rose-500'
+              : connState === 'reconnecting'
+              ? 'bg-amber-500 animate-pulse'
+              : 'bg-emerald-500 animate-pulse'
+          }`}
+        />
         <Radio className="w-4 h-4 text-red-500 shrink-0" />
         <p className="text-xs font-semibold text-zinc-100 truncate">
           {title}

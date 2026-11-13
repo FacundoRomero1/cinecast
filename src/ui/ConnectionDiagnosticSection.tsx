@@ -152,22 +152,60 @@ export const ConnectionDiagnosticSection: React.FC = () => {
         </div>
       </div>
 
-      {/* Comandos */}
-      <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1.5">
-        <div className="text-[11px] text-zinc-400 font-semibold">Comandos de sincronización</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-          <div>
-            <span className="text-zinc-500">Último enviado:</span>{' '}
-            <span className="text-zinc-300 font-mono">
-              {lastSent ? `${lastSent.timestamp} (${lastSent.action})` : 'Ninguno'}
-            </span>
+      {/* Comandos y Diagnóstico de últimos 50 */}
+      <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] text-zinc-300 font-bold uppercase tracking-wider">
+            Últimos 50 comandos (Estado y RTT)
           </div>
-          <div>
-            <span className="text-zinc-500">Último recibido:</span>{' '}
-            <span className="text-zinc-300 font-mono">
-              {lastReceived ? `${lastReceived.timestamp} (${lastReceived.action})` : 'Ninguno'}
-            </span>
-          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const summary = deviceSync.getSyncTelemetrySummary();
+              const history = deviceSync.getRecentCommandsDiagnostics();
+              const fullReport = {
+                timestamp: new Date().toISOString(),
+                deviceId,
+                roomId,
+                role: deviceRole,
+                telemetry: summary,
+                commands: history,
+              };
+              try {
+                await navigator.clipboard.writeText(JSON.stringify(fullReport, null, 2));
+                alert('Informe de diagnóstico copiado al portapapeles');
+              } catch (_) {
+                prompt('Copia el informe:', JSON.stringify(fullReport));
+              }
+            }}
+            className="min-h-[36px] px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-200 border border-zinc-700 transition"
+          >
+            Copiar informe
+          </button>
+        </div>
+
+        <div className="max-h-48 overflow-y-auto space-y-1 pr-1 font-mono text-[11px] divide-y divide-zinc-900">
+          {deviceSync.getRecentCommandsDiagnostics().length === 0 ? (
+            <div className="text-zinc-500 italic py-1">No hay comandos registrados aún</div>
+          ) : (
+            deviceSync.getRecentCommandsDiagnostics().map((c) => (
+              <div key={c.id} className="py-1 flex items-center justify-between gap-2">
+                <span className="text-zinc-300 truncate">
+                  <strong className="text-white">{c.action}</strong>{' '}
+                  <span className="text-zinc-500 text-[10px]">({c.id})</span>
+                </span>
+                <span className="shrink-0 flex items-center gap-1">
+                  {c.status === 'confirmed' ? (
+                    <span className="text-emerald-400 font-bold">✓ {c.rttMs ?? 0}ms</span>
+                  ) : c.status === 'retrying' ? (
+                    <span className="text-amber-400 font-bold animate-pulse">Reintentando...</span>
+                  ) : (
+                    <span className="text-red-400 font-bold">⚠ Falló</span>
+                  )}
+                </span>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

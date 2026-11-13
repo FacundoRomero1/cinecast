@@ -144,8 +144,13 @@ export function createSyncRouter(): Router {
     const existing = fromDevice ? globalDevices.get(fromDevice) : undefined;
     if (existing) existing.lastSeen = Date.now();
 
-    recordAndBroadcastCommand(roomId, fromDevice || 'remote_http', command, targetDeviceId, id);
-    res.json({ ok: true, seq: commandSeqCounter });
+    const result = recordAndBroadcastCommand(roomId, fromDevice || 'remote_http', command, targetDeviceId, id);
+    res.json({
+      ok: true,
+      seq: commandSeqCounter,
+      ack: result.delivered ? { id, delivered: true } : undefined,
+      nack: !result.delivered ? { id, reason: 'sin-pantalla' } : undefined,
+    });
   });
 
   router.post('/sync/state', (req, res) => {
@@ -215,6 +220,22 @@ export function createSyncRouter(): Router {
 
   router.get('/rooms/:roomId/devices', (_req, res) => {
     res.json({ devices: getAllActiveDevicesList() });
+  });
+
+  router.post('/sync/chaos/terminate-client', (req, res) => {
+    const { deviceId, role } = (req.body || {}) as { deviceId?: string; role?: string };
+    let terminated = false;
+    globalDevices.forEach((client) => {
+      if ((deviceId && client.deviceId === deviceId) || (role && client.deviceType === role)) {
+        if (client.ws) {
+          try {
+            client.ws.terminate();
+            terminated = true;
+          } catch (_) {}
+        }
+      }
+    });
+    res.json({ ok: true, terminated });
   });
 
   return router;

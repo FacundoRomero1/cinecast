@@ -436,17 +436,24 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // COPIA de App.tsx L385-838; borrar al eliminar la UI clásica
   // Handle incoming commands sent from mobile
   const handleRemoteCommandReceived = (cmd: RemoteCommand, _from?: string) => {
-    // Guarda anti-duplicado de 150ms por (dispositivo, acción) para evitar dobles toques accidentales
+    // Guarda anti-duplicado de 150ms sólo a navegación y clic del pad para evitar dobles toques accidentales
     const devId = _from || (cmd as any)?.fromDevice || 'remote';
     const actionKey = `${devId}:${cmd.action}`;
     const now = Date.now();
     const lastTime = lastCommandTimeMapRef.current.get(actionKey) || 0;
     const isRepeat = Boolean(cmd.payload?.isRepeat || (cmd as any)?.isRepeat);
 
-    if (!isRepeat && now - lastTime < 150) {
+    const isNavOrPadClick = [
+      'navigateUp', 'navigateDown', 'navigateLeft', 'navigateRight',
+      'select', 'enter', 'back', 'trackpadClick'
+    ].includes(cmd.action);
+
+    if (isNavOrPadClick && !isRepeat && now - lastTime < 150) {
       return;
     }
-    lastCommandTimeMapRef.current.set(actionKey, now);
+    if (isNavOrPadClick) {
+      lastCommandTimeMapRef.current.set(actionKey, now);
+    }
 
     recordReceivedCommand(cmd.action);
     // User interacted -> reset consecutive unattended chapter count

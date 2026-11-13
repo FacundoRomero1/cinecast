@@ -88,6 +88,46 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     connectedScreenName !== 'Ninguna'
   );
 
+  const [connStatus, setConnStatus] = useState<{
+    state: 'connected' | 'reconnecting' | 'disconnected';
+    latencyMs: number;
+  }>({
+    state: isConnected ? 'connected' : 'disconnected',
+    latencyMs: 0,
+  });
+
+  const [lastCommandFeedback, setLastCommandFeedback] = useState<{
+    status: 'confirmed' | 'failed' | 'retrying';
+    message?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const unsubConn = deviceSync.onConnectionStatus((info) => {
+      setConnStatus({
+        state: info.state,
+        latencyMs: info.latencyMs,
+      });
+    });
+
+    const unsubCmd = deviceSync.onCommandStatus((info) => {
+      setLastCommandFeedback({
+        status: info.status,
+        message: info.status === 'failed' ? (info.reason || 'No llegó. Reintentá') : undefined,
+      });
+      if (info.status === 'confirmed') {
+        const timer = setTimeout(() => {
+          setLastCommandFeedback((prev) => (prev?.status === 'confirmed' ? null : prev));
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    });
+
+    return () => {
+      unsubConn();
+      unsubCmd();
+    };
+  }, []);
+
   const activeHub = (playbackState as any)?.activeHub || 'cinecast';
   const isStandby = Boolean(playbackState?.isStandby);
   const isPlaying = Boolean(playbackState?.isPlaying);
@@ -373,13 +413,42 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <div className="flex items-center gap-2.5 min-w-0">
           <span
             className={`w-3 h-3 rounded-full shrink-0 ${
-              isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'
+              !isConnected || connStatus.state === 'disconnected'
+                ? 'bg-rose-500'
+                : connStatus.state === 'reconnecting'
+                ? 'bg-amber-500 animate-pulse'
+                : 'bg-emerald-500'
             }`}
           />
           <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-wider font-bold text-zinc-400">
-              {isConnected ? 'Pantalla vinculada' : 'Sin pantalla'}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-[11px] uppercase tracking-wider font-bold text-zinc-400">
+                {!isConnected || connStatus.state === 'disconnected'
+                  ? 'Sin conexión'
+                  : connStatus.state === 'reconnecting'
+                  ? 'Reconectando...'
+                  : connStatus.latencyMs > 0
+                  ? `${connStatus.latencyMs} ms`
+                  : 'Conectado'}
+              </p>
+              {lastCommandFeedback && (
+                <span
+                  className={`text-xs font-bold transition flex items-center gap-1 ${
+                    lastCommandFeedback.status === 'confirmed'
+                      ? 'text-emerald-400'
+                      : lastCommandFeedback.status === 'retrying'
+                      ? 'text-amber-400 animate-pulse'
+                      : 'text-rose-400'
+                  }`}
+                  title={lastCommandFeedback.message || ''}
+                >
+                  <span>{lastCommandFeedback.status === 'confirmed' ? '✓' : '⚠'}</span>
+                  {lastCommandFeedback.message && (
+                    <span className="text-[10px] font-normal">{lastCommandFeedback.message}</span>
+                  )}
+                </span>
+              )}
+            </div>
             <p className="text-sm font-extrabold text-white truncate">
               {isConnected ? connectedScreenName : 'Ninguna pantalla seleccionada'}
             </p>

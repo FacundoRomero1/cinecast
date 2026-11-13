@@ -12,6 +12,7 @@ import {
   setLatestRemoteJoin,
   incrementCommandSeq,
   startPruneTimer,
+  commandHistory,
   type ConnectedClient,
   type PlaybackCommandPayload,
   type PlaybackStatePayload,
@@ -26,12 +27,51 @@ interface IncomingWsMessage {
   fromDevice?: string;
   targetDeviceId?: string;
   id?: string;
+  lastSeq?: number;
   command?: PlaybackCommandPayload;
   state?: PlaybackStatePayload;
 }
 
 let pruneTimerStarted = false;
 let activeWss: WebSocketServer | null = null;
+let serverHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+function startServerHeartbeat(): void {
+  if (serverHeartbeatTimer) return;
+  serverHeartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    globalDevices.forEach((client, id) => {
+      if (!client.ws) return;
+      if (client.ws.readyState === WebSocket.OPEN) {
+        if (client.isAlive === false && now - (client.lastPingSent || 0) >= 25000) {
+          // No hubo pong en 25 s -> terminate()
+          try {
+            client.ws.terminate();
+          } catch (_) {}
+          globalDevices.delete(id);
+          const r = rooms.get(client.roomId);
+          r?.delete(id);
+          broadcastRoomDevices(client.roomId);
+          return;
+        }
+        client.isAlive = false;
+        client.lastPingSent = now;
+        try {
+          client.ws.ping();
+        } catch (_) {}
+      } else if (client.ws.readyState === WebSocket.CLOSED || client.ws.readyState === WebSocket.CLOSING) {
+        globalDevices.delete(id);
+        const r = rooms.get(client.roomId);
+        r?.delete(id);
+        broadcastRoomDevices(client.roomId);
+      }
+    });
+  }, 10000);
+
+  if (typeof serverHeartbeatTimer.unref === 'function') {
+    serverHeartbeatTimer.unref();
+  }
+}
 
 export function broadcastWsEvent(payload: Record<string, unknown>): void {
   if (!activeWss) return;
@@ -48,6 +88,7 @@ export function broadcastWsEvent(payload: Record<string, unknown>): void {
 export function attachWebSocket(server: HttpServer): WebSocketServer {
   if (!pruneTimerStarted) {
     startPruneTimer();
+    startServerHeartbeat();
     pruneTimerStarted = true;
   }
 
@@ -65,6 +106,13 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
   wss.on('connection', (ws: WebSocket) => {
     let clientInfo: ConnectedClient | null = null;
 
+    ws.on('pong', () => {
+      if (clientInfo) {
+        clientInfo.isAlive = true;
+        clientInfo.lastSeen = Date.now();
+      }
+    });
+
     ws.on('message', (data: RawData) => {
       try {
         const msg = JSON.parse(data.toString()) as IncomingWsMessage;
@@ -80,6 +128,8 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               deviceName: deviceName || 'Dispositivo',
               deviceType: deviceType || 'hybrid',
               lastSeen: Date.now(),
+              isAlive: true,
+              lastPingSent: Date.now(),
             };
             room.set(deviceId, clientInfo);
             globalDevices.set(deviceId, clientInfo);
@@ -113,28 +163,69 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                 ws.send(JSON.stringify({ type: 'sync_state', state: existingState }));
               } catch (_) {}
             }
+
+            if (deviceType === 'screen' || deviceType === 'hybrid') {
+              const clientLastSeq = typeof msg.lastSeq === 'number' ? msg.lastSeq : 0;
+              const now = Date.now();
+              const missed = commandHistory.filter(
+                (q) => q.roomId === roomId && q.seq > clientLastSeq && now - q.timestamp < 15000
+              );
+              missed.forEach((q) => {
+                try {
+                  ws.send(
+                    JSON.stringify({
+                      type: 'command',
+                      id: q.id,
+                      seq: q.seq,
+                      fromDevice: q.fromDevice,
+                      command: q.command,
+                    })
+                  );
+                } catch (_) {}
+              });
+            }
             break;
           }
           case 'command': {
             const fromId = clientInfo?.deviceId || msg.fromDevice || 'remote_anon';
             const rId = clientInfo?.roomId || msg.roomId || 'cine-home-1';
-            if (clientInfo) clientInfo.lastSeen = Date.now();
+            if (clientInfo) {
+              clientInfo.lastSeen = Date.now();
+              clientInfo.isAlive = true;
+            }
             if (msg.command) {
-              recordAndBroadcastCommand(rId, fromId, msg.command, msg.targetDeviceId, msg.id);
+              const res = recordAndBroadcastCommand(rId, fromId, msg.command, msg.targetDeviceId, msg.id);
+              if (msg.id) {
+                if (res.delivered) {
+                  try {
+                    ws.send(JSON.stringify({ type: 'ack', id: msg.id, delivered: true, timestamp: Date.now() }));
+                  } catch (_) {}
+                } else {
+                  try {
+                    ws.send(JSON.stringify({ type: 'nack', id: msg.id, reason: 'sin-pantalla', timestamp: Date.now() }));
+                  } catch (_) {}
+                }
+              }
             }
             break;
           }
           case 'sync_state': {
             const fromId = clientInfo?.deviceId || msg.fromDevice || 'screen_anon';
             const rId = clientInfo?.roomId || msg.roomId || 'cine-home-1';
-            if (clientInfo) clientInfo.lastSeen = Date.now();
+            if (clientInfo) {
+              clientInfo.lastSeen = Date.now();
+              clientInfo.isAlive = true;
+            }
             if (msg.state) {
               recordAndBroadcastState(rId, fromId, msg.state);
             }
             break;
           }
           case 'ping': {
-            if (clientInfo) clientInfo.lastSeen = Date.now();
+            if (clientInfo) {
+              clientInfo.lastSeen = Date.now();
+              clientInfo.isAlive = true;
+            }
             try {
               ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
             } catch (_) {}
