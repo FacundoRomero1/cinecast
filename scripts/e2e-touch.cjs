@@ -1742,10 +1742,10 @@ app.whenReady().then(async () => {
     await winB.webContents.executeJavaScript(`if (!window.location.hash.includes('/control')) window.location.hash = '#/control';`);
     await wait(400);
 
-    // Asegurar que la sección Pad esté desplegada
+    // Asegurar que la sección Pad esté desplegada abriendo por su botón dedicado "Pad"
     await waitForCondition(winB, `
       (function() {
-        const btn = document.querySelector('button[aria-label="Pad táctil y cruceta"], button[aria-label="Pad"]');
+        const btn = document.querySelector('button[aria-label="Pad"]');
         if (btn && !document.getElementById('remote-touchpad-area')) {
           btn.click();
         }
@@ -1794,7 +1794,18 @@ app.whenReady().then(async () => {
       );
     }
 
-    // (c) Tocar "Arriba" en la cruceta -> navigateUp
+    // (c) Abrir la cruceta con su botón dedicado "Cruceta" y tocar "Arriba" -> navigateUp
+    await waitForCondition(winB, `
+      (function() {
+        const btn = document.querySelector('button[aria-label="Cruceta"]');
+        if (btn && !document.querySelector('button[aria-label="Arriba"]')) {
+          btn.click();
+        }
+        return Boolean(document.querySelector('button[aria-label="Arriba"]'));
+      })()
+    `, 8000);
+    await wait(300);
+
     await winB.webContents.executeJavaScript(`
       (function() {
         const btn = document.querySelector('button[aria-label="Arriba"]');

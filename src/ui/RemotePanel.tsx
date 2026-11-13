@@ -95,9 +95,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   const isYouTube = activeHub === 'youtube';
   const isSpotify = activeHub === 'spotify';
 
-  // Pad plegado por defecto según especificación
-  const [isPadOpen, setIsPadOpen] = useState<boolean>(false);
-  const [padMode, setPadMode] = useState<'touchpad' | 'cruceta' | 'ambos'>('ambos');
+  // Pad y Cruceta plegados por defecto (null) según especificación
+  const [padMode, setPadMode] = useState<'touchpad' | 'cruceta' | null>(null);
 
   const title =
     playbackState?.mediaTitle ||
@@ -466,12 +465,11 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               if (onOpenBigPad) {
                 onOpenBigPad('pad');
               } else {
-                setPadMode('ambos');
-                setIsPadOpen((p) => !p);
+                setPadMode((prev) => (prev === 'touchpad' ? null : 'touchpad'));
               }
             }}
             className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
-              isPadOpen && (padMode === 'touchpad' || padMode === 'ambos')
+              padMode === 'touchpad'
                 ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
                 : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
             }`}
@@ -499,12 +497,11 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               if (onOpenBigPad) {
                 onOpenBigPad('cruceta');
               } else {
-                setPadMode('cruceta');
-                setIsPadOpen((p) => (padMode === 'cruceta' ? !p : true));
+                setPadMode((prev) => (prev === 'cruceta' ? null : 'cruceta'));
               }
             }}
             className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
-              isPadOpen && padMode === 'cruceta'
+              padMode === 'cruceta'
                 ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
                 : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
             }`}
@@ -525,9 +522,9 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           </button>
         </div>
 
-        {isPadOpen && (
+        {padMode && (
           <div className="p-3.5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-xl">
-            <PadSection onSendCommand={onSendCommand} mode={padMode} />
+            <PadSection onSendCommand={onSendCommand} mode={padMode} hideModeSelector />
           </div>
         )}
       </section>

@@ -12,7 +12,7 @@ import type { RemoteCommand } from '../types';
 
 export interface PadSectionProps {
   onSendCommand: (command: RemoteCommand) => void;
-  mode?: 'touchpad' | 'cruceta' | 'ambos';
+  mode?: 'touchpad' | 'cruceta';
   hideModeSelector?: boolean;
 }
 
@@ -60,11 +60,11 @@ function useRepeatableAction(onTrigger: (isRepeat: boolean) => void) {
 
 export const PadSection: React.FC<PadSectionProps> = ({
   onSendCommand,
-  mode = 'ambos',
+  mode = 'touchpad',
   hideModeSelector = false,
 }) => {
   const [sensitivity, setSensitivity] = useState<'baja' | 'normal' | 'alta'>('normal');
-  const [subMode, setSubMode] = useState<'touchpad' | 'cruceta' | 'ambos'>(mode);
+  const [subMode, setSubMode] = useState<'touchpad' | 'cruceta'>(mode);
 
   useEffect(() => {
     setSubMode(mode);
@@ -196,15 +196,6 @@ export const PadSection: React.FC<PadSectionProps> = ({
           <div className="flex gap-1">
             <button
               type="button"
-              onClick={() => setSubMode('ambos')}
-              className={`min-h-[44px] px-3 py-1 rounded-xl text-xs font-bold transition ${
-                subMode === 'ambos' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              Todo
-            </button>
-            <button
-              type="button"
               onClick={() => setSubMode('touchpad')}
               className={`min-h-[44px] px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
                 subMode === 'touchpad' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
@@ -245,7 +236,7 @@ export const PadSection: React.FC<PadSectionProps> = ({
       )}
 
       {/* 1. Área táctil (Touchpad Mouse) */}
-      {(subMode === 'touchpad' || subMode === 'ambos') && (
+      {subMode === 'touchpad' && (
         <div className="space-y-1.5">
           <div
             id="remote-touchpad-area"
@@ -287,7 +278,7 @@ export const PadSection: React.FC<PadSectionProps> = ({
       )}
 
       {/* 2. Cruceta D-Pad */}
-      {(subMode === 'cruceta' || subMode === 'ambos') && (
+      {subMode === 'cruceta' && (
         <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 shadow flex flex-col items-center space-y-3">
           <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
             Cruceta de navegación TV
