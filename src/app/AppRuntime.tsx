@@ -251,6 +251,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const countdownTimerRef = useRef<any>(null);
   const marathonConsecutiveCountRef = useRef<number>(0);
   const lastAutoAdvancedChapterRef = useRef<string | null>(null);
+  const lastObservedTimeRef = useRef<number>(0);
+  const stillTimeCounterRef = useRef<number>(0);
+  const preloadedSeasonKeyRef = useRef<string>('');
   const lastCommandTimeMapRef = useRef<Map<string, number>>(new Map());
 
   // COPIA de App.tsx L212-234; borrar al eliminar la UI clásica
@@ -1544,7 +1547,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [deviceRole, isScreenInStandby, isPlayingLocally, isSpotifyPlaying, isYouTubePlaying, activeHub, activeMedia?.id, activeEpisode?.id, audioSettings, handleBroadcastPlayerState]);
 
-  // Polling universal de estado real de reproducción en Electron cada 2s para sincronizar YouTube, Spotify o Embeds con el celular
+  // Polling universal de estado real de reproducción en Electron cada 1s para sincronizar YouTube, Spotify o Embeds con el celular
   useEffect(() => {
     if (deviceRole === 'remote') return;
     const interval = setInterval(async () => {
@@ -1558,8 +1561,90 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           mediaTitle: title,
         });
 
-        // Fin de capítulo en embebido con maratón activo
-        if (realState.duration > 0 && realState.currentTime >= realState.duration - 2) {
+        const curT = realState.currentTime || 0;
+        const dur = realState.duration || 0;
+        const pct = dur > 0 ? ((curT / dur) * 100).toFixed(1) : '0';
+
+        // 1. Ignorar videos de menos de 45s (trailers/previews) o durante comerciales (isAd)
+        if (dur < 45 || Boolean((realState as any)?.isAd)) {
+          stillTimeCounterRef.current = 0;
+          return;
+        }
+
+        // 2. Carga bajo demanda del próximo episodio desde /api/tv/:id/season/:n cuando falta menos de 1 minuto
+        if (dur > 60 && dur - curT <= 60 && activeMedia) {
+          const rawId = activeMedia.id || '';
+          const tmdbId =
+            activeMedia.tmdbId ||
+            (typeof rawId === 'string' && /^\d+$/.test(rawId)
+              ? Number(rawId)
+              : typeof rawId === 'string' && rawId.includes('-')
+              ? Number(rawId.split('-').pop()) || 0
+              : 0);
+          const sNum = activeEpisode?.seasonNumber || remotePlaybackState.seasonNumber || 1;
+          const preloadKey = `${tmdbId}_s${sNum}`;
+          if (tmdbId > 0 && preloadedSeasonKeyRef.current !== preloadKey) {
+            preloadedSeasonKeyRef.current = preloadKey;
+            fetch(`/api/tv/${tmdbId}/season/${sNum}`, { signal: AbortSignal.timeout(5000) })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data) => {
+                if (data && Array.isArray(data.episodes) && activeMedia) {
+                  const eps = data.episodes.map((ep: any, idx: number) => ({
+                    id: String(ep.id || `ep-${activeMedia.id}-s${sNum}-e${ep.episodeNumber || idx + 1}`),
+                    title: String(ep.name || ep.title || `Episodio ${ep.episodeNumber || idx + 1}`),
+                    seasonNumber: sNum,
+                    episodeNumber: Number(ep.episodeNumber || idx + 1),
+                    duration: ep.duration ? String(ep.duration) : undefined,
+                  }));
+                  activeMedia.episodes = eps;
+                }
+              })
+              .catch(() => {});
+          }
+        }
+
+        // 3. Detección de video quieto al final: tiempo_actual >= duración - 10s y quieto durante 4s
+        if (curT >= dur - 10) {
+          if (Math.abs(curT - lastObservedTimeRef.current) < 0.2) {
+            stillTimeCounterRef.current += 1;
+          } else {
+            stillTimeCounterRef.current = 0;
+          }
+        } else {
+          stillTimeCounterRef.current = 0;
+        }
+        lastObservedTimeRef.current = curT;
+
+        // 4. Condiciones de fin: (a) ended, (b) curT >= dur - 3 (dur > 60), (c) curT >= dur - 10 y quieto 4s
+        const isEnded = Boolean((realState as any)?.ended);
+        const isNearEnd = curT >= dur - 3 && dur > 60;
+        const isStuckAtEnd = curT >= dur - 10 && stillTimeCounterRef.current >= 4;
+        const shouldAdvance = isEnded || isNearEnd || isStuckAtEnd;
+
+        // Registro de diagnóstico si CINECAST_DEBUG_SYNC=1
+        if (
+          typeof window !== 'undefined' &&
+          (Boolean((window as any).CINECAST_DEBUG_SYNC) ||
+            localStorage.getItem('CINECAST_DEBUG_SYNC') === '1' ||
+            Boolean((window as any).__CINECAST_DEBUG_SYNC))
+        ) {
+          fetch('/api/client-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              level: 'info',
+              event: 'playback_advance_tick',
+              currentTime: curT,
+              duration: dur,
+              percent: pct,
+              didAdvance: shouldAdvance,
+              condition: isEnded ? 'ended' : isNearEnd ? 'near_end' : isStuckAtEnd ? 'stuck_end' : 'none',
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+        }
+
+        if (shouldAdvance) {
           const currentChapterKey = `${activeMedia?.id || realState.title || 'embed'}_s${remotePlaybackState.seasonNumber || 1}_e${remotePlaybackState.episodeNumber || 1}`;
           if (sleepTimerRef.current?.mode === 'chapter') {
             if (lastAutoAdvancedChapterRef.current !== currentChapterKey) {
@@ -1568,7 +1653,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               try { localStorage.removeItem('cinecast_sleep_timer_v1'); } catch {}
               triggerAreYouStillThere();
             }
-          } else if (remotePlaybackState.marathon && lastAutoAdvancedChapterRef.current !== currentChapterKey) {
+          } else if (lastAutoAdvancedChapterRef.current !== currentChapterKey) {
             lastAutoAdvancedChapterRef.current = currentChapterKey;
             marathonConsecutiveCountRef.current += 1;
             if (marathonConsecutiveCountRef.current >= 3) {
@@ -1579,9 +1664,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
         }
       }
-    }, 2000);
+    }, 1000);
     return () => clearInterval(interval);
-  }, [deviceRole, activeHub, activeSpotifyTrack, activeYouTubeVideo, activeMedia, handleBroadcastPlayerState, remotePlaybackState.marathon, remotePlaybackState.seasonNumber, remotePlaybackState.episodeNumber, triggerAreYouStillThere, handlePlayNextEpisode]);
+  }, [deviceRole, activeHub, activeSpotifyTrack, activeYouTubeVideo, activeMedia, activeEpisode, handleBroadcastPlayerState, remotePlaybackState.marathon, remotePlaybackState.seasonNumber, remotePlaybackState.episodeNumber, triggerAreYouStillThere, handlePlayNextEpisode]);
 
   const value: AppRuntimeContextValue = {
     deviceRole,

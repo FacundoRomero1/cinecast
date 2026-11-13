@@ -2,6 +2,9 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { NewApp } from './ui/NewApp.tsx';
 import './index.css';
+import { initTimeTracker } from './app/timeTracker';
+
+initTimeTracker();
 
 // Ajuste Prioritario A: Limpiar flag de UI v2 e ignorar cualquier valor de ?ui=
 try {
