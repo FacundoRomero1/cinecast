@@ -217,20 +217,20 @@ async function run() {
   // TEST 3: setMarathon unificado
   // ==========================================
   console.log('[probe-sleep-timer] Probando comando setMarathon unificado...');
-  const marathonRes = await win.webContents.executeJavaScript(`
+  await win.webContents.executeJavaScript(`
     (() => {
       localStorage.setItem('cinecast_marathon_mode', 'false');
-      // Activar con Switch
       const sw = document.querySelector('button[aria-label="Alternar Modo Maratón"]');
-      if (sw) {
-        sw.click();
-      }
-      return {
-        stored: localStorage.getItem('cinecast_marathon_mode'),
-      };
+      if (sw) sw.click();
     })()
   `);
-  await wait(600);
+  await wait(500);
+
+  const marathonRes = await win.webContents.executeJavaScript(`
+    (() => ({
+      stored: localStorage.getItem('cinecast_marathon_mode'),
+    }))()
+  `);
 
   testResults.push({
     test: '3. setMarathon unificado: activa maratón y persiste en cinecast_marathon_mode',
@@ -244,13 +244,15 @@ async function run() {
   // ==========================================
   console.log('[probe-sleep-timer] Probando persistencia del temporizador...');
   const timerOptionRes = await win.webContents.executeJavaScript(`
-    (() => {
+    (async () => {
       const btn15 = Array.from(document.querySelectorAll('button')).find(b => b.innerText.trim() === '15 min');
       if (btn15) btn15.click();
+      await new Promise(r => setTimeout(r, 400));
       const raw15 = localStorage.getItem('cinecast_sleep_timer_v1');
 
-      const btnChap = Array.from(document.querySelectorAll('button')).find(b => b.innerText.trim() === 'Al terminar capítulo');
+      const btnChap = Array.from(document.querySelectorAll('button')).find(b => b.innerText.trim().includes('terminar'));
       if (btnChap) btnChap.click();
+      await new Promise(r => setTimeout(r, 400));
       const rawChap = localStorage.getItem('cinecast_sleep_timer_v1');
 
       return {
