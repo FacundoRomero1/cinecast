@@ -187,7 +187,12 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     const unsubCmd = deviceSync.onCommandStatus((info) => {
       setLastCommandFeedback({
         status: info.status,
-        message: info.status === 'failed' ? (info.reason || 'No llegó. Reintentá') : undefined,
+        message:
+          info.status === 'failed'
+            ? (info.reason || 'No llegó. Reintentá')
+            : info.status === 'retrying'
+            ? 'Reconectando…'
+            : undefined,
       });
       if (info.status === 'confirmed') {
         const timer = setTimeout(() => {

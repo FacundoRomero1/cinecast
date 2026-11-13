@@ -291,8 +291,15 @@ async function runScenario(scenarioKey, name, config, ctx) {
   const receivedIds = new Set();
   let duplicates = 0;
   const latencies = [];
+  const ABSOLUTE_ACTIONS = new Set([
+    'seek',
+    'setVolume',
+    'selectServer',
+    'jumpToEpisode',
+    'setAudioSettings',
+  ]);
   let outOfOrder = 0;
-  let lastSentIndex = -1;
+  let lastAbsoluteSentIndex = -1;
 
   for (const rc of receivedList) {
     if (!rc.id || !sentMap.has(rc.id)) continue;
@@ -306,11 +313,13 @@ async function runScenario(scenarioKey, name, config, ctx) {
     const lat = Math.max(0, rc.receivedAt - sent.sentAt);
     latencies.push(lat);
 
-    const sentIdx = sentData.commands.findIndex((x) => x.id === rc.id);
-    if (sentIdx < lastSentIndex) {
-      outOfOrder++;
+    if (ABSOLUTE_ACTIONS.has(rc.action)) {
+      const sentIdx = sentData.commands.findIndex((x) => x.id === rc.id);
+      if (sentIdx < lastAbsoluteSentIndex) {
+        outOfOrder++;
+      }
+      lastAbsoluteSentIndex = Math.max(lastAbsoluteSentIndex, sentIdx);
     }
-    lastSentIndex = Math.max(lastSentIndex, sentIdx);
   }
 
   const uniqueDelivered = receivedIds.size;
@@ -484,13 +493,18 @@ app.whenReady().then(async () => {
 
   const ctx = { winScreen, winPhone, baseUrl, roomId: 'cine-home-1' };
 
-  const scenarios = [
+  const onlyArg = process.argv.find((a) => a.startsWith('--only='));
+  const onlyKeys = onlyArg ? onlyArg.slice(7).split(',').map((s) => s.trim().toLowerCase()) : null;
+
+  const allScenarios = [
     { key: 'a', name: 'Normal (sin interferencias)' },
     { key: 'b', name: 'Caída de WS cada 8 s (terminate)' },
     { key: 'c', name: 'Celular offline 3 s cada 10 s (Network offline)' },
     { key: 'd', name: 'Celular oculto/visible cada 10 s (visibilitychange/focus)' },
     { key: 'e', name: 'PC desconectada 3 s y vuelta (Network offline)' },
   ];
+
+  const scenarios = allScenarios.filter((s) => !onlyKeys || onlyKeys.includes(s.key));
 
   const results = [];
   for (const s of scenarios) {

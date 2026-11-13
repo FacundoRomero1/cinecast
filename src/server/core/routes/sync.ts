@@ -144,7 +144,7 @@ export function createSyncRouter(): Router {
     const existing = fromDevice ? globalDevices.get(fromDevice) : undefined;
     if (existing) existing.lastSeen = Date.now();
 
-    const result = recordAndBroadcastCommand(roomId, fromDevice || 'remote_http', command, targetDeviceId, id);
+    const result = recordAndBroadcastCommand(roomId, fromDevice || 'remote_http', command, targetDeviceId, id, (body as any).cseq);
     res.json({
       ok: true,
       seq: commandSeqCounter,

@@ -48,6 +48,8 @@ export class DeviceSyncService {
   private httpPollTimer: any = null;
   private lastSeq: number = 0;
   private executedCommandIds: Set<string> = new Set();
+  private clientCommandSeq: number = 0;
+  private lastAppliedCseqBySender: Map<string, number> = new Map();
 
   private commandListeners: Set<CommandHandler> = new Set();
   private stateListeners: Set<StateSyncHandler> = new Set();
@@ -652,7 +654,7 @@ export class DeviceSyncService {
     if (entry) {
       entry.reason = reason;
     }
-    this.notifyCommandStatus({ id: cmdId, status: 'retrying', reason });
+    this.notifyCommandStatus({ id: cmdId, status: 'retrying', reason: 'Reconectando…' });
   }
 
   private recordCommandDiagnostic(entry: CommandDiagnosticEntry) {
@@ -808,8 +810,27 @@ export class DeviceSyncService {
       }
     } else if (msg.type === 'command' && msg.command) {
       if (msg.fromDevice !== this.deviceId) {
-        if (this.markCommandExecuted(msg.id)) {
-          this.commandListeners.forEach((fn) => fn(msg.command, msg.fromDevice));
+        const cmd = msg.command;
+        const cmdId = msg.id;
+        const fromDevice = msg.fromDevice || 'remote_anon';
+        const cseq = typeof msg.cseq === 'number' ? msg.cseq : (typeof (cmd as any)?.cseq === 'number' ? (cmd as any).cseq : undefined);
+
+        if (this.markCommandExecuted(cmdId)) {
+          const ABSOLUTE_ACTIONS = new Set([
+            'seek',
+            'setVolume',
+            'selectServer',
+            'jumpToEpisode',
+            'setAudioSettings',
+          ]);
+          if (ABSOLUTE_ACTIONS.has(cmd.action) && typeof cseq === 'number') {
+            const lastCseq = this.lastAppliedCseqBySender.get(fromDevice) || 0;
+            if (cseq < lastCseq) {
+              return;
+            }
+            this.lastAppliedCseqBySender.set(fromDevice, cseq);
+          }
+          this.commandListeners.forEach((fn) => fn(cmd, fromDevice));
         }
       }
     } else if (msg.type === 'sync_state' && msg.state) {
@@ -843,6 +864,10 @@ export class DeviceSyncService {
     this.markCommandExecuted(cmdId);
     this.telemetryCounters.enviados++;
 
+    this.clientCommandSeq += 1;
+    const cseq = this.clientCommandSeq;
+    (command as any).cseq = cseq;
+
     const entry: CommandDiagnosticEntry = {
       id: cmdId,
       action: command.action,
@@ -855,6 +880,7 @@ export class DeviceSyncService {
     const payload = {
       type: 'command',
       id: cmdId,
+      cseq,
       roomId: this.roomId,
       fromDevice: this.deviceId,
       targetDeviceId,
@@ -891,19 +917,19 @@ export class DeviceSyncService {
 
     doSend();
 
-    // Reintentos cada 700 ms hasta 5 s
+    // Reintentos cada 700 ms hasta 8 s
     const sentAt = Date.now();
     let retries = 0;
     const retryTimer = setInterval(() => {
       const elapsed = Date.now() - sentAt;
-      if (elapsed >= 5000) {
+      if (elapsed >= 8000) {
         clearInterval(retryTimer);
         return;
       }
       retries++;
       this.telemetryCounters.reintentos++;
       entry.retries = retries;
-      this.notifyCommandStatus({ id: cmdId, status: 'retrying' });
+      this.notifyCommandStatus({ id: cmdId, status: 'retrying', reason: 'Reconectando…' });
       doSend();
     }, 700);
 
@@ -913,7 +939,7 @@ export class DeviceSyncService {
         this.pendingCommands.delete(cmdId);
         this.telemetryCounters.fallos++;
         entry.status = 'failed';
-        entry.reason = 'timeout-5s';
+        entry.reason = 'timeout-8s';
         this.notifyCommandStatus({
           id: cmdId,
           status: 'failed',
@@ -928,7 +954,7 @@ export class DeviceSyncService {
           }
         }
       }
-    }, 5000);
+    }, 8000);
 
     this.pendingCommands.set(cmdId, {
       id: cmdId,

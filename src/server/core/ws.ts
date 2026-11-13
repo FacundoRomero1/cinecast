@@ -2,6 +2,7 @@ import type { Server as HttpServer } from 'http';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
   broadcastRoomDevices,
+  commandHistory,
   getOrCreateRoom,
   globalDevices,
   globalLatestPlaybackState,
@@ -26,6 +27,8 @@ interface IncomingWsMessage {
   fromDevice?: string;
   targetDeviceId?: string;
   id?: string;
+  cseq?: number;
+  lastSeq?: number;
   command?: PlaybackCommandPayload;
   state?: PlaybackStatePayload;
 }
@@ -170,6 +173,28 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                 ws.send(JSON.stringify({ type: 'sync_state', state: existingState }));
               } catch (_) { }
             }
+
+            if (deviceType === 'screen' || deviceType === 'hybrid') {
+              const clientLastSeq = typeof msg.lastSeq === 'number' ? msg.lastSeq : 0;
+              const now = Date.now();
+              const missed = commandHistory.filter(
+                (q) => q.roomId === roomId && q.seq > clientLastSeq && now - q.timestamp < 15000
+              );
+              missed.forEach((q) => {
+                try {
+                  ws.send(
+                    JSON.stringify({
+                      type: 'command',
+                      id: q.id,
+                      seq: q.seq,
+                      cseq: q.cseq,
+                      fromDevice: q.fromDevice,
+                      command: q.command,
+                    })
+                  );
+                } catch (_) {}
+              });
+            }
             break;
           }
           case 'command': {
@@ -180,7 +205,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               clientInfo.isAlive = true;
             }
             if (msg.command) {
-              const res = recordAndBroadcastCommand(rId, fromId, msg.command, msg.targetDeviceId, msg.id);
+              const res = recordAndBroadcastCommand(rId, fromId, msg.command, msg.targetDeviceId, msg.id, msg.cseq);
               if (msg.id) {
                 if (res.delivered) {
                   try {

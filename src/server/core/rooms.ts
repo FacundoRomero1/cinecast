@@ -16,6 +16,7 @@ export type PlaybackStatePayload = Record<string, unknown>;
 
 export interface QueuedCommand {
   seq: number;
+  cseq?: number;
   id: string;
   roomId: string;
   fromDevice: string;
@@ -145,9 +146,11 @@ export function recordAndBroadcastCommand(
   fromDevice: string,
   command: PlaybackCommandPayload,
   targetDeviceId?: string,
-  msgId?: string
+  msgId?: string,
+  cseq?: number
 ): { delivered: boolean; screenCount: number } {
   const uniqueId = msgId || `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const resolvedCseq = typeof cseq === 'number' ? cseq : (typeof (command as any)?.cseq === 'number' ? (command as any).cseq : undefined);
   const isDuplicate = seenCommandIds.has(uniqueId);
   if (!isDuplicate) {
     seenCommandIds.add(uniqueId);
@@ -159,6 +162,7 @@ export function recordAndBroadcastCommand(
     commandSeqCounter += 1;
     const queued: QueuedCommand = {
       seq: commandSeqCounter,
+      cseq: resolvedCseq,
       id: uniqueId,
       roomId,
       fromDevice,
@@ -174,6 +178,7 @@ export function recordAndBroadcastCommand(
     type: 'command',
     id: uniqueId,
     seq: commandSeqCounter,
+    cseq: resolvedCseq,
     fromDevice,
     command,
   });
