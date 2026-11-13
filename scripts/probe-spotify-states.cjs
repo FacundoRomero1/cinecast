@@ -105,6 +105,7 @@ async function run() {
     width: 1280,
     height: 720,
     webPreferences: {
+      partition: 'persist:spotify-states-' + Date.now(),
       contextIsolation: false,
       nodeIntegration: true,
       webSecurity: false,
@@ -279,6 +280,9 @@ async function run() {
   // ==========================================
   console.log('[probe-spotify-states] Evaluando Estado 4: error con causas explícitas...');
   await win.webContents.executeJavaScript(`
+    delete window.Spotify;
+    const oldScript = document.getElementById('spotify-player-sdk');
+    if (oldScript) oldScript.remove();
     localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
     localStorage.setItem('cinecast_spotify_token', 'mock_token_for_connecting');
   `);
@@ -289,6 +293,12 @@ async function run() {
   const errorTestResults = await win.webContents.executeJavaScript(`
     (async () => {
       const results = {};
+
+      // Esperar que el script se monte
+      for (let i = 0; i < 20; i++) {
+        if (document.getElementById('spotify-player-sdk')) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
 
       // Causa (a): no cargó sdk.scdn.co
       let scriptEl = document.getElementById('spotify-player-sdk');
