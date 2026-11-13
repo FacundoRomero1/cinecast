@@ -302,7 +302,8 @@ async function runVariant(key, queryParams, baseUrl, roomId, winScreen, winPhone
     const isRealNear600 = typeof finalReal === 'number' && finalReal >= minExpected;
     const phoneMatchesReal = typeof lastSample.phoneTime === 'number' && Math.abs(lastSample.phoneTime - (finalReal || 0)) <= 3;
     pass = Boolean(isRealNear600 && phoneMatchesReal);
-    detail = `finalReal=${finalReal !== null && finalReal !== undefined ? finalReal.toFixed(1) : 'null'}s (esperado >=${minExpected}s) | phoneTime=${lastSample.phoneTime !== null && lastSample.phoneTime !== undefined ? lastSample.phoneTime.toFixed(1) : 'null'}s`;
+    const histStr = savedHist !== null && savedHist !== undefined ? (typeof savedHist === 'number' ? savedHist.toFixed(1) + 's' : savedHist) : 'null';
+    detail = `finalReal=${finalReal !== null && finalReal !== undefined ? finalReal.toFixed(1) : 'null'}s (esperado >=${minExpected}s) | phoneTime=${lastSample.phoneTime !== null && lastSample.phoneTime !== undefined ? lastSample.phoneTime.toFixed(1) : 'null'}s | savedHist=${histStr}`;
   } else if (key === 'c') {
     const hasNoSeekMsg = samples.some(s => s.phoneBanner && (s.phoneBanner.includes('no permite saltar') || s.phoneBanner.includes('usá la barra')));
     const hasTilde = samples.some(s => s.phoneDisplayTime && s.phoneDisplayTime.includes('~')) || lastSample.estimated;
