@@ -43,7 +43,9 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
   isScreen = true,
   onNavigateToSettings,
 }) => {
-  const [stage, setStage] = useState<SpotifyDeviceState>('connecting');
+  const [stage, setStage] = useState<SpotifyDeviceState>(() => {
+    return !authService.getSpotifyClientId() ? 'missing_client_id' : 'connecting';
+  });
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [isPlayerConnected, setIsPlayerConnected] = useState<boolean>(false);
   const [currentTrack, setCurrentTrack] = useState<any>(null);
@@ -220,19 +222,25 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     } else {
       (window as any).onSpotifyWebPlaybackSDKReady = setupPlayerInstance;
 
-      const existingScript = document.getElementById('spotify-player-sdk');
+      const handleScriptError = () => {
+        if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+        setErrorCause('no cargó sdk.scdn.co');
+        setErrorMessage('No cargó sdk.scdn.co: comprueba tu conexión a internet.');
+        setStage('error');
+      };
+
+      const existingScript = document.getElementById('spotify-player-sdk') as HTMLScriptElement | null;
       if (!existingScript) {
         const script = document.createElement('script');
         script.id = 'spotify-player-sdk';
         script.src = 'https://sdk.scdn.co/spotify-player.js';
         script.async = true;
-        script.onerror = () => {
-          if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
-          setErrorCause('no cargó sdk.scdn.co');
-          setErrorMessage('No cargó sdk.scdn.co: comprueba tu conexión a internet.');
-          setStage('error');
-        };
+        script.onerror = handleScriptError;
+        script.addEventListener('error', handleScriptError);
         document.body.appendChild(script);
+      } else {
+        existingScript.onerror = handleScriptError;
+        existingScript.addEventListener('error', handleScriptError);
       }
     }
   }, [deviceName, volume, onDeviceReady, onTrackChange]);
