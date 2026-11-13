@@ -29,6 +29,7 @@ import {
   VolumeX,
   Wifi,
   Youtube,
+  Clock,
 } from 'lucide-react';
 import type { Episode, MediaItem, PlaybackState, RemoteCommand } from '../types';
 import { createStyledPosterFallback } from '../utils/imageUtils';
@@ -338,6 +339,31 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
   return (
     <div className="w-full max-w-md mx-auto px-3.5 py-4 space-y-4 pb-36 select-none text-zinc-100 overflow-x-hidden">
+      {/* Aviso de inactividad / temporizador "¿Seguís viendo?" */}
+      {playbackState?.areYouStillThere && (
+        <section
+          aria-label="Aviso de inactividad"
+          className="p-4 rounded-2xl bg-amber-950/80 border border-amber-500/50 shadow-xl space-y-3"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
+              <Clock className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-white">¿Seguís viendo?</h3>
+              <p className="text-xs text-amber-200/80">La reproducción se pausará pronto si no hay actividad.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSendCommand({ action: 'confirmActiveWatching' })}
+            className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition flex items-center justify-center gap-2 shadow-md active:scale-95"
+          >
+            <span>Seguir viendo</span>
+          </button>
+        </section>
+      )}
+
       {/* 1. Estado de la pantalla */}
       <section
         aria-label="Estado de la pantalla"
@@ -1075,7 +1101,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         </section>
       )}
 
-      {/* 4. Toggles / automatización: Modo Maratón, Auto Saltar Intro, Auto Siguiente (accesible siempre) */}
+      {/* 4. Toggles / automatización: SOLO Modo Maratón visible */}
       <section
         aria-label="Automatización de reproducción"
         className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md space-y-2.5"
@@ -1094,7 +1120,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               </span>
             </div>
             <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-              Salta intro y créditos al instante, continúa temporadas sin parar
+              Pasa solo al siguiente capítulo y salta lo que pueda
             </p>
           </div>
           <Switch
@@ -1109,14 +1135,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           />
         </div>
 
-        {/* Saltar intro automático */}
-        <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
-          <div className="min-w-0 flex-1">
-            <span className="text-xs font-bold text-zinc-200">Saltar intro automático</span>
-            <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-              Omite la intro cuando el servidor detecta las marcas de tiempo
-            </p>
-          </div>
+        {/* Saltar intro automático (oculto en UI) */}
+        <div className="hidden">
           <Switch
             checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
             ariaLabel="Alternar salto de intro automático"
@@ -1129,14 +1149,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           />
         </div>
 
-        {/* Siguiente capítulo automático */}
-        <div className="flex items-center justify-between min-h-[44px] gap-2 border-t border-zinc-800/80 pt-2">
-          <div className="min-w-0 flex-1">
-            <span className="text-xs font-bold text-zinc-200">Siguiente capítulo automático</span>
-            <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-              Reproduce el próximo episodio al terminar el actual
-            </p>
-          </div>
+        {/* Siguiente capítulo automático (oculto en UI) */}
+        <div className="hidden">
           <Switch
             checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
             ariaLabel="Alternar reproducción automática del siguiente capítulo"
@@ -1172,15 +1186,6 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             <div className="grid grid-cols-2 gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => onSendCommand({ action: 'skipIntro' })}
-                className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center gap-2 transition"
-              >
-                <SkipForward className="w-4 h-4 text-amber-400" />
-                <span>Saltar intro</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => onOpenAudioModal?.()}
                 className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center gap-2 transition"
               >
@@ -1190,41 +1195,95 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
               <button
                 type="button"
-                onClick={() => onSendCommand({ action: 'setStandby' })}
-                className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center gap-2 transition"
-              >
-                <Power className="w-4 h-4 text-red-400" />
-                <span>Reposo TV</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleTestSignal}
-                className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center gap-2 transition"
-              >
-                <Wifi className={`w-4 h-4 ${pingSuccess ? 'text-emerald-400' : 'text-blue-400'}`} />
-                <span>{pingSuccess ? '¡Señal OK!' : 'Probar señal'}</span>
-              </button>
-            </div>
-
-            <div className="pt-2 border-t border-zinc-800 flex gap-2">
-              <button
-                type="button"
                 onClick={onOpenGuestModal}
-                className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center justify-center gap-2 transition"
+                className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center justify-center gap-2 transition"
               >
                 <QrCode className="w-4 h-4 text-emerald-400" />
                 <span>Invitar celular (QR)</span>
               </button>
 
+              {/* Botones ocultados sin eliminar código ni comandos */}
+              <button
+                type="button"
+                onClick={() => onSendCommand({ action: 'skipIntro' })}
+                className="hidden"
+                aria-hidden="true"
+              >
+                <SkipForward className="w-4 h-4" />
+                <span>Saltar intro</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTestSignal}
+                className="hidden"
+                aria-hidden="true"
+              >
+                <Wifi className="w-4 h-4" />
+                <span>Probar señal</span>
+              </button>
+
               <button
                 type="button"
                 onClick={onOpenCastModal}
-                className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center justify-center gap-2 transition"
+                className="hidden"
+                aria-hidden="true"
               >
-                <Radio className="w-4 h-4 text-red-400" />
+                <Radio className="w-4 h-4" />
                 <span>Sala</span>
               </button>
+            </div>
+
+            {/* Temporizador de reposo (reemplaza Reposo TV clásico) */}
+            <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2 mt-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  <span className="text-xs font-bold text-zinc-200">Temporizador de reposo</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onSendCommand({ action: 'setStandby' })}
+                  className="text-[11px] text-zinc-400 hover:text-white underline"
+                >
+                  Reposo ahora
+                </button>
+              </div>
+
+              {/* Opciones de temporizador: Apagado, 15, 30, 45, 60, 90, 120 min, "Al terminar el capítulo" */}
+              <div className="grid grid-cols-4 gap-1.5 pt-1">
+                {[
+                  { mode: 'off', label: 'Apagado' },
+                  { mode: '15', label: '15 min', minutes: 15 },
+                  { mode: '30', label: '30 min', minutes: 30 },
+                  { mode: '45', label: '45 min', minutes: 45 },
+                  { mode: '60', label: '60 min', minutes: 60 },
+                  { mode: '90', label: '90 min', minutes: 90 },
+                  { mode: '120', label: '120 min', minutes: 120 },
+                  { mode: 'chapter', label: 'Al terminar capítulo' },
+                ].map((opt) => {
+                  const isSelected = (playbackState?.sleepTimer?.mode || 'off') === opt.mode;
+                  return (
+                    <button
+                      key={opt.mode}
+                      type="button"
+                      onClick={() =>
+                        onSendCommand({
+                          action: 'setSleepTimer',
+                          payload: { mode: opt.mode, minutes: opt.minutes },
+                        })
+                      }
+                      className={`min-h-[36px] px-1.5 py-1 rounded-lg text-[10px] font-bold border transition text-center ${
+                        isSelected
+                          ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
+                          : 'bg-zinc-900 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

@@ -133,13 +133,14 @@ export function createApp(options: CreateAppOptions): Express {
   app.use('/', createDownloadsRouter(downloadsOpts));
 
   if (process.env.CINECAST_TEST === '1') {
-    app.get('/__test/embed.html', (_req, res) => {
+    app.get('/__test/embed.html', (req, res) => {
+      const durParam = Number(req.query.dur) || 400;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(`<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Embed Test Player</title></head>
 <body style="background:#111; color:#eee; font-family:sans-serif; padding:20px;">
-  <h2>Embed Test Player (WAV 400s)</h2>
+  <h2>Embed Test Player (WAV ${durParam}s)</h2>
   <video id="test-video" controls playsinline style="width:320px; height:180px; background:#000;"></video>
   <div style="margin-top:10px;">
     <span>CurrentTime: </span><span id="time-display">0</span>s
@@ -180,7 +181,9 @@ export function createApp(options: CreateAppOptions): Express {
 
     const video = document.getElementById('test-video');
     const display = document.getElementById('time-display');
-    const wavBlob = createWavBlob(400);
+    const params = new URLSearchParams(window.location.search);
+    const dur = Number(params.get('dur')) || ${durParam};
+    const wavBlob = createWavBlob(dur);
     video.src = URL.createObjectURL(wavBlob);
 
     video.addEventListener('timeupdate', () => {

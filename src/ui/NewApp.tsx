@@ -26,6 +26,7 @@ import {
   Trophy,
   Tv,
   RefreshCw,
+  Clock,
 } from 'lucide-react';
 import { ConnectionDiagnosticSection } from './ConnectionDiagnosticSection';
 import { localCatalogProvider, CatalogProviderError } from '../providers/localCatalogProvider';
@@ -1845,6 +1846,9 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     setIsAudioModalOpen,
     isGuestModalOpen,
     setIsGuestModalOpen,
+    areYouStillThere,
+    countdownRemaining,
+    handleConfirmActiveWatching,
   } = useAppRuntime();
 
   const handleSelectCard = useCallback(
@@ -1876,7 +1880,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
 
       {/* 11. Rol 'screen' en reposo: <AmbientScreen> con las props de App.tsx L1132-1157 */}
       {isScreenInStandby && deviceRole === 'screen' ? (
-        <div className="relative">
+        <div className="relative" data-testid="screen-standby-view">
           <AmbientScreen
             deviceName={deviceSync.getDeviceName()}
             roomId={roomId}
@@ -2040,6 +2044,37 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             <Route path="/pantallas" element={<ScreensManagerView />} />
           </Routes>
         </AppShell>
+      )}
+
+      {/* Modal a pantalla completa en PC: "¿Seguís ahí?" */}
+      {areYouStillThere && (
+        <div
+          role="dialog"
+          aria-label="¿Seguís ahí?"
+          className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center select-none"
+        >
+          <div className="max-w-md w-full p-8 rounded-3xl bg-zinc-900 border border-zinc-800 shadow-2xl space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto border border-amber-500/30">
+              <Clock className="w-8 h-8 animate-pulse" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+                ¿Seguís ahí?
+              </h2>
+              <p className="text-sm text-zinc-400">
+                La pantalla entrará en reposo en{' '}
+                <strong className="text-amber-400 font-mono text-base">{countdownRemaining}</strong> s si no respondes.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleConfirmActiveWatching}
+              className="w-full min-h-[52px] px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-sm transition shadow-lg shadow-amber-950/40 active:scale-95 cursor-pointer"
+            >
+              Sí, seguir
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Panel superpuesto de Control Remoto (en móvil sheet 92%, en escritorio columna derecha) */}
