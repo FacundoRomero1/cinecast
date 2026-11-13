@@ -113,6 +113,7 @@ async function run() {
 
   // Limpiar cualquier estado previo en el servidor y local
   try {
+    await win.webContents.session.clearStorageData();
     await fetch(`${baseUrl}/api/auth/disconnect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -275,6 +276,12 @@ async function run() {
   // ESTADO 4: error con causas explícitas y botón Reintentar
   // ==========================================
   console.log('[probe-spotify-states] Evaluando Estado 4: error con causas explícitas...');
+  await win.webContents.executeJavaScript(`
+    localStorage.setItem('cinecast_spotify_token', 'mock_token_for_connecting');
+  `);
+  await win.loadURL(`${baseUrl}/#/musica`);
+  await wait(1000);
+
   // Simular causas de error sin pantalla negra ni spinner eterno
   const errorTestResults = await win.webContents.executeJavaScript(`
     (async () => {
@@ -285,7 +292,7 @@ async function run() {
       if (scriptEl && scriptEl.onerror) {
         scriptEl.onerror(new Error('Network error loading sdk'));
       }
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 600));
       let text = document.body.innerText || '';
       results.causeA = text.includes('sdk.scdn.co') && text.includes('Reintentar');
 
@@ -304,6 +311,8 @@ async function run() {
   // ESTADO 5: connected con track Bohemian Rhapsody y Desconectar
   // ==========================================
   console.log('[probe-spotify-states] Evaluando Estado 5: connected...');
+  await win.loadURL(`${baseUrl}/#/musica`);
+  await wait(800);
   await win.webContents.executeJavaScript(`
     (() => {
       // Mock de autenticación exitosa
