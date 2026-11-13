@@ -208,23 +208,32 @@ async function run() {
   await wait(2500);
 
   const unauthorizedDom = await win.webContents.executeJavaScript(`
-    (() => {
+    (async () => {
+      for (let i = 0; i < 40; i++) {
+        const text = document.body.innerText || '';
+        if (text.includes('Falta autorizar tu cuenta')) {
+          return {
+            hasUnauthorizedTitle: true,
+            hasAuthBtn: text.includes('Autorizar en el navegador') || text.includes('Hacelo desde la PC'),
+            hasRedirect: text.includes('http://127.0.0.1:3000/auth/callback'),
+            hasCopy: text.includes('Copiar'),
+            hasInvalidClientNotice: text.includes('INVALID_CLIENT') && text.includes('User Management'),
+            hasMaskedId: text.includes('5dfd...7d41'),
+            hasClearId: text.includes('5dfd1234567890abcdef123456787d41'),
+          };
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
       const text = document.body.innerText || '';
-      const hasUnauthorizedTitle = text.includes('Falta autorizar tu cuenta');
-      const hasAuthBtn = text.includes('Autorizar en el navegador') || text.includes('Hacelo desde la PC');
-      const hasRedirect = text.includes('http://127.0.0.1:3000/auth/callback');
-      const hasCopy = text.includes('Copiar');
-      const hasInvalidClientNotice = text.includes('INVALID_CLIENT') && text.includes('User Management');
-      const hasMaskedId = text.includes('5dfd...7d41');
-      const hasClearId = text.includes('5dfd1234567890abcdef123456787d41');
       return {
-        hasUnauthorizedTitle,
-        hasAuthBtn,
-        hasRedirect,
-        hasCopy,
-        hasInvalidClientNotice,
-        hasMaskedId,
-        hasClearId,
+        hasUnauthorizedTitle: text.includes('Falta autorizar tu cuenta'),
+        hasAuthBtn: text.includes('Autorizar en el navegador') || text.includes('Hacelo desde la PC'),
+        hasRedirect: text.includes('http://127.0.0.1:3000/auth/callback'),
+        hasCopy: text.includes('Copiar'),
+        hasInvalidClientNotice: text.includes('INVALID_CLIENT') && text.includes('User Management'),
+        hasMaskedId: text.includes('5dfd...7d41'),
+        hasClearId: text.includes('5dfd1234567890abcdef123456787d41'),
+        textPreview: text.slice(0, 200),
       };
     })()
   `);
