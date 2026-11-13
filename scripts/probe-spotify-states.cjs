@@ -159,7 +159,7 @@ async function run() {
     })()
   `);
 
-  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
+  console.log('[probe-spotify-states] missingDom:', JSON.stringify(missingDom));
   testResults.push({
     test: '1. Estado missing_client_id ("Falta el Client ID" + botón a Ajustes)',
     expected: 'hasMissingTitle: true, hasSettingsBtn: true',
@@ -185,7 +185,7 @@ async function run() {
     })()
   `);
 
-  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
+  console.log('[probe-spotify-states] settingsDom:', JSON.stringify(settingsDom));
   testResults.push({
     test: '2. Ajustes: Sección "Spotify (dispositivo CineCast)" con redirect exacto y Copiar',
     expected: 'Sección, No conectado, Redirect 127.0.0.1:3000/auth/callback y botón Copiar presentes',
@@ -225,7 +225,7 @@ async function run() {
     })()
   `);
 
-  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
+  console.log('[probe-spotify-states] unauthorizedDom:', JSON.stringify(unauthorizedDom));
   testResults.push({
     test: '3. Estado unauthorized ("Falta autorizar tu cuenta", Redirect exacto, nota INVALID_CLIENT/User Management)',
     expected: 'Title, AuthBtn, Redirect, Copy, InvalidClientNotice presentes y Client ID enmascarado',
@@ -259,7 +259,7 @@ async function run() {
     })()
   `);
 
-  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
+  console.log('[probe-spotify-states] waitingDom:', JSON.stringify(waitingDom));
   testResults.push({
     test: '4. Estado waiting_auth ("Esperando que autorices en el navegador…" + botón Cancelar)',
     expected: 'WaitingTitle: true, CancelBtn: true',
@@ -396,7 +396,6 @@ async function run() {
     })()
   `);
 
-  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '6. Estado connected ("CineCast TV disponible en tu Spotify", track actual y botón Desconectar)',
     expected: 'Available, Bohemian Rhapsody, Queen y Desconectar presentes',
@@ -432,7 +431,6 @@ async function run() {
   const clientIdLeaked = logsText.includes(sensitiveClientId);
   const maskedClientIdPresent = logsText.includes('5dfd...7d41');
 
-  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '7. Sanitización en /api/client-log (token y client ID completos nunca en texto claro)',
     expected: 'tokenLeaked: false, clientIdLeaked: false, masked: true',
