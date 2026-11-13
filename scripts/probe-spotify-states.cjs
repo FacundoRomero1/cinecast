@@ -309,17 +309,28 @@ async function run() {
       let scriptEl = document.getElementById('spotify-player-sdk');
       results.hasScript = Boolean(scriptEl);
       results.hasOnerror = Boolean(scriptEl && scriptEl.onerror);
-      if (scriptEl && scriptEl.onerror) {
+      if (scriptEl) {
         try {
-          scriptEl.onerror();
+          if (typeof scriptEl.onerror === 'function') scriptEl.onerror(new Event('error'));
+          scriptEl.dispatchEvent(new Event('error'));
         } catch (err) {
           results.invokeErr = String(err);
         }
       }
-      await new Promise(r => setTimeout(r, 1200));
-      let text = document.body.innerText || '';
-      results.causeA = text.includes('sdk.scdn.co') && text.includes('Reintentar');
-      results.textPreview = text.slice(0, 300);
+      for (let i = 0; i < 30; i++) {
+        let text = document.body.innerText || '';
+        if (text.includes('sdk.scdn.co') && text.includes('Reintentar')) {
+          results.causeA = true;
+          results.textPreview = text.slice(0, 300);
+          break;
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
+      if (!results.causeA) {
+        let text = document.body.innerText || '';
+        results.causeA = false;
+        results.textPreview = text.slice(0, 300);
+      }
 
       return results;
     })()
