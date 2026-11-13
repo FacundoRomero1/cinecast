@@ -97,7 +97,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
   // Pad plegado por defecto según especificación
   const [isPadOpen, setIsPadOpen] = useState<boolean>(false);
-  const [padMode, setPadMode] = useState<'touchpad' | 'cruceta'>('touchpad');
+  const [padMode, setPadMode] = useState<'touchpad' | 'cruceta' | 'ambos'>('ambos');
 
   const title =
     playbackState?.mediaTitle ||
@@ -466,12 +466,12 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               if (onOpenBigPad) {
                 onOpenBigPad('pad');
               } else {
-                setPadMode('touchpad');
-                setIsPadOpen((p) => (padMode === 'touchpad' ? !p : true));
+                setPadMode('ambos');
+                setIsPadOpen((p) => !p);
               }
             }}
             className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
-              isPadOpen && padMode === 'touchpad'
+              isPadOpen && (padMode === 'touchpad' || padMode === 'ambos')
                 ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
                 : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
             }`}

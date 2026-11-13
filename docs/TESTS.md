@@ -33,3 +33,4 @@ Para aislar estados locales, sesiones residuales o bloqueos de puertos:
 2. **Puertos**: asegurar que el puerto 3000 esté liberado. Los scripts con servidor embebido lo inician automáticamente con `CINECAST_TEST=1` y `CINECAST_DISABLE_PREWARM=1`.
 3. **Persistencia local**: las pruebas que evalúan estados iniciales limpian explícitamente `localStorage` y `.cinecast-data/cinecast-accounts.json`.
 4. **Timeouts y supervisión**: todo proceso Electron se ejecuta bajo `scripts/guard.cjs` con límite de tiempo estricto y recolección de logs en `scratch/logs/`.
+

@@ -1745,7 +1745,7 @@ app.whenReady().then(async () => {
     // Asegurar que la sección Pad esté desplegada
     await waitForCondition(winB, `
       (function() {
-        const btn = document.querySelector('button[aria-label="Pad táctil y cruceta"]');
+        const btn = document.querySelector('button[aria-label="Pad táctil y cruceta"], button[aria-label="Pad"]');
         if (btn && !document.getElementById('remote-touchpad-area')) {
           btn.click();
         }
