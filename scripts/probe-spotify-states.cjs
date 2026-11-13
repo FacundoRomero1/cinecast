@@ -305,11 +305,13 @@ async function run() {
       results.hasScript = Boolean(scriptEl);
       results.hasOnerror = Boolean(scriptEl && scriptEl.onerror);
       if (scriptEl && scriptEl.onerror) {
-        try { scriptEl.onerror(new Event('error')); } catch (_) {}
-      } else if (scriptEl) {
-        scriptEl.dispatchEvent(new Event('error'));
+        try {
+          scriptEl.onerror();
+        } catch (err) {
+          results.invokeErr = String(err);
+        }
       }
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 1200));
       let text = document.body.innerText || '';
       results.causeA = text.includes('sdk.scdn.co') && text.includes('Reintentar');
       results.textPreview = text.slice(0, 300);
