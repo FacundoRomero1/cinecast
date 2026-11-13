@@ -146,12 +146,12 @@ ipcMain.handle('control-active-media', async (_event, { action, value }) => {
 
 let spawnedServer = null;
 const globalTimeout = setTimeout(() => {
-  console.error('[probe-resume] TIMEOUT GLOBAL ALCANZADO (140s)');
+  console.error('[probe-resume] TIMEOUT GLOBAL ALCANZADO (148s)');
   if (spawnedServer) {
     try { spawnedServer.kill(); } catch (_) {}
   }
   app.exit(1);
-}, 140000);
+}, 148000);
 
 async function runVariant(key, queryParams, baseUrl, roomId, winScreen, winPhone) {
   console.log(`\n================================================================================`);
@@ -168,7 +168,7 @@ async function runVariant(key, queryParams, baseUrl, roomId, winScreen, winPhone
   await winPhone.webContents.executeJavaScript(`
     window.location.hash = '#/control';
   `).catch(() => {});
-  await wait(1500);
+  await wait(800);
 
   // Inyectar reproducción en PC con el embed correspondiente
   const embedUrl = `${baseUrl}/__test/embed-slow.html?${queryParams}`;
@@ -205,12 +205,12 @@ async function runVariant(key, queryParams, baseUrl, roomId, winScreen, winPhone
     }
   `);
 
-  // Muestreo cada 500 ms durante 22 segundos
+  // Muestreo cada 500 ms durante 20 segundos
   const samples = [];
   const start = Date.now();
 
   for (let step = 0; step < 40; step++) {
-    await wait(500);
+    const nextTick = start + (step + 1) * 500;
     const elapsedSec = ((Date.now() - start) / 1000).toFixed(1);
 
     // Leer estado real de la PC recorriendo todos los frames (incluyendo webviews)
@@ -281,6 +281,11 @@ async function runVariant(key, queryParams, baseUrl, roomId, winScreen, winPhone
       estimated: phoneDisplay.estimated ?? false,
       savedHistoryAt20,
     });
+
+    const sleepMs = nextTick - Date.now();
+    if (sleepMs > 0) {
+      await wait(sleepMs);
+    }
   }
 
   // Evaluación de criterios
