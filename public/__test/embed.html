@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Cinecast Embed Test</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      user-select: none;
+    }
+    #time-display {
+      font-size: 2rem;
+      font-family: monospace;
+      margin-bottom: 1rem;
+    }
+    #status-display {
+      font-size: 1rem;
+      color: #888;
+    }
+    canvas {
+      width: 320px;
+      height: 180px;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="time-display">0:00 / 0:00</div>
+  <canvas id="visualizer"></canvas>
+  <div id="status-display">Listo</div>
+
+  <script>
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const totalDur = parseFloat(params.get('dur') || '400');
+      const adDur = parseFloat(params.get('ad') || '0');
+      const hasTone = params.get('tone') === '1';
+      const isCors = params.get('cors') === '1';
+
+      let currentTime = 0;
+      let isPlaying = true;
+      let inAd = adDur > 0;
+      let adTime = 0;
+
+      const timeEl = document.getElementById('time-display');
+      const statusEl = document.getElementById('status-display');
+      const canvas = document.getElementById('visualizer');
+      const ctx = canvas.getContext('2d');
+
+      // Simulación de Web Audio si tiene tone
+      let audioCtx = null;
+      let osc = null;
+      if (hasTone && typeof AudioContext !== 'undefined') {
+        try {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          gain.gain.value = 0.1;
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start();
+        } catch (_) {}
+      }
+
+      function format(s) {
+        s = Math.max(0, Math.floor(s));
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return m + ':' + (sec < 10 ? '0' : '') + sec;
+      }
+
+      function updateUI() {
+        if (inAd) {
+          timeEl.textContent = 'Publicidad: ' + format(adTime) + ' / ' + format(adDur);
+          statusEl.textContent = 'En comercial...';
+        } else {
+          timeEl.textContent = format(currentTime) + ' / ' + format(totalDur);
+          statusEl.textContent = isPlaying ? 'Reproduciendo' : 'Pausado';
+        }
+
+        // Dibujar en canvas
+        ctx.fillStyle = inAd ? '#b45309' : '#1e1b4b';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ef4444';
+        const progress = inAd ? (adDur > 0 ? adTime / adDur : 0) : (totalDur > 0 ? currentTime / totalDur : 0);
+        ctx.fillRect(0, canvas.height - 8, canvas.width * progress, 8);
+      }
+
+      // Ciclo de reproducción simulado cada 200 ms
+      setInterval(function() {
+        if (!isPlaying) return;
+
+        if (inAd) {
+          adTime += 0.2;
+          if (adTime >= adDur) {
+            inAd = false;
+            currentTime = 0;
+          }
+        } else {
+          currentTime = Math.min(totalDur, currentTime + 0.2);
+          if (currentTime >= totalDur) {
+            isPlaying = false;
+            window.parent.postMessage({ type: 'ended' }, '*');
+          }
+        }
+        updateUI();
+
+        // Emitir mensaje al contenedor
+        window.parent.postMessage({
+          type: 'cinecast_player_state',
+          currentTime: inAd ? 0 : currentTime,
+          duration: inAd ? 0 : totalDur,
+          isPlaying: isPlaying,
+          isAd: inAd,
+        }, '*');
+      }, 200);
+
+      // Escuchar comandos del exterior
+      window.addEventListener('message', function(e) {
+        const data = e.data || {};
+        if (data.type === 'seek' && typeof data.time === 'number') {
+          if (!inAd) {
+            currentTime = Math.max(0, Math.min(totalDur, data.time));
+            updateUI();
+          }
+        } else if (data.type === 'play') {
+          isPlaying = true;
+          updateUI();
+        } else if (data.type === 'pause') {
+          isPlaying = false;
+          updateUI();
+        }
+      });
+
+      // API expuesta para scripts de prueba
+      window.__simPlayer = {
+        seek: function(t) {
+          currentTime = Math.max(0, Math.min(totalDur, t));
+          updateUI();
+        },
+        getCurrentTime: function() { return currentTime; },
+        getDuration: function() { return totalDur; },
+        play: function() { isPlaying = true; updateUI(); },
+        pause: function() { isPlaying = false; updateUI(); },
+      };
+
+      updateUI();
+    })();
+  </script>
+</body>
+</html>
+

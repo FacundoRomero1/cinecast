@@ -156,7 +156,78 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
   const currentTime = playbackState?.currentTime || 0;
   const duration = playbackState?.duration || 0;
-  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+
+  // Estados de barra de tiempo deslizable (role="slider")
+  const [isDraggingSlider, setIsDraggingSlider] = useState(false);
+  const [dragTime, setDragTime] = useState(0);
+  const [lastSeekReleasedAt, setLastSeekReleasedAt] = useState(0);
+  const [lastSeekTime, setLastSeekTime] = useState(0);
+  const sliderTrackRef = useRef<HTMLDivElement>(null);
+
+  const rawDuration = playbackState?.duration ?? duration;
+  const isDurationValid = typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration > 0;
+  const effectiveDuration = isDurationValid ? rawDuration : 0;
+
+  // Mientras se arrastra y durante 1.2s después de soltar, se ignoran los estados entrantes para evitar rebote
+  const nowTs = Date.now();
+  const isIgnoringSliderUpdates = isDraggingSlider || (nowTs - lastSeekReleasedAt < 1200);
+  const displayTime = isDraggingSlider
+    ? dragTime
+    : (isIgnoringSliderUpdates ? lastSeekTime : currentTime);
+
+  const displayPercent = effectiveDuration > 0
+    ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100))
+    : 0;
+
+  const getTimeFromPointer = (clientX: number): number => {
+    if (!sliderTrackRef.current || !isDurationValid) return 0;
+    const rect = sliderTrackRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return Math.round(ratio * effectiveDuration);
+  };
+
+  const handleSliderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDurationValid || playbackState?.seekUnsupported) return;
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch (_) {}
+    setIsDraggingSlider(true);
+    const t = getTimeFromPointer(e.clientX);
+    setDragTime(t);
+  };
+
+  const handleSliderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingSlider || !isDurationValid) return;
+    const t = getTimeFromPointer(e.clientX);
+    setDragTime(t);
+  };
+
+  const handleSliderPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingSlider) return;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch (_) {}
+    setIsDraggingSlider(false);
+    const target = getTimeFromPointer(e.clientX);
+    setLastSeekReleasedAt(Date.now());
+    setLastSeekTime(target);
+    onSendCommand({ action: 'seek', payload: target });
+  };
+
+  const handleSliderPointerCancel = () => {
+    if (!isDraggingSlider) return;
+    setIsDraggingSlider(false);
+    setLastSeekReleasedAt(Date.now());
+  };
+
+  const handleSliderClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDurationValid || playbackState?.seekUnsupported) return;
+    if (Date.now() - lastSeekReleasedAt < 200) return;
+    const target = getTimeFromPointer(e.clientX);
+    setLastSeekReleasedAt(Date.now());
+    setLastSeekTime(target);
+    onSendCommand({ action: 'seek', payload: target });
+  };
 
   const currentVolume = playbackState?.audioSettings?.volume ?? 100;
   const isMuted = playbackState?.audioSettings?.isMuted ?? false;
@@ -797,7 +868,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             </div>
           </div>
 
-          {/* Barra de progreso con tiempo transcurrido / total */}
+          {/* Control táctil deslizable (role="slider") con pista de 8px y área táctil de 44px */}
           <div className="space-y-1.5 pt-1">
             {playbackState?.seekUnsupported ? (
               <div className="p-2 rounded-xl bg-zinc-800/80 border border-zinc-700/60 text-center text-xs text-amber-300 font-semibold">
@@ -805,15 +876,116 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               </div>
             ) : (
               <>
-                <div className="relative w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  role="slider"
+                  aria-label="Posición de reproducción"
+                  aria-valuenow={Math.round(displayTime)}
+                  aria-valuemin={0}
+                  aria-valuemax={effectiveDuration}
+                  aria-valuetext={`${formatTime(displayTime)} de ${isDurationValid ? formatTime(effectiveDuration) : 'desconocida'}`}
+                  aria-disabled={!isDurationValid}
+                  tabIndex={isDurationValid ? 0 : -1}
+                  onKeyDown={(e) => {
+                    if (!isDurationValid) return;
+                    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      const next = Math.max(0, displayTime - 5);
+                      setLastSeekReleasedAt(Date.now());
+                      setLastSeekTime(next);
+                      onSendCommand({ action: 'seek', payload: next });
+                    } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      const next = Math.min(effectiveDuration, displayTime + 5);
+                      setLastSeekReleasedAt(Date.now());
+                      setLastSeekTime(next);
+                      onSendCommand({ action: 'seek', payload: next });
+                    }
+                  }}
+                  onPointerDown={handleSliderPointerDown}
+                  onPointerMove={handleSliderPointerMove}
+                  onPointerUp={handleSliderPointerUp}
+                  onPointerCancel={handleSliderPointerCancel}
+                  onClick={handleSliderClick}
+                  className={`w-full min-h-[44px] flex items-center relative select-none touch-none ${
+                    isDurationValid ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'
+                  }`}
+                >
+                  {/* Pista visible de 8px */}
                   <div
-                    className="h-full bg-red-600 transition-all duration-300"
-                    style={{ width: `${progressPercent}%` }}
-                  />
+                    ref={sliderTrackRef}
+                    className="w-full h-[8px] rounded-full bg-zinc-800 relative overflow-visible"
+                  >
+                    {/* Barra de progreso */}
+                    <div
+                      className="h-full bg-red-600 rounded-full"
+                      style={{ width: `${displayPercent}%` }}
+                    />
+
+                    {/* Pulgar accesible (thumb) con hora destino flotante */}
+                    {isDurationValid && (
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white border-2 border-red-600 shadow-md flex items-center justify-center transition-transform active:scale-125"
+                        style={{ left: `${displayPercent}%` }}
+                      >
+                        {isDraggingSlider && (
+                          <div className="absolute -top-11 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-lg bg-zinc-950 text-white font-extrabold text-sm border border-zinc-700 shadow-2xl pointer-events-none whitespace-nowrap z-30">
+                            {formatTime(dragTime)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex justify-between text-[11px] font-mono text-zinc-400">
-                  <span>{formatTime(currentTime)}</span>
-                  <span>{formatTime(duration)}</span>
+
+                {/* Tiempos transcurrido / total y nota discreta si no hay duración */}
+                <div className="flex justify-between items-center text-[11px] font-mono text-zinc-400">
+                  <span>{formatTime(displayTime)}</span>
+                  {!isDurationValid && (
+                    <span className="text-[10px] text-zinc-500 italic">
+                      Transmisión en vivo o duración desconocida
+                    </span>
+                  )}
+                  <span>{isDurationValid ? formatTime(effectiveDuration) : '--:--'}</span>
+                </div>
+
+                {/* 4 botones de salto rápido: -10s, +10s, -60s, +60s (mínimo 44px de alto) */}
+                <div className="grid grid-cols-4 gap-2 pt-1">
+                  <button
+                    type="button"
+                    aria-label="Retroceder 60 segundos"
+                    disabled={!isDurationValid}
+                    onClick={() => onSendCommand({ action: 'seekRelative', payload: -60 })}
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    -60s
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Retroceder 10 segundos"
+                    disabled={!isDurationValid}
+                    onClick={() => onSendCommand({ action: 'seekRelative', payload: -10 })}
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    -10s
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Avanzar 10 segundos"
+                    disabled={!isDurationValid}
+                    onClick={() => onSendCommand({ action: 'seekRelative', payload: 10 })}
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    +10s
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Avanzar 60 segundos"
+                    disabled={!isDurationValid}
+                    onClick={() => onSendCommand({ action: 'seekRelative', payload: 60 })}
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    +60s
+                  </button>
                 </div>
               </>
             )}
