@@ -251,6 +251,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const countdownTimerRef = useRef<any>(null);
   const marathonConsecutiveCountRef = useRef<number>(0);
   const lastAutoAdvancedChapterRef = useRef<string | null>(null);
+  const lastCommandTimeMapRef = useRef<Map<string, number>>(new Map());
 
   // COPIA de App.tsx L212-234; borrar al eliminar la UI clásica
   // Last Command Received Trigger for VideoPlayer
@@ -435,6 +436,18 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // COPIA de App.tsx L385-838; borrar al eliminar la UI clásica
   // Handle incoming commands sent from mobile
   const handleRemoteCommandReceived = (cmd: RemoteCommand, _from?: string) => {
+    // Guarda anti-duplicado de 150ms por (dispositivo, acción) para evitar dobles toques accidentales
+    const devId = _from || (cmd as any)?.fromDevice || 'remote';
+    const actionKey = `${devId}:${cmd.action}`;
+    const now = Date.now();
+    const lastTime = lastCommandTimeMapRef.current.get(actionKey) || 0;
+    const isRepeat = Boolean(cmd.payload?.isRepeat || (cmd as any)?.isRepeat);
+
+    if (!isRepeat && now - lastTime < 150) {
+      return;
+    }
+    lastCommandTimeMapRef.current.set(actionKey, now);
+
     recordReceivedCommand(cmd.action);
     // User interacted -> reset consecutive unattended chapter count
     marathonConsecutiveCountRef.current = 0;
@@ -1054,10 +1067,12 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         };
         const keyCode = keyMap[cmd.action];
         if (keyCode) {
+          // Enrutamiento exclusivo: si activeHub es youtube/spotify, sólo a ese webContents; si es catálogo, sólo ventana principal.
           if (activeHub === 'youtube' || activeHub === 'spotify') {
             window.electronAPI?.sendKeyToWebview?.({ keyCode });
+          } else {
+            window.electronAPI?.sendNativeKey?.(keyCode);
           }
-          window.electronAPI?.sendNativeKey?.(keyCode);
         }
         break;
       }

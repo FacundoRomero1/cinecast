@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   ChevronUp,
   ChevronDown,
@@ -12,11 +12,63 @@ import type { RemoteCommand } from '../types';
 
 export interface PadSectionProps {
   onSendCommand: (command: RemoteCommand) => void;
+  mode?: 'touchpad' | 'cruceta' | 'ambos';
+  hideModeSelector?: boolean;
 }
 
-export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
+function useRepeatableAction(onTrigger: (isRepeat: boolean) => void) {
+  const timeoutRef = useRef<any>(null);
+  const intervalRef = useRef<any>(null);
+
+  const stop = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      stop();
+      onTrigger(false);
+      timeoutRef.current = setTimeout(() => {
+        intervalRef.current = setInterval(() => {
+          onTrigger(true);
+        }, 125); // 8 repeticiones por segundo
+      }, 400); // 400ms de retraso inicial antes de repetir
+    },
+    [onTrigger, stop]
+  );
+
+  useEffect(() => {
+    return stop;
+  }, [stop]);
+
+  return {
+    onPointerDown: handlePointerDown,
+    onPointerUp: stop,
+    onPointerLeave: stop,
+    onPointerCancel: stop,
+    style: { touchAction: 'manipulation' as const },
+  };
+}
+
+export const PadSection: React.FC<PadSectionProps> = ({
+  onSendCommand,
+  mode = 'ambos',
+  hideModeSelector = false,
+}) => {
   const [sensitivity, setSensitivity] = useState<'baja' | 'normal' | 'alta'>('normal');
-  const [subMode, setSubMode] = useState<'touchpad' | 'cruceta' | 'ambos'>('ambos');
+  const [subMode, setSubMode] = useState<'touchpad' | 'cruceta' | 'ambos'>(mode);
+
+  useEffect(() => {
+    setSubMode(mode);
+  }, [mode]);
 
   const mult = sensitivity === 'baja' ? 0.6 : sensitivity === 'alta' ? 1.6 : 1.0;
 
@@ -111,59 +163,86 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
     touchStartRef.current = null;
   };
 
+  const sendNav = useCallback(
+    (action: string, isRepeat: boolean) => {
+      onSendCommand({
+        action: action as any,
+        payload: isRepeat ? { isRepeat: true } : undefined,
+      });
+    },
+    [onSendCommand]
+  );
+
+  const upBindings = useRepeatableAction(useCallback((isRepeat) => sendNav('navigateUp', isRepeat), [sendNav]));
+  const downBindings = useRepeatableAction(useCallback((isRepeat) => sendNav('navigateDown', isRepeat), [sendNav]));
+  const leftBindings = useRepeatableAction(useCallback((isRepeat) => sendNav('navigateLeft', isRepeat), [sendNav]));
+  const rightBindings = useRepeatableAction(useCallback((isRepeat) => sendNav('navigateRight', isRepeat), [sendNav]));
+
+  const handleSelectPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    onSendCommand({ action: 'select' });
+  };
+
+  const handleBackPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    onSendCommand({ action: 'back' });
+  };
+
   return (
     <div className="space-y-4 text-zinc-100 select-none">
       {/* Controles de modo y sensibilidad */}
-      <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-zinc-950 border border-zinc-800">
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => setSubMode('ambos')}
-            className={`min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-bold transition ${
-              subMode === 'ambos' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Todo
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubMode('touchpad')}
-            className={`min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
-              subMode === 'touchpad' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <MousePointer className="w-3.5 h-3.5" />
-            <span>Mouse</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubMode('cruceta')}
-            className={`min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
-              subMode === 'cruceta' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Tv className="w-3.5 h-3.5" />
-            <span>Cruceta</span>
-          </button>
-        </div>
-
-        {/* Sensibilidad */}
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] uppercase font-bold text-zinc-500 mr-1">Sens:</span>
-          {(['baja', 'normal', 'alta'] as const).map((lvl) => (
+      {!hideModeSelector && (
+        <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-zinc-950 border border-zinc-800">
+          <div className="flex gap-1">
             <button
-              key={lvl}
               type="button"
-              onClick={() => setSensitivity(lvl)}
-              className={`min-h-[32px] px-2 py-0.5 rounded text-[11px] font-bold capitalize transition ${
-                sensitivity === lvl ? 'bg-zinc-700 text-white shadow' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'
+              onClick={() => setSubMode('ambos')}
+              className={`min-h-[44px] px-3 py-1 rounded-xl text-xs font-bold transition ${
+                subMode === 'ambos' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              {lvl}
+              Todo
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setSubMode('touchpad')}
+              className={`min-h-[44px] px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                subMode === 'touchpad' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <MousePointer className="w-3.5 h-3.5" />
+              <span>Pad</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubMode('cruceta')}
+              className={`min-h-[44px] px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                subMode === 'cruceta' ? 'bg-red-600 text-white' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Tv className="w-3.5 h-3.5" />
+              <span>Cruceta</span>
+            </button>
+          </div>
+
+          {/* Sensibilidad */}
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] uppercase font-bold text-zinc-500 mr-1">Sens:</span>
+            {(['baja', 'normal', 'alta'] as const).map((lvl) => (
+              <button
+                key={lvl}
+                type="button"
+                onClick={() => setSensitivity(lvl)}
+                className={`min-h-[36px] px-2 py-0.5 rounded text-[11px] font-bold capitalize transition ${
+                  sensitivity === lvl ? 'bg-zinc-700 text-white shadow' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'
+                }`}
+              >
+                {lvl}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 1. Área táctil (Touchpad Mouse) */}
       {(subMode === 'touchpad' || subMode === 'ambos') && (
@@ -220,7 +299,7 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
             <button
               type="button"
               aria-label="Arriba"
-              onClick={() => onSendCommand({ action: 'navigateUp' })}
+              {...upBindings}
               className="absolute top-2 left-1/2 -translate-x-1/2 min-w-[56px] min-h-[56px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold flex items-center justify-center border border-zinc-700 shadow"
             >
               <ChevronUp className="w-7 h-7 text-zinc-100" />
@@ -230,7 +309,7 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
             <button
               type="button"
               aria-label="Izquierda"
-              onClick={() => onSendCommand({ action: 'navigateLeft' })}
+              {...leftBindings}
               className="absolute left-2 top-1/2 -translate-y-1/2 min-w-[56px] min-h-[56px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold flex items-center justify-center border border-zinc-700 shadow"
             >
               <ChevronLeft className="w-7 h-7 text-zinc-100" />
@@ -240,7 +319,8 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
             <button
               type="button"
               aria-label="OK"
-              onClick={() => onSendCommand({ action: 'select' })}
+              onPointerDown={handleSelectPointerDown}
+              style={{ touchAction: 'manipulation' }}
               className="min-w-[56px] min-h-[56px] w-16 h-16 rounded-full bg-red-600 hover:bg-red-500 active:scale-95 text-white font-extrabold text-sm flex items-center justify-center shadow-lg shadow-red-950 border border-red-500"
             >
               OK
@@ -250,7 +330,7 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
             <button
               type="button"
               aria-label="Derecha"
-              onClick={() => onSendCommand({ action: 'navigateRight' })}
+              {...rightBindings}
               className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[56px] min-h-[56px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold flex items-center justify-center border border-zinc-700 shadow"
             >
               <ChevronRight className="w-7 h-7 text-zinc-100" />
@@ -260,7 +340,7 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
             <button
               type="button"
               aria-label="Abajo"
-              onClick={() => onSendCommand({ action: 'navigateDown' })}
+              {...downBindings}
               className="absolute bottom-2 left-1/2 -translate-x-1/2 min-w-[56px] min-h-[56px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold flex items-center justify-center border border-zinc-700 shadow"
             >
               <ChevronDown className="w-7 h-7 text-zinc-100" />
@@ -272,7 +352,8 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
             <button
               type="button"
               aria-label="Atrás"
-              onClick={() => onSendCommand({ action: 'back' })}
+              onPointerDown={handleBackPointerDown}
+              style={{ touchAction: 'manipulation' }}
               className="w-full min-h-[56px] px-4 py-3 rounded-2xl bg-zinc-850 hover:bg-zinc-800 active:scale-95 text-zinc-200 font-extrabold text-xs border border-zinc-700 flex items-center justify-center gap-2 shadow"
             >
               <RotateCcw className="w-4 h-4 text-zinc-400" />
@@ -284,4 +365,3 @@ export const PadSection: React.FC<PadSectionProps> = ({ onSendCommand }) => {
     </div>
   );
 };
-

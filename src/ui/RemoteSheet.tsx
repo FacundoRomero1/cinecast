@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, ChevronRight, ChevronLeft, Gamepad2, Volume2, VolumeX, MousePointer } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft, Gamepad2, Volume2, VolumeX, MousePointer, Tv } from 'lucide-react';
 import { RemotePanel } from './RemotePanel';
 import { PadSection } from './PadSection';
 import { lockScroll } from './scrollLock';
@@ -19,6 +19,8 @@ export interface RemoteSheetProps {
   onNavigateToCatalog?: () => void;
 }
 
+export type RemoteSheetView = 'panel' | 'pad' | 'cruceta';
+
 export const RemoteSheet: React.FC<RemoteSheetProps> = ({
   isOpen,
   onClose,
@@ -35,14 +37,14 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
   const isClosingViaPopRef = useRef<boolean>(false);
   const touchStartY = useRef<number>(0);
   const [dragOffset, setDragOffset] = useState<number>(0);
-  const [isPadMode, setIsPadMode] = useState<boolean>(false);
-  const isPadModeRef = useRef<boolean>(false);
-  isPadModeRef.current = isPadMode;
+  const [sheetView, setSheetView] = useState<RemoteSheetView>('panel');
+  const sheetViewRef = useRef<RemoteSheetView>('panel');
+  sheetViewRef.current = sheetView;
 
   // Gestión de historial para botón Atrás del navegador/celular y bloqueo de scroll
   useEffect(() => {
     if (!isOpen) {
-      setIsPadMode(false);
+      setSheetView('panel');
       return;
     }
 
@@ -55,9 +57,9 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
     }
 
     const onPopState = () => {
-      if (isPadModeRef.current) {
-        // La tecla/acción Atrás cierra primero el pad antes del control
-        setIsPadMode(false);
+      if (sheetViewRef.current !== 'panel') {
+        // La tecla/acción Atrás cierra primero el modo dedicado y vuelve al panel general
+        setSheetView('panel');
         return;
       }
       isClosingViaPopRef.current = true;
@@ -72,24 +74,24 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
     };
   }, [isOpen, onClose]);
 
-  const handleOpenPadMode = () => {
+  const handleOpenDedicatedMode = (mode: 'pad' | 'cruceta' = 'pad') => {
     try {
-      window.history.pushState({ ccRemoteSheet: true, ccPadMode: true }, '');
+      window.history.pushState({ ccRemoteSheet: true, ccMode: mode }, '');
     } catch (_) {}
-    setIsPadMode(true);
+    setSheetView(mode);
   };
 
-  const handleClosePadMode = () => {
-    if (window.history.state?.ccPadMode) {
+  const handleCloseDedicatedMode = () => {
+    if (window.history.state?.ccMode) {
       window.history.back();
     } else {
-      setIsPadMode(false);
+      setSheetView('panel');
     }
   };
 
   const handleClose = () => {
-    if (isPadModeRef.current) {
-      handleClosePadMode();
+    if (sheetViewRef.current !== 'panel') {
+      handleCloseDedicatedMode();
       return;
     }
     if (window.history.state?.ccRemoteSheet && !isClosingViaPopRef.current) {
@@ -152,16 +154,42 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
           {/* Barra de arrastre móvil */}
           <div className="w-12 h-1.5 rounded-full bg-zinc-700 mx-auto mb-2 md:hidden" />
 
-          <div className="flex items-center justify-between">
-            {isPadMode ? (
-              <button
-                type="button"
-                onClick={handleClosePadMode}
-                className="min-h-[44px] px-3 py-1.5 -ml-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold flex items-center gap-1.5 transition border border-zinc-800"
-              >
-                <ChevronLeft className="w-4 h-4 text-red-500" />
-                <span>Volver al control</span>
-              </button>
+          <div className="flex items-center justify-between gap-2">
+            {sheetView !== 'panel' ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCloseDedicatedMode}
+                  className="min-h-[44px] px-3 py-1.5 -ml-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold flex items-center gap-1.5 transition border border-zinc-800"
+                >
+                  <ChevronLeft className="w-4 h-4 text-red-500" />
+                  <span>Volver</span>
+                </button>
+
+                {/* Conmutador entre Pad y Cruceta (>= 44px) */}
+                <div className="flex items-center bg-zinc-900 rounded-xl p-1 border border-zinc-800 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setSheetView('pad')}
+                    className={`min-h-[44px] min-w-[44px] px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      sheetView === 'pad' ? 'bg-red-600 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <MousePointer className="w-3.5 h-3.5" />
+                    <span>Pad</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSheetView('cruceta')}
+                    className={`min-h-[44px] min-w-[44px] px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      sheetView === 'cruceta' ? 'bg-red-600 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <Tv className="w-3.5 h-3.5" />
+                    <span>Cruceta</span>
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-red-600/20 text-red-500 flex items-center justify-center">
@@ -189,7 +217,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
 
         {/* Cuerpo del panel */}
         <div className="flex-1 overflow-y-auto p-2 sm:p-4">
-          {isPadMode ? (
+          {sheetView !== 'panel' ? (
             <div className="space-y-4 max-w-md mx-auto">
               {/* Control de volumen de TV */}
               <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2.5">
@@ -252,9 +280,13 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
                 </div>
               </div>
 
-              {/* Área del Pad y Cruceta Grande (>= 260x260px) */}
+              {/* Área del Pad o Cruceta según modo */}
               <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800">
-                <PadSection onSendCommand={onSendCommand} />
+                <PadSection
+                  onSendCommand={onSendCommand}
+                  mode={sheetView === 'pad' ? 'touchpad' : 'cruceta'}
+                  hideModeSelector={true}
+                />
               </div>
             </div>
           ) : (
@@ -267,7 +299,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
               onOpenCastModal={onOpenCastModal}
               onOpenAudioModal={onOpenAudioModal}
               onOpenGuestModal={onOpenGuestModal}
-              onOpenBigPad={handleOpenPadMode}
+              onOpenBigPad={handleOpenDedicatedMode}
               onNavigateToCatalog={() => {
                 handleClose();
                 if (onNavigateToCatalog) onNavigateToCatalog();
@@ -279,4 +311,3 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
     </>
   );
 };
-

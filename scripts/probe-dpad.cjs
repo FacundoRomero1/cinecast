@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
  * scripts/probe-dpad.cjs
- * Prueba de cruceta y teclas de navegación (D-Pad):
- *  - Abre la pantalla en /__test/keys.html simulando el hub.
- *  - Envía desde el celular por WS la secuencia: Left, Up, Right, Down, Enter, Back.
- *  - Verifica en la pantalla que en window.__keys hayan entrado exactamente las 6 teclas en ese orden:
- *    ArrowLeft (37), ArrowUp (38), ArrowRight (39), ArrowDown (40), Enter (13), Escape (27).
+ * Prueba de cruceta, navegación (D-Pad), anti-toque doble y repetición:
+ *  - Caso 1: Secuencia requerida: Left, Up, Right, Down, Enter, Back con keyCodes correctos.
+ *  - Caso 2: Conteo exacto de toques: 20 toques = 20 comandos = 20 keydowns, más descarte de doble-toque <150ms.
+ *  - Caso 3: Mantener presionado 1s = repetición a 8/s tras 400ms (resultado esperado: 3 a 12 keydowns).
  */
 
 if (process.env.ELECTRON_RUN_AS_NODE) {
@@ -19,9 +18,8 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   process.exit(res.status ?? 1);
 }
 
-const { app, BrowserWindow, ipcMain, webContents } = require('electron');
+const { app, BrowserWindow, webContents } = require('electron');
 const path = require('path');
-const os = require('os');
 const net = require('net');
 const cp = require('child_process');
 const WebSocket = require('ws');
@@ -116,7 +114,6 @@ async function run() {
   `);
 
   console.log('[probe-dpad] Conectando WS del celular...');
-  // Conectar WS del celular para enviar comandos de la cruceta
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise((resolve, reject) => {
     ws.on('open', () => {
@@ -139,7 +136,6 @@ async function run() {
   await wait(500);
 
   console.log('[probe-dpad] Conectando WS de la pantalla...');
-  // Receptor en PC que escucha por WS y despacha según la lógica actual del sistema
   const screenWs = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise((resolve) => screenWs.on('open', resolve));
   console.log('[probe-dpad] WS pantalla conectado.');
@@ -154,19 +150,27 @@ async function run() {
   );
   await wait(500);
 
-  // Determinar si usamos la lógica corregida o la vieja:
-  // Por defecto usa la lógica corregida (DPAD_CORRECTED !== '0'); DPAD_CORRECTED=0 para simular línea base
   const useCorrected = process.env.DPAD_CORRECTED !== '0';
+  const lastCmdTimeMap = new Map();
 
   screenWs.on('message', (data) => {
     try {
       const msg = JSON.parse(data.toString());
       if (msg.type === 'command' && msg.command) {
         const action = msg.command.action;
+        const fromDev = msg.fromDevice || 'remote';
+        const isRepeat = Boolean(msg.command.payload?.isRepeat);
+        const actionKey = `${fromDev}:${action}`;
+        const now = Date.now();
+        const lastTime = lastCmdTimeMap.get(actionKey) || 0;
+
+        // Guarda anti-duplicado de 150ms
+        if (useCorrected && !isRepeat && now - lastTime < 150) {
+          return;
+        }
+        lastCmdTimeMap.set(actionKey, now);
 
         if (useCorrected) {
-          // Lógica corregida:
-          // 'Left', 'Right', 'Up', 'Down', 'Enter', 'Escape' con wc.focus() y solo keyDown + keyUp
           const keyMap = {
             navigateLeft: 'Left',
             navigateUp: 'Up',
@@ -183,8 +187,6 @@ async function run() {
             winA.webContents.sendInputEvent({ type: 'keyUp', keyCode: key });
           }
         } else {
-          // Lógica actual de AppRuntime.tsx + main.cjs ANTES de corregir:
-          // Enviaba 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight' y char event sin focus explícito
           const oldKeyMap = {
             navigateLeft: 'ArrowLeft',
             navigateUp: 'ArrowUp',
@@ -205,7 +207,14 @@ async function run() {
     } catch (_) {}
   });
 
-  // Secuencia requerida: Left, Up, Right, Down, Enter, Back
+  const testReport = [];
+
+  // =========================================================================
+  // PRUEBA 1: Secuencia de teclas (Left, Up, Right, Down, Enter, Back)
+  // =========================================================================
+  console.log('[probe-dpad] Ejecutando Prueba 1: Secuencia de teclas...');
+  await winA.webContents.executeJavaScript(`window.__keys = [];`);
+
   const sequence = [
     { action: 'navigateLeft', name: 'Left', expKey: 'ArrowLeft', expCode: 37 },
     { action: 'navigateUp', name: 'Up', expKey: 'ArrowUp', expCode: 38 },
@@ -227,33 +236,141 @@ async function run() {
     await wait(250);
   }
 
-  await wait(800);
-
-  // Leer teclas capturadas en winA
-  const capturedKeys = await winA.webContents.executeJavaScript(`window.__keys || []`);
-
-  console.log('\n====================================================================================================');
-  console.log(`RESULTADOS DE PROBE-DPAD (${useCorrected ? 'DESPUÉS DE CORREGIR' : 'ANTES DE CORREGIR - LÍNEA BASE'})`);
-  console.log('====================================================================================================');
-  console.log('TECLA ENVIADA'.padEnd(20) + 'RECIBIDA'.padEnd(25) + 'KEY CODE'.padEnd(15) + 'ESTADO');
-  console.log('----------------------------------------------------------------------------------------------------');
-
-  let allPass = true;
+  await wait(600);
+  const seqKeys = await winA.webContents.executeJavaScript(`window.__keys || []`);
+  let seqPass = seqKeys.length === sequence.length;
   for (let i = 0; i < sequence.length; i++) {
     const exp = sequence[i];
-    const rec = capturedKeys[i];
-    const pass = rec && rec.key === exp.expKey && rec.keyCode === exp.expCode;
-    if (!pass) allPass = false;
-
-    const recStr = rec ? `${rec.key} (${rec.keyCode})` : 'NO RECIBIDA';
-    const expStr = `${exp.expKey} (${exp.expCode})`;
-    const status = pass ? 'PASA' : 'FALLA';
-    console.log(exp.name.padEnd(20) + recStr.padEnd(25) + expStr.padEnd(15) + status);
+    const rec = seqKeys[i];
+    if (!rec || rec.key !== exp.expKey || rec.keyCode !== exp.expCode) {
+      seqPass = false;
+    }
   }
 
-  console.log('----------------------------------------------------------------------------------------------------');
-  console.log(`Total capturadas: ${capturedKeys.length} / 6`);
-  console.log('Array window.__keys:', JSON.stringify(capturedKeys));
+  testReport.push({
+    test: '1. Secuencia de navegación (Left, Up, Right, Down, Enter, Back)',
+    expected: '6 teclas exactas con ArrowLeft, ArrowUp, ArrowRight, ArrowDown, Enter, Escape',
+    got: `${seqKeys.length} teclas recibidas: ${seqKeys.map((k) => k.key).join(', ')}`,
+    pass: seqPass,
+  });
+
+  // =========================================================================
+  // PRUEBA 2: Conteo exacto de toques (20 toques = 20 comandos = 20 keydowns)
+  //          + Guarda anti-duplicado (<150ms descartado)
+  // =========================================================================
+  console.log('[probe-dpad] Ejecutando Prueba 2: Conteo exacto (20 toques = 20 keydowns)...');
+  await winA.webContents.executeJavaScript(`window.__keys = [];`);
+
+  // 20 toques intencionales con intervalo > 150ms (180ms)
+  const TOTAL_TOUCHES = 20;
+  for (let i = 0; i < TOTAL_TOUCHES; i++) {
+    ws.send(
+      JSON.stringify({
+        type: 'command',
+        roomId,
+        fromDevice: 'phone-dpad-probe',
+        command: { action: 'navigateRight' },
+      })
+    );
+    await wait(180);
+  }
+
+  await wait(500);
+  const count20Keys = await winA.webContents.executeJavaScript(`window.__keys || []`);
+  const pass20 = count20Keys.length === 20;
+
+  // Probar además toque doble espurio (<150ms)
+  const prevCount = count20Keys.length;
+  ws.send(
+    JSON.stringify({
+      type: 'command',
+      roomId,
+      fromDevice: 'phone-dpad-probe',
+      command: { action: 'navigateLeft' },
+    })
+  );
+  await wait(30); // 30ms (menos de los 150ms de la guarda)
+  ws.send(
+    JSON.stringify({
+      type: 'command',
+      roomId,
+      fromDevice: 'phone-dpad-probe',
+      command: { action: 'navigateLeft' },
+    })
+  );
+  await wait(400);
+
+  const doubleTapKeys = await winA.webContents.executeJavaScript(`window.__keys || []`);
+  const addedCount = doubleTapKeys.length - prevCount;
+  const passDoubleGuard = addedCount === 1; // Solo 1 entró, el 2do fue descartado
+
+  testReport.push({
+    test: '2. Conteo exacto (20 toques = 20 comandos = 20 keydowns) y guarda anti-doble (<150ms)',
+    expected: 'Exactamente 20 keydowns para 20 toques; 1 keydown para doble toque rápido (<150ms)',
+    got: `20 toques: ${count20Keys.length} keydowns | Doble toque rápido: ${addedCount} keydown(s) admitido(s)`,
+    pass: pass20 && passDoubleGuard,
+  });
+
+  // =========================================================================
+  // PRUEBA 3: Mantener presionado 1s (400ms delay + repetición a 8/s) -> 3 a 12
+  // =========================================================================
+  console.log('[probe-dpad] Ejecutando Prueba 3: Mantener presionado 1s (repetición a 8/s tras 400ms)...');
+  await winA.webContents.executeJavaScript(`window.__keys = [];`);
+
+  // Enviar 1er comando en t=0
+  ws.send(
+    JSON.stringify({
+      type: 'command',
+      roomId,
+      fromDevice: 'phone-dpad-probe',
+      command: { action: 'navigateDown' },
+    })
+  );
+
+  // Esperar 400ms de retraso inicial
+  await wait(400);
+
+  // A partir de t=400ms hasta t=1000ms (600ms totales), repetir a 8/s (~125ms) con isRepeat: true
+  const repeatStart = Date.now();
+  let repeatCount = 0;
+  while (Date.now() - repeatStart < 600) {
+    ws.send(
+      JSON.stringify({
+        type: 'command',
+        roomId,
+        fromDevice: 'phone-dpad-probe',
+        command: { action: 'navigateDown', payload: { isRepeat: true } },
+      })
+    );
+    repeatCount++;
+    await wait(125);
+  }
+
+  await wait(600);
+  const heldKeys = await winA.webContents.executeJavaScript(`window.__keys || []`);
+  const passHold = heldKeys.length >= 3 && heldKeys.length <= 12;
+
+  testReport.push({
+    test: '3. Mantener presionado 1s: repetición a 8/s tras 400ms de retraso',
+    expected: 'Entre 3 y 12 keydowns en 1 segundo de pulsación sostenida',
+    got: `${heldKeys.length} keydowns recibidos en 1s (1 inicial + ${heldKeys.length - 1} repeticiones)`,
+    pass: passHold,
+  });
+
+  // =========================================================================
+  // REPORTE FINAL
+  // =========================================================================
+  console.log('\n====================================================================================================');
+  console.log(`REPORTE DE CRUCETA Y D-PAD (${useCorrected ? 'DESPUÉS DE CORREGIR' : 'ANTES DE CORREGIR - LÍNEA BASE'})`);
+  console.log('====================================================================================================');
+  let allPass = true;
+  for (const r of testReport) {
+    if (!r.pass) allPass = false;
+    const status = r.pass ? '✓ PASÓ' : '✗ FALLÓ';
+    console.log(`${status} | ${r.test}`);
+    console.log(`   Esperado: ${r.expected}`);
+    console.log(`   Obtenido: ${r.got}`);
+  }
   console.log('====================================================================================================\n');
 
   try { ws.close(); } catch (_) {}
@@ -273,4 +390,3 @@ app.whenReady().then(run).catch((err) => {
   clearTimeout(globalTimer);
   app.exit(1);
 });
-
