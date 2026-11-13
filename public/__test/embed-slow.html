@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Cinecast Embed Slow Test</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      user-select: none;
+    }
+    #time-display {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+    }
+    #status-display {
+      font-size: 1rem;
+      color: #aaa;
+    }
+    canvas {
+      width: 480px;
+      height: 270px;
+      background: #111;
+      border: 1px solid #444;
+      border-radius: 8px;
+      margin-top: 10px;
+    }
+    video {
+      position: absolute;
+      top: -9999px;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="time-display">0:00 / 0:00</div>
+  <div id="status-display">Iniciando...</div>
+  <canvas id="canvas" width="480" height="270"></canvas>
+  <video id="video-el" playsinline></video>
+
+  <script>
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const totalDur = parseFloat(params.get('dur') || '1420');
+      const readyDelayMs = parseFloat(params.get('ready') || '0');
+      const earlyReset = params.get('early') === 'reset';
+      const bufferMs = parseFloat(params.get('buffer') || '0');
+      const noseek = params.get('noseek') === '1';
+      const blackMs = params.get('black') === '1' ? 5000 : 0;
+
+      const startTime = Date.now();
+      let realTime = 0;
+      let isPaused = false;
+      let isBuffering = false;
+      let bufferUntil = 0;
+      let blackUntil = 0;
+
+      const video = document.getElementById('video-el');
+      const timeEl = document.getElementById('time-display');
+      const statusEl = document.getElementById('status-display');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+
+      function isMetadataReady() {
+        return (Date.now() - startTime) >= readyDelayMs;
+      }
+
+      function getEffectiveReadyState() {
+        if (!isMetadataReady()) return 1; // HAVE_METADATA pendiente
+        if (isBuffering || Date.now() < bufferUntil) return 2; // HAVE_CURRENT_DATA / waiting
+        return 4; // HAVE_ENOUGH_DATA
+      }
+
+      function format(s) {
+        s = Math.max(0, Math.floor(s));
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return m + ':' + (sec < 10 ? '0' : '') + sec;
+      }
+
+      function updateUI() {
+        const ready = isMetadataReady();
+        const curDur = ready ? totalDur : 0;
+        timeEl.textContent = format(realTime) + ' / ' + (ready ? format(curDur) : '--:--');
+        
+        let st = isPaused ? 'Pausado' : 'Reproduciendo';
+        if (!ready) st = 'Cargando metadatos (ready=' + readyDelayMs + 'ms)...';
+        else if (isBuffering || Date.now() < bufferUntil) st = 'Almacenando en búfer (buffer=' + bufferMs + 'ms)...';
+        statusEl.textContent = st;
+
+        // Renderizado en canvas
+        const isBlack = Date.now() < blackUntil;
+        if (isBlack || !ready) {
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#666';
+          ctx.font = '16px monospace';
+          ctx.fillText(ready ? 'Buffer / Negro...' : 'Cargando stream...', 20, 50);
+        } else {
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = '20px monospace';
+          ctx.fillText('Tiempo Real: ' + realTime.toFixed(1) + 's', 20, 50);
+          ctx.fillText('Duración: ' + totalDur + 's', 20, 85);
+          ctx.fillText('ReadyState: ' + getEffectiveReadyState(), 20, 120);
+
+          // Barra de progreso
+          ctx.fillStyle = '#ef4444';
+          const p = totalDur > 0 ? (realTime / totalDur) : 0;
+          ctx.fillRect(0, canvas.height - 10, canvas.width * p, 10);
+        }
+      }
+
+      // Interceptar propiedades nativas del <video>
+      Object.defineProperty(video, 'currentTime', {
+        get: function() {
+          return realTime;
+        },
+        set: function(val) {
+          if (noseek) {
+            console.log('[embed-slow] Salto ignorado (noseek=1): intento', val);
+            return;
+          }
+          if (!isMetadataReady() && earlyReset) {
+            console.log('[embed-slow] Salto temprano reiniciado a 0 (early=reset): intento', val);
+            realTime = 0;
+            updateUI();
+            return;
+          }
+          const num = Number(val) || 0;
+          realTime = Math.max(0, Math.min(totalDur, num));
+          console.log('[embed-slow] Salto aceptado a:', realTime);
+          if (bufferMs > 0) {
+            isBuffering = true;
+            bufferUntil = Date.now() + bufferMs;
+            setTimeout(() => { isBuffering = false; }, bufferMs);
+          }
+          if (blackMs > 0) {
+            blackUntil = Date.now() + blackMs;
+          }
+          updateUI();
+        },
+        configurable: true,
+      });
+
+      Object.defineProperty(video, 'duration', {
+        get: function() {
+          return isMetadataReady() ? totalDur : 0;
+        },
+        configurable: true,
+      });
+
+      Object.defineProperty(video, 'readyState', {
+        get: function() {
+          return getEffectiveReadyState();
+        },
+        configurable: true,
+      });
+
+      Object.defineProperty(video, 'paused', {
+        get: function() {
+          return isPaused;
+        },
+        configurable: true,
+      });
+
+      video.play = function() {
+        isPaused = false;
+        updateUI();
+        return Promise.resolve();
+      };
+
+      video.pause = function() {
+        isPaused = true;
+        updateUI();
+      };
+
+      // Ticker de avance real cada 100 ms
+      setInterval(function() {
+        const ready = isMetadataReady();
+        const buffering = isBuffering || Date.now() < bufferUntil;
+        if (ready && !isPaused && !buffering) {
+          realTime = Math.min(totalDur, realTime + 0.1);
+        }
+        updateUI();
+      }, 100);
+
+      // Exponer window.__v exigido por el requerimiento 6
+      window.__v = video;
+      updateUI();
+    })();
+  </script>
+</body>
+</html>

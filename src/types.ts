@@ -210,6 +210,11 @@ export interface PlaybackState {
   servers?: { name: string; language?: string; quality?: string; url?: string }[];
   serversExhausted?: boolean;
   seekUnsupported?: boolean;
+  estimated?: boolean;
+  resume?: {
+    status: 'esperando' | 'reanudando' | 'ok' | 'fallo';
+    objetivo: number;
+  } | null;
   subtitlesEnabled?: boolean;
   playbackMeta?: {
     title: string;

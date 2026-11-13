@@ -124,7 +124,9 @@ app.whenReady().then(async () => {
     height: 720,
     show: false,
     webPreferences: {
+      partition: 'persist:probe-screen-' + Date.now(),
       preload: preloadPath,
+      webviewTag: true,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -136,7 +138,9 @@ app.whenReady().then(async () => {
     height: 844,
     show: false,
     webPreferences: {
+      partition: 'persist:probe-phone-' + Date.now(),
       preload: preloadPath,
+      webviewTag: true,
       contextIsolation: true,
       nodeIntegration: false,
     },

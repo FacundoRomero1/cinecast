@@ -6,6 +6,7 @@ import { globalAudioEngine } from '../services/audioEngine';
 import { watchHistoryService } from '../services/watchHistoryService';
 import { audioPrefs } from '../services/audioPrefs';
 import { diagnosticService } from '../services/diagnosticService';
+import { ResumeController, type ResumeState } from '../app/resumeController';
 import {
   Play, Pause, RotateCcw, RotateCw, Volume2, VolumeX, Maximize, Minimize,
   ArrowLeft, FastForward, Sliders, ChevronRight, X, Server, RefreshCw, Globe, Sparkles, ExternalLink,
@@ -263,11 +264,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const recapEnd = episode ? episode.recapEnd : media.recapEnd;
 
   const availableServers: StreamServer[] = useMemo(() => {
-    // 1. IPTV / en vivo: el item ya trae su única señal
-    if (media.category === 'live_tv' || media.streamType === 'hls') {
-      if (episode?.servers?.length) return episode.servers;
-      if (media.servers?.length) return media.servers;
-    }
+    // 1. Servidores explícitos (IPTV, en vivo o provistos por el llamador)
+    if (episode?.servers?.length) return episode.servers;
+    if (media.servers?.length) return media.servers;
 
     // 2. Pelis Y series: generar los espejos por TMDB
     if (tmdbIdToUse > 0) {
@@ -278,10 +277,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         episode: selectedEpisode,
       });
     }
-
-    // 3. Fallbacks
-    if (episode?.servers?.length) return episode.servers;
-    if (media.servers?.length) return media.servers;
 
     const isEmbed =
       media.streamType === 'iframe' || currentVideoUrl.includes('vidsrc') ||
@@ -453,6 +448,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(true);
   const [seekUnsupported, setSeekUnsupported] = useState<boolean>(false);
+  const [resumeState, setResumeState] = useState<ResumeState | null>(null);
+  const [isEstimatedTime, setIsEstimatedTime] = useState<boolean>(false);
+  const isEstimatedTimeRef = useRef<boolean>(false);
+  useEffect(() => { isEstimatedTimeRef.current = isEstimatedTime; }, [isEstimatedTime]);
 
   const [signalToast, setSignalToast] = useState<string | null>(null);
   const signalToastTimerRef = useRef<any>(null);
@@ -1171,6 +1170,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       duration: dur,
       isPlaying: playing,
       seekUnsupported: extraOverrides?.seekUnsupported ?? (isIframeMode ? seekUnsupported : false),
+      estimated: extraOverrides?.estimated ?? (isIframeMode ? (seekUnsupported || isEstimatedTimeRef.current) : false),
+      resume: extraOverrides?.resume ?? resumeState,
       marathon: marathonMode,
       hasIntroTimings: introStart !== undefined && introEnd !== undefined,
       isIntroActive: introStart !== undefined && introEnd !== undefined && time >= introStart && time <= introEnd,
@@ -1498,13 +1499,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (realState && realState.found) {
         simulatedTimeRef.current = realState.currentTime;
         setCurrentTime(realState.currentTime);
+        if (!seekUnsupported) {
+          setIsEstimatedTime(false);
+        }
         if (realState.duration > 0) {
           setDuration(realState.duration);
         }
         setIsPlaying(realState.isPlaying);
         broadcastImmediate(realState.isPlaying);
 
-        if (realState.currentTime > 15 && Math.round(realState.currentTime) % 4 === 0) {
+        if (!seekUnsupported && realState.currentTime > 15 && Math.round(realState.currentTime) % 4 === 0) {
           watchHistoryService.saveProgress({
             mediaItem: media, episodeItem: episode,
             seasonNumber: selectedSeason, episodeNumber: selectedEpisode,
@@ -1512,27 +1516,45 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           });
         }
       } else if (isIframeMode && isPlaying) {
+        setIsEstimatedTime(true);
         simulatedTimeRef.current += 1;
         const t = simulatedTimeRef.current;
         setCurrentTime(t);
         if (t % 2 === 0) {
-          broadcastImmediate();
+          broadcastImmediate(undefined, { estimated: true });
         }
-        if (t > 15 && t % 4 === 0) {
-          watchHistoryService.saveProgress({
-            mediaItem: media, episodeItem: episode,
-            seasonNumber: selectedSeason, episodeNumber: selectedEpisode,
-            currentTime: t, duration: duration > 0 ? duration : 5400,
-          });
-        }
+        // No se guarda tiempo simulado en historial cuando el video no es accesible
       }
     }, 1000);
     return () => clearInterval(interval);
   }, [isIframeMode, isPlaying, media, episode, selectedSeason, selectedEpisode, broadcastImmediate, duration]);
 
+  // Único responsable de reanudar en modo embebido (ResumeController)
+  useEffect(() => {
+    if (!isIframeMode || !initialTime || initialTime <= 0) return;
+    const controller = new ResumeController();
+    const unsub = controller.start(initialTime, (res) => {
+      setResumeState(res);
+      if (res.status === 'fallo') {
+        setSeekUnsupported(true);
+        setIsEstimatedTime(true);
+        broadcastImmediate(undefined, { resume: res, seekUnsupported: true, estimated: true });
+      } else if (res.status === 'ok') {
+        setSeekUnsupported(false);
+        setIsEstimatedTime(false);
+        broadcastImmediate(undefined, { resume: res, seekUnsupported: false, estimated: false });
+      } else {
+        broadcastImmediate(undefined, { resume: res });
+      }
+    });
+    return () => unsub();
+  }, [isIframeMode, initialTime, activeServerIndex, activeEmbedUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => () => {
-    const finalTime = isIframeMode ? simulatedTimeRef.current : (videoRef.current?.currentTime || 0);
-    if (finalTime > 15) {
+    const finalTime = isIframeMode
+      ? (isEstimatedTimeRef.current ? null : simulatedTimeRef.current)
+      : (videoRef.current?.currentTime || 0);
+    if (finalTime && finalTime > 15) {
       watchHistoryService.saveProgress({
         mediaItem: media, episodeItem: episode,
         seasonNumber: selectedSeason, episodeNumber: selectedEpisode,

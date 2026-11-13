@@ -945,11 +945,17 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
           {/* Control táctil deslizable (role="slider") con pista de 8px y área táctil de 44px */}
           <div className="space-y-1.5 pt-1">
-            {playbackState?.seekUnsupported ? (
-              <div className="p-2 rounded-xl bg-zinc-800/80 border border-zinc-700/60 text-center text-xs text-amber-300 font-semibold">
-                Este reproductor no permite saltar
+            {playbackState?.resume && (playbackState.resume.status === 'esperando' || playbackState.resume.status === 'reanudando') && (
+              <div className="p-2 rounded-xl bg-blue-950/80 border border-blue-600/60 text-center text-xs text-blue-200 font-semibold animate-pulse">
+                Reanudando en {formatTime(playbackState.resume.objetivo)}…
               </div>
-            ) : (
+            )}
+            {(playbackState?.resume?.status === 'fallo' || playbackState?.seekUnsupported) && (
+              <div className="p-2 rounded-xl bg-amber-950/80 border border-amber-600/60 text-center text-xs text-amber-200 font-semibold">
+                Este reproductor no permite saltar · No se pudo reanudar, usá la barra
+              </div>
+            )}
+            {!playbackState?.seekUnsupported && (
               <>
                 <div
                   role="slider"
@@ -1014,7 +1020,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
                 {/* Tiempos transcurrido / total y nota discreta si no hay duración */}
                 <div className="flex justify-between items-center text-[11px] font-mono text-zinc-400">
-                  <span>{formatTime(displayTime)}</span>
+                  <span>{(playbackState?.estimated || playbackState?.seekUnsupported || playbackState?.resume?.status === 'fallo') ? '~' : ''}{formatTime(displayTime)}</span>
                   {!isDurationValid && (
                     <span className="text-[10px] text-zinc-500 italic">
                       Transmisión en vivo o duración desconocida

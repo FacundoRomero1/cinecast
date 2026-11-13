@@ -1218,6 +1218,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       connectedScreenName,
       isScreenReconnecting,
       devices,
+      remotePlaybackState,
     };
   }
 
