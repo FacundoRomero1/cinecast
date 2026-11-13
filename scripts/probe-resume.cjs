@@ -92,7 +92,7 @@ ipcMain.handle('get-real-media-state', async () => {
   for (const frame of frames) {
     try {
       const res = await frame.executeJavaScript(`(() => {
-        const v = window.__v || document.querySelector('video');
+        const v = window.__v || (window.location.href.includes('embed-slow') ? document.querySelector('video') : null);
         if (!v) return null;
         const dur = Number.isFinite(v.duration) ? v.duration : 0;
         const cur = Number.isFinite(v.currentTime) ? v.currentTime : 0;
@@ -118,7 +118,7 @@ ipcMain.handle('control-active-media', async (_event, { action, value }) => {
   for (const frame of frames) {
     try {
       const res = await frame.executeJavaScript(`(() => {
-        const v = window.__v || document.querySelector('video');
+        const v = window.__v || (window.location.href.includes('embed-slow') ? document.querySelector('video') : null);
         if (!v) return { acted: false };
         if (${JSON.stringify(action)} === 'seek') {
           v.currentTime = Number(${JSON.stringify(value)}) || 0;
@@ -220,7 +220,7 @@ async function runVariant(key, queryParams, baseUrl, roomId, winScreen, winPhone
     for (const frame of allFrames) {
       try {
         const res = await frame.executeJavaScript(`(() => {
-          const v = window.__v || document.querySelector('video');
+          const v = window.__v || (window.location.href.includes('embed-slow') ? document.querySelector('video') : null);
           if (!v) return null;
           return {
             currentTime: Number.isFinite(v.currentTime) ? v.currentTime : 0,
