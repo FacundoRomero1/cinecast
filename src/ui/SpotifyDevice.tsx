@@ -43,9 +43,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
   isScreen = true,
   onNavigateToSettings,
 }) => {
-  const [stage, setStage] = useState<SpotifyDeviceState>(() => {
-    return !authService.getSpotifyClientId() ? 'missing_client_id' : 'connecting';
-  });
+  const [stage, setStage] = useState<SpotifyDeviceState>('connecting');
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [isPlayerConnected, setIsPlayerConnected] = useState<boolean>(false);
   const [currentTrack, setCurrentTrack] = useState<any>(null);
@@ -101,8 +99,8 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     if (!auth.connected) {
       setStage((prev) => (prev === 'waiting_auth' ? 'waiting_auth' : 'unauthorized'));
     } else {
-      // Conectado a nivel OAuth -> conectar SDK (si ya está connected o en error, mantenerlo)
-      setStage((prev) => (prev === 'connected' || prev === 'error' ? prev : 'connecting'));
+      // Conectado a nivel OAuth -> conectar SDK
+      setStage((prev) => (prev === 'connected' ? 'connected' : 'connecting'));
     }
   }, []);
 
@@ -222,25 +220,19 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     } else {
       (window as any).onSpotifyWebPlaybackSDKReady = setupPlayerInstance;
 
-      const handleScriptError = () => {
-        if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
-        setErrorCause('no cargó sdk.scdn.co');
-        setErrorMessage('No cargó sdk.scdn.co: comprueba tu conexión a internet.');
-        setStage('error');
-      };
-
-      const existingScript = document.getElementById('spotify-player-sdk') as HTMLScriptElement | null;
+      const existingScript = document.getElementById('spotify-player-sdk');
       if (!existingScript) {
         const script = document.createElement('script');
         script.id = 'spotify-player-sdk';
         script.src = 'https://sdk.scdn.co/spotify-player.js';
         script.async = true;
-        script.onerror = handleScriptError;
-        script.addEventListener('error', handleScriptError);
+        script.onerror = () => {
+          if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+          setErrorCause('no cargó sdk.scdn.co');
+          setErrorMessage('No cargó sdk.scdn.co: comprueba tu conexión a internet.');
+          setStage('error');
+        };
         document.body.appendChild(script);
-      } else {
-        existingScript.onerror = handleScriptError;
-        existingScript.addEventListener('error', handleScriptError);
       }
     }
   }, [deviceName, volume, onDeviceReady, onTrackChange]);

@@ -150,16 +150,21 @@ async function run() {
   await wait(2000);
 
   const missingDom = await win.webContents.executeJavaScript(`
-    (() => {
-      const text = document.body.innerText || '';
-      const hasMissingTitle = text.includes('Falta el Client ID');
-      const hasSettingsBtn = Boolean(document.querySelector('button[aria-label="Falta el Client ID"], button') && text.includes('Configurar en Ajustes'));
-      const ls = {};
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        ls[k] = localStorage.getItem(k);
+    (async () => {
+      for (let i = 0; i < 40; i++) {
+        const text = document.body.innerText || '';
+        if (text.includes('Falta el Client ID')) {
+          const hasSettingsBtn = Boolean(text.includes('Configurar en Ajustes'));
+          return { hasMissingTitle: true, hasSettingsBtn, textPreview: text.slice(0, 300) };
+        }
+        await new Promise(r => setTimeout(r, 100));
       }
-      return { hasMissingTitle, hasSettingsBtn, ls, textPreview: text.slice(0, 300) };
+      const text = document.body.innerText || '';
+      return {
+        hasMissingTitle: text.includes('Falta el Client ID'),
+        hasSettingsBtn: Boolean(text.includes('Configurar en Ajustes')),
+        textPreview: text.slice(0, 300)
+      };
     })()
   `);
 
