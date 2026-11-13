@@ -159,6 +159,7 @@ async function run() {
     })()
   `);
 
+  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '1. Estado missing_client_id ("Falta el Client ID" + botón a Ajustes)',
     expected: 'hasMissingTitle: true, hasSettingsBtn: true',
@@ -184,6 +185,7 @@ async function run() {
     })()
   `);
 
+  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '2. Ajustes: Sección "Spotify (dispositivo CineCast)" con redirect exacto y Copiar',
     expected: 'Sección, No conectado, Redirect 127.0.0.1:3000/auth/callback y botón Copiar presentes',
@@ -223,6 +225,7 @@ async function run() {
     })()
   `);
 
+  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '3. Estado unauthorized ("Falta autorizar tu cuenta", Redirect exacto, nota INVALID_CLIENT/User Management)',
     expected: 'Title, AuthBtn, Redirect, Copy, InvalidClientNotice presentes y Client ID enmascarado',
@@ -256,6 +259,7 @@ async function run() {
     })()
   `);
 
+  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '4. Estado waiting_auth ("Esperando que autorices en el navegador…" + botón Cancelar)',
     expected: 'WaitingTitle: true, CancelBtn: true',
@@ -277,6 +281,7 @@ async function run() {
   // ==========================================
   console.log('[probe-spotify-states] Evaluando Estado 4: error con causas explícitas...');
   await win.webContents.executeJavaScript(`
+    localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
     localStorage.setItem('cinecast_spotify_token', 'mock_token_for_connecting');
   `);
   await win.loadURL(`${baseUrl}/#/musica`);
@@ -295,11 +300,13 @@ async function run() {
       await new Promise(r => setTimeout(r, 600));
       let text = document.body.innerText || '';
       results.causeA = text.includes('sdk.scdn.co') && text.includes('Reintentar');
+      results.textPreview = text.slice(0, 300);
 
       return results;
     })()
   `);
 
+  console.log('[probe-spotify-states] errorTestResults DEBUG:', JSON.stringify(errorTestResults));
   testResults.push({
     test: '5. Estado error: muestra causa explícita ("no cargó sdk.scdn.co") y botón "Reintentar"',
     expected: 'Causa y Reintentar en pantalla, sin spinner eterno',
@@ -316,6 +323,7 @@ async function run() {
   await win.webContents.executeJavaScript(`
     (() => {
       // Mock de autenticación exitosa
+      localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
       localStorage.setItem('cinecast_spotify_token', 'mock_access_token_12345');
       localStorage.setItem('cinecast_spotify_user', JSON.stringify({
         id: 'user_123',
@@ -388,6 +396,7 @@ async function run() {
     })()
   `);
 
+  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '6. Estado connected ("CineCast TV disponible en tu Spotify", track actual y botón Desconectar)',
     expected: 'Available, Bohemian Rhapsody, Queen y Desconectar presentes',
@@ -423,6 +432,7 @@ async function run() {
   const clientIdLeaked = logsText.includes(sensitiveClientId);
   const maskedClientIdPresent = logsText.includes('5dfd...7d41');
 
+  console.log('[probe-spotify-states] connectedDom DEBUG:', JSON.stringify(connectedDom));
   testResults.push({
     test: '7. Sanitización en /api/client-log (token y client ID completos nunca en texto claro)',
     expected: 'tokenLeaked: false, clientIdLeaked: false, masked: true',
