@@ -1255,7 +1255,7 @@ const ControlView: React.FC = () => {
 };
 
 interface SettingsViewProps {
-  onSwitchToClassic: () => void;
+  onSwitchToClassic?: () => void;
 }
 
 const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
@@ -1535,17 +1535,19 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
       {/* Diagnóstico de conexión */}
       <ConnectionDiagnosticSection />
 
-      {/* Volver a la vista clásica */}
-      <div className="pt-2">
-        <button
-          type="button"
-          onClick={onSwitchToClassic}
-          className="min-h-[44px] px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-bold inline-flex items-center gap-2 transition"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Volver a la vista clásica</span>
-        </button>
-      </div>
+      {/* Volver a la vista clásica (si está habilitado) */}
+      {onSwitchToClassic && (
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={onSwitchToClassic}
+            className="min-h-[44px] px-5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-bold inline-flex items-center gap-2 transition"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Volver a la vista clásica</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -1797,7 +1799,7 @@ const YouTubeView: React.FC = () => {
 };
 
 interface NewAppContentProps {
-  onSwitchToClassic: () => void;
+  onSwitchToClassic?: () => void;
 }
 
 const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
@@ -2125,17 +2127,14 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
 };
 
 export const NewApp: React.FC<NewAppProps> = ({ onDisableV2 }) => {
-  const handleSwitchToClassic = useCallback(() => {
-    try {
-      localStorage.setItem('cinecast_ui_v2', '0');
-    } catch (_) {}
-    if (onDisableV2) {
+  const handleSwitchToClassic = useMemo(() => {
+    if (!onDisableV2) return undefined;
+    return () => {
+      try {
+        localStorage.setItem('cinecast_ui_v2', '0');
+      } catch (_) {}
       onDisableV2();
-      return;
-    }
-    const url = new URL(window.location.href);
-    url.searchParams.set('ui', 'clasico');
-    window.location.href = url.toString();
+    };
   }, [onDisableV2]);
 
   return (

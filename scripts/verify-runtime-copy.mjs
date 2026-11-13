@@ -6,7 +6,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
-const appPath = path.join(rootDir, 'src', 'App.tsx');
+let appPath = path.join(rootDir, 'src', 'App.tsx');
+if (!fs.existsSync(appPath)) {
+  appPath = path.join(rootDir, 'legacy', 'src', 'App.tsx');
+}
 const runtimePath = path.join(rootDir, 'src', 'app', 'AppRuntime.tsx');
 
 const appLines = fs.readFileSync(appPath, 'utf8').split(/\r?\n/);
