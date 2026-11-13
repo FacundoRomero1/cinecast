@@ -30,12 +30,13 @@ export interface AppRuntimeContextValue {
   setRoomId: React.Dispatch<React.SetStateAction<string>>;
   devices: DeviceInfo[];
   selectedScreenId: string | null;
-  setSelectedScreenId: React.Dispatch<React.SetStateAction<string | null>>;
+  setSelectedScreenId: (id: string | null) => void;
   homeRoomId: string | null;
   isPermanentHomeLinked: boolean;
   isGuestMode: boolean;
   setIsGuestMode: React.Dispatch<React.SetStateAction<boolean>>;
   connectedScreenName: string;
+  isScreenReconnecting: boolean;
   handleTogglePermanentHome: () => void;
 
   // Hubs
@@ -128,7 +129,38 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [deviceRole, setDeviceRole] = useState<DeviceType>(deviceSync.getDeviceType());
   const [roomId, setRoomId] = useState<string>(deviceSync.getRoomId());
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
-  const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null);
+
+  // Reglas obligatorias de pantalla: estabilidad, restauración de localStorage y tolerancia a reconexiones
+  const [selectedScreenId, setSelectedScreenIdState] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('cinecast_selected_screen_id') || null;
+      } catch (_) {}
+    }
+    return null;
+  });
+
+  const [lastKnownScreenName, setLastKnownScreenName] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('cinecast_selected_screen_name') || 'PC / Pantalla Principal';
+      } catch (_) {}
+    }
+    return 'PC / Pantalla Principal';
+  });
+
+  const setSelectedScreenId = useCallback((id: string | null) => {
+    setSelectedScreenIdState(id);
+    if (typeof window !== 'undefined') {
+      try {
+        if (id) {
+          localStorage.setItem('cinecast_selected_screen_id', id);
+        } else {
+          localStorage.removeItem('cinecast_selected_screen_id');
+        }
+      } catch (_) {}
+    }
+  }, []);
 
   // Permanent Home Link State
   const [homeRoomId, setHomeRoomId] = useState<string | null>(() => {
@@ -337,11 +369,28 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
 
-      // Automatically select first screen found if none selected
-      if (!selectedScreenId) {
-        const firstScreen = devs.find((d) => d.type === 'screen' || d.type === 'hybrid');
-        if (firstScreen) setSelectedScreenId(firstScreen.id);
-      }
+      // Regla (iii) y (iv): SOLO pantallas (o hybrid), nunca remote ni a sí mismo
+      // La selección automática solo ocurre si no hay ninguna pantalla elegida y existe exactamente UNA pantalla
+      const myId = deviceSync.getDeviceId();
+      const validScreens = devs.filter(
+        (d) => (d.type === 'screen' || d.type === 'hybrid') && !d.isCurrent && d.id !== myId
+      );
+
+      setSelectedScreenIdState((prevSelected) => {
+        if (!prevSelected) {
+          if (validScreens.length === 1) {
+            const only = validScreens[0];
+            try {
+              localStorage.setItem('cinecast_selected_screen_id', only.id);
+              localStorage.setItem('cinecast_selected_screen_name', only.name);
+            } catch (_) {}
+            setLastKnownScreenName(only.name);
+            return only.id;
+          }
+          return null;
+        }
+        return prevSelected;
+      });
     });
 
     return () => {
@@ -1138,9 +1187,39 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // COPIA de App.tsx L1098-1110; borrar al eliminar la UI clásica
-  // Target connected screen friendly name
-  const connectedScreen = devices.find((d) => d.id === selectedScreenId);
-  const connectedScreenName = connectedScreen?.name || (devices.length > 0 ? devices[0].name : 'PC Dormitorio');
+  // Target connected screen friendly name and reconnection status
+  const myDeviceId = deviceSync.getDeviceId();
+  const validScreens = devices.filter(
+    (d) => (d.type === 'screen' || d.type === 'hybrid') && !d.isCurrent && d.id !== myDeviceId
+  );
+  const connectedScreen = validScreens.find((d) => d.id === selectedScreenId);
+  const isScreenReconnecting = Boolean(selectedScreenId && !connectedScreen);
+
+  useEffect(() => {
+    if (connectedScreen) {
+      setLastKnownScreenName(connectedScreen.name);
+      try {
+        localStorage.setItem('cinecast_selected_screen_name', connectedScreen.name);
+      } catch (_) {}
+    }
+  }, [connectedScreen]);
+
+  const connectedScreenName =
+    connectedScreen?.name ||
+    (selectedScreenId
+      ? lastKnownScreenName
+      : validScreens.length === 1
+      ? validScreens[0].name
+      : 'Sin pantalla');
+
+  if (typeof window !== 'undefined') {
+    (window as any).__cinecastRuntime = {
+      selectedScreenId,
+      connectedScreenName,
+      isScreenReconnecting,
+      devices,
+    };
+  }
 
   // Currently playing item for handheld remote preview (reflects real active title, series, or anime)
   const remoteMediaItem =
@@ -1599,6 +1678,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     isGuestMode,
     setIsGuestMode,
     connectedScreenName,
+    isScreenReconnecting,
     handleTogglePermanentHome,
     activeHub,
     setActiveHub,

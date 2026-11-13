@@ -1,18 +1,17 @@
 import type { Server as HttpServer } from 'http';
-import { WebSocketServer, WebSocket, type RawData } from 'ws';
+import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
-  rooms,
-  globalDevices,
-  roomPlaybackStates,
-  globalLatestPlaybackState,
-  getOrCreateRoom,
   broadcastRoomDevices,
+  getOrCreateRoom,
+  globalDevices,
+  globalLatestPlaybackState,
+  incrementCommandSeq,
   recordAndBroadcastCommand,
   recordAndBroadcastState,
+  roomPlaybackStates,
+  rooms,
   setLatestRemoteJoin,
-  incrementCommandSeq,
   startPruneTimer,
-  commandHistory,
   type ConnectedClient,
   type PlaybackCommandPayload,
   type PlaybackStatePayload,
@@ -27,7 +26,6 @@ interface IncomingWsMessage {
   fromDevice?: string;
   targetDeviceId?: string;
   id?: string;
-  lastSeq?: number;
   command?: PlaybackCommandPayload;
   state?: PlaybackStatePayload;
 }
@@ -47,7 +45,7 @@ function startServerHeartbeat(): void {
           // No hubo pong en 25 s -> terminate()
           try {
             client.ws.terminate();
-          } catch (_) {}
+          } catch (_) { }
           globalDevices.delete(id);
           const r = rooms.get(client.roomId);
           r?.delete(id);
@@ -58,7 +56,7 @@ function startServerHeartbeat(): void {
         client.lastPingSent = now;
         try {
           client.ws.ping();
-        } catch (_) {}
+        } catch (_) { }
       } else if (client.ws.readyState === WebSocket.CLOSED || client.ws.readyState === WebSocket.CLOSING) {
         globalDevices.delete(id);
         const r = rooms.get(client.roomId);
@@ -80,7 +78,7 @@ export function broadcastWsEvent(payload: Record<string, unknown>): void {
     if (client.readyState === WebSocket.OPEN) {
       try {
         client.send(serialized);
-      } catch (_) {}
+      } catch (_) { }
     }
   });
 }
@@ -120,6 +118,15 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
           case 'join': {
             const { roomId = 'cine-home-1', deviceId, deviceName, deviceType } = msg;
             if (!deviceId) return;
+
+            // Reemplazo limpio: si existía un socket previo para este deviceId, terminarlo
+            const existingClient = globalDevices.get(deviceId);
+            if (existingClient && existingClient.ws && existingClient.ws !== ws) {
+              try {
+                existingClient.ws.terminate();
+              } catch (_) {}
+            }
+
             const room = getOrCreateRoom(roomId);
             clientInfo = {
               ws,
@@ -152,7 +159,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                 if (c.deviceId !== deviceId && c.ws && c.ws.readyState === WebSocket.OPEN) {
                   try {
                     c.ws.send(joinAlert);
-                  } catch (_) {}
+                  } catch (_) { }
                 }
               });
             }
@@ -161,28 +168,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
             if (existingState) {
               try {
                 ws.send(JSON.stringify({ type: 'sync_state', state: existingState }));
-              } catch (_) {}
-            }
-
-            if (deviceType === 'screen' || deviceType === 'hybrid') {
-              const clientLastSeq = typeof msg.lastSeq === 'number' ? msg.lastSeq : 0;
-              const now = Date.now();
-              const missed = commandHistory.filter(
-                (q) => q.roomId === roomId && q.seq > clientLastSeq && now - q.timestamp < 15000
-              );
-              missed.forEach((q) => {
-                try {
-                  ws.send(
-                    JSON.stringify({
-                      type: 'command',
-                      id: q.id,
-                      seq: q.seq,
-                      fromDevice: q.fromDevice,
-                      command: q.command,
-                    })
-                  );
-                } catch (_) {}
-              });
+              } catch (_) { }
             }
             break;
           }
@@ -199,11 +185,11 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                 if (res.delivered) {
                   try {
                     ws.send(JSON.stringify({ type: 'ack', id: msg.id, delivered: true, timestamp: Date.now() }));
-                  } catch (_) {}
+                  } catch (_) { }
                 } else {
                   try {
                     ws.send(JSON.stringify({ type: 'nack', id: msg.id, reason: 'sin-pantalla', timestamp: Date.now() }));
-                  } catch (_) {}
+                  } catch (_) { }
                 }
               }
             }
@@ -228,7 +214,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
             }
             try {
               ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
-            } catch (_) {}
+            } catch (_) { }
             break;
           }
         }

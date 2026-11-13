@@ -44,6 +44,7 @@ export interface RemotePanelProps {
   currentMedia?: MediaItem | null;
   currentEpisode?: Episode | null;
   connectedScreenName?: string;
+  isScreenReconnecting?: boolean;
   onSendCommand: (command: RemoteCommand) => void;
   onOpenCastModal: () => void;
   onOpenAudioModal?: () => void;
@@ -69,6 +70,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   currentMedia,
   currentEpisode,
   connectedScreenName,
+  isScreenReconnecting = false,
   onSendCommand,
   onOpenCastModal,
   onOpenAudioModal,
@@ -559,7 +561,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             className={`w-3 h-3 rounded-full shrink-0 ${
               !isConnected || connStatus.state === 'disconnected'
                 ? 'bg-rose-500'
-                : connStatus.state === 'reconnecting'
+                : connStatus.state === 'reconnecting' || isScreenReconnecting
                 ? 'bg-amber-500 animate-pulse'
                 : 'bg-emerald-500'
             }`}
@@ -569,7 +571,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               <p className="text-[11px] uppercase tracking-wider font-bold text-zinc-400">
                 {!isConnected || connStatus.state === 'disconnected'
                   ? 'Sin conexión'
-                  : connStatus.state === 'reconnecting'
+                  : connStatus.state === 'reconnecting' || isScreenReconnecting
                   ? 'Reconectando...'
                   : connStatus.latencyMs > 0
                   ? `${connStatus.latencyMs} ms`

@@ -12,6 +12,7 @@ export interface RemoteSheetProps {
   currentMedia?: MediaItem | null;
   currentEpisode?: Episode | null;
   connectedScreenName?: string;
+  isScreenReconnecting?: boolean;
   onSendCommand: (command: RemoteCommand) => void;
   onOpenCastModal: () => void;
   onOpenAudioModal?: () => void;
@@ -28,6 +29,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
   currentMedia,
   currentEpisode,
   connectedScreenName,
+  isScreenReconnecting = false,
   onSendCommand,
   onOpenCastModal,
   onOpenAudioModal,
@@ -197,7 +199,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
                 </div>
                 <div>
                   <span className="text-xs font-extrabold text-white block">Control Remoto</span>
-                  <span className="text-[10px] text-zinc-400 block truncate max-w-[200px]">
+                  <span className={`text-[10px] block truncate max-w-[200px] ${isScreenReconnecting ? 'text-amber-400' : 'text-zinc-400'}`}>
                     {connectedScreenName || 'Sin pantalla'}
                   </span>
                 </div>
@@ -295,6 +297,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
               currentMedia={currentMedia}
               currentEpisode={currentEpisode}
               connectedScreenName={connectedScreenName}
+              isScreenReconnecting={isScreenReconnecting}
               onSendCommand={onSendCommand}
               onOpenCastModal={onOpenCastModal}
               onOpenAudioModal={onOpenAudioModal}

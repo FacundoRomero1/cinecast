@@ -71,9 +71,16 @@ export function getAllActiveDevicesList(): ActiveDeviceSummary[] {
   const now = Date.now();
   const active: ActiveDeviceSummary[] = [];
   globalDevices.forEach((client) => {
-    const wsOpen = client.ws && client.ws.readyState === WebSocket.OPEN;
-    if (!wsOpen && now - client.lastSeen > 45000) {
-      return;
+    // Si el cliente está usando WebSocket, SOLO está activo si ws.readyState === WebSocket.OPEN
+    // Si no tiene WS (polling HTTP), expira si pasaron > 10s desde su último ping/lastSeen
+    if (client.ws) {
+      if (client.ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+    } else {
+      if (now - client.lastSeen > 10000) {
+        return;
+      }
     }
     active.push({
       id: client.deviceId,
@@ -89,8 +96,9 @@ export function getAllActiveDevicesList(): ActiveDeviceSummary[] {
 export function prune(): void {
   const now = Date.now();
   globalDevices.forEach((client, id) => {
-    const wsOpen = client.ws && client.ws.readyState === WebSocket.OPEN;
-    if (!wsOpen && now - client.lastSeen > 45000) {
+    const wsDead = client.ws && (client.ws.readyState === WebSocket.CLOSED || client.ws.readyState === WebSocket.CLOSING);
+    const httpExpired = !client.ws && now - client.lastSeen > 10000;
+    if (wsDead || httpExpired) {
       globalDevices.delete(id);
       const r = rooms.get(client.roomId);
       r?.delete(id);

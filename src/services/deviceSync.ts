@@ -1113,8 +1113,12 @@ export class DeviceSyncService {
   }
 
   private notifyDevicesListeners() {
-    const list = Array.from(this.knownDevices.values());
+    const list = this.getDevices();
     this.devicesListeners.forEach((fn) => fn(list));
+  }
+
+  public getDevices(): DeviceInfo[] {
+    return Array.from(this.knownDevices.values());
   }
 
   public getDeviceId(): string {

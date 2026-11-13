@@ -1228,6 +1228,7 @@ const ControlView: React.FC = () => {
     remoteMediaItem,
     remoteEpisodeItem,
     connectedScreenName,
+    isScreenReconnecting,
     sendRemoteCommand,
     setIsAudioModalOpen,
     setIsGuestModalOpen,
@@ -1237,13 +1238,17 @@ const ControlView: React.FC = () => {
     <div className="p-2 sm:p-6 pb-40 max-w-xl mx-auto">
       <h1 className="text-xl sm:text-2xl font-extrabold text-white mb-1 px-2">Control Remoto</h1>
       <p className="text-xs text-zinc-400 mb-4 px-2">
-        Controlando pantalla: <strong className="text-zinc-200">{connectedScreenName}</strong>
+        Controlando pantalla:{' '}
+        <strong className={`transition-colors ${isScreenReconnecting ? 'text-amber-400' : 'text-zinc-200'}`}>
+          {connectedScreenName} {isScreenReconnecting && '(Reconectando...)'}
+        </strong>
       </p>
       <RemotePanel
         playbackState={remotePlaybackState}
         currentMedia={remoteMediaItem}
         currentEpisode={remoteEpisodeItem}
         connectedScreenName={connectedScreenName}
+        isScreenReconnecting={isScreenReconnecting}
         onSendCommand={sendRemoteCommand}
         onOpenAudioModal={() => setIsAudioModalOpen(true)}
         onOpenCastModal={() => navigate('/pantallas')}
@@ -1818,6 +1823,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     isPermanentHomeLinked,
     handleTogglePermanentHome,
     connectedScreenName,
+    isScreenReconnecting,
     activeHub,
     isScreenInStandby,
     setIsScreenInStandby,
@@ -2087,6 +2093,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
         currentMedia={remoteMediaItem}
         currentEpisode={remoteEpisodeItem}
         connectedScreenName={connectedScreenName}
+        isScreenReconnecting={isScreenReconnecting}
         onSendCommand={sendRemoteCommand}
         onOpenCastModal={() => navigate('/pantallas')}
         onOpenAudioModal={() => setIsAudioModalOpen(true)}
