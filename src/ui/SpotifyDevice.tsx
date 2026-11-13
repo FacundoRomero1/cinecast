@@ -101,8 +101,8 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     if (!auth.connected) {
       setStage((prev) => (prev === 'waiting_auth' ? 'waiting_auth' : 'unauthorized'));
     } else {
-      // Conectado a nivel OAuth -> conectar SDK
-      setStage((prev) => (prev === 'connected' ? 'connected' : 'connecting'));
+      // Conectado a nivel OAuth -> conectar SDK (si ya está connected o en error, mantenerlo)
+      setStage((prev) => (prev === 'connected' || prev === 'error' ? prev : 'connecting'));
     }
   }, []);
 
