@@ -195,12 +195,9 @@ async function run() {
   // ==========================================
   console.log('[probe-spotify-states] Evaluando Estado 2: unauthorized...');
   await win.webContents.executeJavaScript(`
-    (() => {
-      localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
-      window.location.hash = '#/musica';
-      window.location.reload();
-    })();
+    localStorage.setItem('cinecast_spotify_client_id', '5dfd1234567890abcdef123456787d41');
   `);
+  await win.loadURL(`${baseUrl}/#/musica`);
   await wait(2500);
 
   const unauthorizedDom = await win.webContents.executeJavaScript(`
