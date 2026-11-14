@@ -16,10 +16,12 @@ import {
   getOrCreateRoom,
   getAllActiveDevicesList,
   broadcastRoomDevices,
+  isLaunchAction,
   recordAndBroadcastCommand,
   recordAndBroadcastState,
   incrementCommandSeq,
   setLatestRemoteJoin,
+  type CommandCseq,
   type ConnectedClient,
   type PlaybackCommandPayload,
   type PlaybackStatePayload,
@@ -38,6 +40,7 @@ interface CommandBody {
   targetDeviceId?: string;
   command?: PlaybackCommandPayload;
   id?: string;
+  cseq?: CommandCseq;
 }
 
 interface StateBody {
@@ -145,15 +148,12 @@ export function createSyncRouter(): Router {
     const existing = fromDevice ? globalDevices.get(fromDevice) : undefined;
     if (existing) existing.lastSeen = Date.now();
 
-    if (typeof (body as any).issuedAt === 'number' && typeof (command as any).issuedAt !== 'number') {
-      (command as any).issuedAt = (body as any).issuedAt;
-    }
-
-    const result = recordAndBroadcastCommand(roomId, fromDevice || 'remote_http', command, targetDeviceId, id, (body as any).cseq);
+    const result = recordAndBroadcastCommand(roomId, fromDevice || 'remote_http', command, targetDeviceId, id, body.cseq);
     res.json({
       ok: true,
       seq: commandSeqCounter,
       issuedAt: (command as any)?.issuedAt,
+      serverAgeMs: (command as any)?.serverAgeMs,
       ack: result.delivered ? { id, delivered: true } : undefined,
       nack: !result.delivered ? { id, reason: 'sin-pantalla' } : undefined,
     });
@@ -215,13 +215,20 @@ export function createSyncRouter(): Router {
           : commandSeqCounter)
       : sinceSeq;
 
-    const newCommands = commandHistory.filter(
-      (c) =>
-        c.roomId === roomId &&
-        c.seq > baseline &&
-        c.fromDevice !== deviceId &&
-        now - c.timestamp < 8000
-    );
+    const newCommands = commandHistory
+      .filter(
+        (c) =>
+          c.roomId === roomId &&
+          c.seq > baseline &&
+          c.fromDevice !== deviceId &&
+          (!deviceId ||
+            (now - c.timestamp < 15000 &&
+              (!isLaunchAction((c.command as any)?.action) || now - c.timestamp < 5000)))
+      )
+      .map((c) => ({
+        ...c,
+        serverAgeMs: Math.max(0, now - c.timestamp),
+      }));
     if (deviceId && newCommands.length > 0) {
       const maxSeq = Math.max(...newCommands.map((c) => c.seq));
       lastDeliveredSeqByDevice.set(deviceId, Math.max(baseline, maxSeq));

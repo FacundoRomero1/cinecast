@@ -53,8 +53,9 @@ export class DeviceSyncService {
   private lastSeq: number = 0;
   private hasJoinedOnce: boolean = false;
   private executedCommandIds: Set<string> = new Set();
+  private clientEpoch: number = 1;
   private clientCommandSeq: number = 0;
-  private lastAppliedCseqBySender: Map<string, number> = new Map();
+  private lastAppliedCseqBySender: Map<string, string> = new Map();
 
   // Control de pestaña única (lease en localStorage) y estado otra-pestana
   private tabId: string = 'tab_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now();
@@ -127,12 +128,43 @@ export class DeviceSyncService {
   private stateWatchdogTimer: any = null;
 
   constructor() {
+    this.initSenderEpoch();
     this.initDeviceId();
     this.initBroadcastChannel();
     this.fetchLocalIp();
     this.initLifecycleListeners();
     this.startStateWatchdog();
     this.startTelemetryReporting();
+  }
+
+  private initSenderEpoch() {
+    if (typeof window === 'undefined') return;
+    try {
+      const prevEpoch = parseInt(localStorage.getItem('cinecast_sender_epoch') || '0', 10) || 0;
+      this.clientEpoch = prevEpoch + 1;
+      localStorage.setItem('cinecast_sender_epoch', String(this.clientEpoch));
+    } catch (_) {
+      this.clientEpoch = 1;
+    }
+  }
+
+  private normalizeCseq(cseq: number | string): string {
+    if (typeof cseq === 'number') {
+      const n = Number.isFinite(cseq) ? Math.max(0, Math.floor(cseq)) : 0;
+      return `000000000000:${String(n).padStart(12, '0')}`;
+    }
+    const raw = String(cseq).trim();
+    if (raw.includes(':')) {
+      const parts = raw.split(':');
+      const ep = String(Math.max(0, parseInt(parts[0] || '0', 10) || 0)).padStart(12, '0');
+      const sq = String(Math.max(0, parseInt(parts[1] || '0', 10) || 0)).padStart(12, '0');
+      return `${ep}:${sq}`;
+    }
+    const num = parseInt(raw, 10);
+    if (!Number.isNaN(num)) {
+      return `000000000000:${String(Math.max(0, num)).padStart(12, '0')}`;
+    }
+    return raw.padStart(25, '0');
   }
 
   public getApiBase(): string {
@@ -760,6 +792,9 @@ export class DeviceSyncService {
               type: 'command',
               id: item.id,
               seq: item.seq,
+              cseq: item.cseq,
+              issuedAt: item.issuedAt,
+              serverAgeMs: item.serverAgeMs,
               fromDevice: item.fromDevice,
               command: item.command,
             });
@@ -792,7 +827,7 @@ export class DeviceSyncService {
     this.pingTimer = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.lastPingSentAt = Date.now();
-        this.ws.send(JSON.stringify({ type: 'ping', timestamp: this.lastPingSentAt }));
+        this.ws.send(JSON.stringify({ type: 'ping', timestamp: this.lastPingSentAt, lastSeq: this.lastSeq }));
       }
     }, 10000);
   }
@@ -1085,6 +1120,16 @@ export class DeviceSyncService {
       return;
     }
 
+    if (msg.type === 'joined' && typeof msg.senderEpoch === 'number' && msg.senderEpoch > this.clientEpoch) {
+      this.clientEpoch = msg.senderEpoch;
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('cinecast_sender_epoch', String(this.clientEpoch));
+        } catch (_) {}
+      }
+      return;
+    }
+
     if (msg.type === 'ack' && msg.id) {
       this.handleAck(msg.id, msg);
     } else if (msg.type === 'nack' && msg.id) {
@@ -1113,18 +1158,29 @@ export class DeviceSyncService {
         const cmd = msg.command;
         const cmdId = msg.id;
         const fromDevice = msg.fromDevice || 'remote_anon';
-        const cseq = typeof msg.cseq === 'number' ? msg.cseq : (typeof (cmd as any)?.cseq === 'number' ? (cmd as any).cseq : undefined);
+        const cseq = msg.cseq ?? (cmd as any)?.cseq;
 
         if (this.isLaunchAction(cmd.action)) {
-          const rawIssuedAt = Number(
-            (cmd as any)?.issuedAt ??
-              msg.issuedAt ??
-              (cmd as any)?.payload?.issuedAt
-          );
-          if (Number.isFinite(rawIssuedAt) && rawIssuedAt > 0) {
-            (cmd as any).issuedAt = rawIssuedAt;
-            if (Date.now() - rawIssuedAt > 10000) {
+          const serverAgeMs = Number(msg.serverAgeMs ?? (cmd as any)?.serverAgeMs);
+          if (Number.isFinite(serverAgeMs)) {
+            if (typeof msg.issuedAt === 'number') {
+              (cmd as any).issuedAt = msg.issuedAt;
+            }
+            (cmd as any).serverAgeMs = serverAgeMs;
+            if (serverAgeMs > 10000) {
               return;
+            }
+          } else {
+            const rawIssuedAt = Number(
+              (cmd as any)?.issuedAt ??
+                msg.issuedAt ??
+                (cmd as any)?.payload?.issuedAt
+            );
+            if (Number.isFinite(rawIssuedAt) && rawIssuedAt > 0) {
+              (cmd as any).issuedAt = rawIssuedAt;
+              if (Date.now() - rawIssuedAt > 10000) {
+                return;
+              }
             }
           }
         }
@@ -1137,12 +1193,13 @@ export class DeviceSyncService {
             'jumpToEpisode',
             'setAudioSettings',
           ]);
-          if (ABSOLUTE_ACTIONS.has(cmd.action) && typeof cseq === 'number') {
-            const lastCseq = this.lastAppliedCseqBySender.get(fromDevice) || 0;
-            if (cseq < lastCseq) {
+          if (ABSOLUTE_ACTIONS.has(cmd.action) && (typeof cseq === 'number' || typeof cseq === 'string')) {
+            const normCseq = this.normalizeCseq(cseq);
+            const lastCseq = this.lastAppliedCseqBySender.get(fromDevice);
+            if (lastCseq && normCseq < lastCseq) {
               return;
             }
-            this.lastAppliedCseqBySender.set(fromDevice, cseq);
+            this.lastAppliedCseqBySender.set(fromDevice, normCseq);
           }
           this.commandListeners.forEach((fn) => fn(cmd, fromDevice));
         }
@@ -1179,18 +1236,8 @@ export class DeviceSyncService {
     this.telemetryCounters.enviados++;
 
     this.clientCommandSeq += 1;
-    const cseq = this.clientCommandSeq;
+    const cseq = `${String(this.clientEpoch).padStart(12, '0')}:${String(this.clientCommandSeq).padStart(12, '0')}`;
     (command as any).cseq = cseq;
-
-    if (this.isLaunchAction(command.action)) {
-      const existingIssuedAt = Number(
-        (command as any).issuedAt ?? (command as any)?.payload?.issuedAt
-      );
-      (command as any).issuedAt =
-        Number.isFinite(existingIssuedAt) && existingIssuedAt > 0
-          ? existingIssuedAt
-          : Date.now();
-    }
 
     const entry: CommandDiagnosticEntry = {
       id: cmdId,

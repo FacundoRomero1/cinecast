@@ -15,8 +15,10 @@ import {
   recordAndBroadcastState,
   roomPlaybackStates,
   rooms,
+  serverSessionEpochByDevice,
   setLatestRemoteJoin,
   startPruneTimer,
+  type CommandCseq,
   type ConnectedClient,
   type PlaybackCommandPayload,
   type PlaybackStatePayload,
@@ -31,7 +33,7 @@ interface IncomingWsMessage {
   fromDevice?: string;
   targetDeviceId?: string;
   id?: string;
-  cseq?: number;
+  cseq?: CommandCseq;
   lastSeq?: number;
   isReconnect?: boolean;
   command?: PlaybackCommandPayload;
@@ -191,6 +193,14 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               } catch (_) { }
             }
 
+            if (!msg.isReconnect) {
+              const nextEpoch = (serverSessionEpochByDevice.get(deviceId) || 0) + 1;
+              serverSessionEpochByDevice.set(deviceId, nextEpoch);
+              try {
+                ws.send(JSON.stringify({ type: 'joined', senderEpoch: nextEpoch }));
+              } catch (_) {}
+            }
+
             if (deviceType === 'screen' || deviceType === 'hybrid') {
               const hadPriorRecord = lastDeliveredSeqByDevice.has(deviceId);
               const isReconnectJoin = Boolean(msg.isReconnect) && hadPriorRecord;
@@ -208,7 +218,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                   (q) =>
                     q.roomId === roomId &&
                     q.seq > baselineSeq &&
-                    now - q.timestamp < 8000 &&
+                    now - q.timestamp < 15000 &&
                     !isLaunchAction((q.command as any)?.action) &&
                     (!q.targetDeviceId || q.targetDeviceId === deviceId)
                 );
@@ -221,6 +231,8 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                         id: q.id,
                         seq: q.seq,
                         cseq: q.cseq,
+                        issuedAt: q.timestamp,
+                        serverAgeMs: Math.max(0, now - q.timestamp),
                         fromDevice: q.fromDevice,
                         command: q.command,
                       })
@@ -228,7 +240,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                     if (q.seq > maxDelivered) maxDelivered = q.seq;
                   } catch (_) {}
                 });
-                lastDeliveredSeqByDevice.set(deviceId, Math.max(maxDelivered, commandSeqCounter));
+                lastDeliveredSeqByDevice.set(deviceId, Math.max(baselineSeq, maxDelivered));
               }
             }
             break;
@@ -241,9 +253,6 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               clientInfo.isAlive = true;
             }
             if (msg.command) {
-              if (typeof (msg as any).issuedAt === 'number' && typeof (msg.command as any).issuedAt !== 'number') {
-                (msg.command as any).issuedAt = (msg as any).issuedAt;
-              }
               const res = recordAndBroadcastCommand(rId, fromId, msg.command, msg.targetDeviceId, msg.id, msg.cseq);
               if (msg.id) {
                 if (res.delivered) {
@@ -275,6 +284,12 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
             if (clientInfo) {
               clientInfo.lastSeen = Date.now();
               clientInfo.isAlive = true;
+              if (typeof msg.lastSeq === 'number') {
+                const prev = lastDeliveredSeqByDevice.get(clientInfo.deviceId) ?? 0;
+                if (msg.lastSeq > prev) {
+                  lastDeliveredSeqByDevice.set(clientInfo.deviceId, msg.lastSeq);
+                }
+              }
             }
             try {
               ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));

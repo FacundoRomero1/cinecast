@@ -290,6 +290,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const countdownTimerRef = useRef<any>(null);
   const marathonConsecutiveCountRef = useRef<number>(0);
   const lastAutoAdvancedChapterRef = useRef<string | null>(null);
+  const lastAutoAdvanceTriggeredAtRef = useRef<number>(0);
   const lastObservedTimeRef = useRef<number>(0);
   const stillTimeCounterRef = useRef<number>(0);
   const preloadedSeasonKeyRef = useRef<string>('');
@@ -508,9 +509,16 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Handle incoming commands sent from mobile
   const handleRemoteCommandReceived = (cmd: RemoteCommand, _from?: string) => {
     if (deviceSync.isLaunchAction(cmd.action)) {
-      const issuedAt = Number((cmd as any)?.issuedAt ?? (cmd as any)?.payload?.issuedAt);
-      if (Number.isFinite(issuedAt) && issuedAt > 0 && Date.now() - issuedAt > 10000) {
-        return;
+      const serverAgeMs = Number((cmd as any)?.serverAgeMs);
+      if (Number.isFinite(serverAgeMs)) {
+        if (serverAgeMs > 10000) {
+          return;
+        }
+      } else {
+        const issuedAt = Number((cmd as any)?.issuedAt ?? (cmd as any)?.payload?.issuedAt);
+        if (Number.isFinite(issuedAt) && issuedAt > 0 && Date.now() - issuedAt > 10000) {
+          return;
+        }
       }
     }
 
@@ -1302,6 +1310,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         });
       }
 
+      lastAutoAdvanceTriggeredAtRef.current = Date.now();
+      lastObservedTimeRef.current = 0;
+      stillTimeCounterRef.current = 0;
       setActiveEpisode(nextEp);
       setPlayerInitialTime(0);
       setIsPlayingLocally(true);
@@ -2042,7 +2053,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }).catch(() => {});
         }
 
-        if (shouldAdvance) {
+        const canAutoAdvanceNow = Date.now() - lastAutoAdvanceTriggeredAtRef.current >= 2500;
+        if (shouldAdvance && canAutoAdvanceNow) {
           const currentChapterKey = `${activeMedia?.id || realState.title || 'embed'}_s${activeEpisode?.seasonNumber || remotePlaybackState.seasonNumber || 0}_e${activeEpisode?.episodeNumber || remotePlaybackState.episodeNumber || 0}`;
           if (sleepTimerRef.current?.mode === 'chapter') {
             if (lastAutoAdvancedChapterRef.current !== currentChapterKey) {

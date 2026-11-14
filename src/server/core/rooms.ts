@@ -16,9 +16,11 @@ export interface ConnectedClient {
 export type PlaybackCommandPayload = Record<string, unknown>;
 export type PlaybackStatePayload = Record<string, unknown>;
 
+export type CommandCseq = number | string;
+
 export interface QueuedCommand {
   seq: number;
-  cseq?: number;
+  cseq?: CommandCseq | undefined;
   id: string;
   roomId: string;
   fromDevice: string;
@@ -54,6 +56,8 @@ export const globalDevices = new Map<string, ConnectedClient>();
 export const lastDeliveredSeqByDevice = new Map<string, number>();
 export const firstJoinSeqByDevice = new Map<string, number>();
 export const commandSeqById = new Map<string, number>();
+export const commandFirstSeenAtById = new Map<string, number>();
+export const serverSessionEpochByDevice = new Map<string, number>();
 
 // Store latest playback state per room + global latest state
 export const roomPlaybackStates = new Map<string, PlaybackStatePayload>();
@@ -211,50 +215,58 @@ export function recordAndBroadcastCommand(
   command: PlaybackCommandPayload,
   targetDeviceId?: string,
   msgId?: string,
-  cseq?: number
+  cseq?: CommandCseq
 ): { delivered: boolean; screenCount: number } {
   const uniqueId = msgId || `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const resolvedCseq = typeof cseq === 'number' ? cseq : (typeof (command as any)?.cseq === 'number' ? (command as any).cseq : undefined);
+  const rawCseq = cseq ?? (command as any)?.cseq;
+  const resolvedCseq: CommandCseq | undefined =
+    typeof rawCseq === 'number' || typeof rawCseq === 'string' ? rawCseq : undefined;
   const actionName = typeof (command as any)?.action === 'string' ? (command as any).action : '';
   const isLaunch = isLaunchAction(actionName);
-
-  if (isLaunch && command && typeof command === 'object') {
-    const serverNow = Date.now();
-    const rawIssuedAt = Number((command as any).issuedAt ?? (command as any)?.payload?.issuedAt);
-    const stampedIssuedAt =
-      Number.isFinite(rawIssuedAt) && rawIssuedAt > 0
-        ? Math.min(serverNow, rawIssuedAt)
-        : serverNow;
-    (command as any).issuedAt = stampedIssuedAt;
-  }
+  const serverNow = Date.now();
 
   const isDuplicate = seenCommandIds.has(uniqueId);
   if (!isDuplicate) {
     seenCommandIds.add(uniqueId);
+    commandFirstSeenAtById.set(uniqueId, serverNow);
     if (seenCommandIds.size > 500) {
       const first = seenCommandIds.values().next().value;
       if (first) {
         seenCommandIds.delete(first);
         commandSeqById.delete(first);
+        commandFirstSeenAtById.delete(first);
       }
     }
 
     commandSeqCounter += 1;
     commandSeqById.set(uniqueId, commandSeqCounter);
-    if (!isLaunch) {
-      const queued: QueuedCommand = {
-        seq: commandSeqCounter,
-        cseq: resolvedCseq,
-        id: uniqueId,
-        roomId,
-        fromDevice,
-        targetDeviceId,
-        command,
-        timestamp: Date.now(),
-      };
-      commandHistory.push(queued);
-      if (commandHistory.length > 100) commandHistory.shift();
+    const queued: QueuedCommand = {
+      seq: commandSeqCounter,
+      cseq: resolvedCseq,
+      id: uniqueId,
+      roomId,
+      fromDevice,
+      targetDeviceId,
+      command,
+      timestamp: serverNow,
+    };
+    commandHistory.push(queued);
+    if (commandHistory.length > 250) commandHistory.shift();
+  }
+
+  // La antigüedad se calcula exclusivamente con el reloj del servidor (ignorar reloj del celular)
+  const firstSeenAt = commandFirstSeenAtById.get(uniqueId) ?? serverNow;
+  const serverAgeMs = Math.max(0, serverNow - firstSeenAt);
+  if (isLaunch && command && typeof command === 'object') {
+    (command as any).issuedAt = firstSeenAt;
+    (command as any).serverAgeMs = serverAgeMs;
+    if ((command as any).payload && typeof (command as any).payload === 'object' && 'issuedAt' in (command as any).payload) {
+      (command as any).payload.issuedAt = firstSeenAt;
     }
+  }
+
+  if (isLaunch && serverAgeMs > 10000) {
+    return { delivered: false, screenCount: 0 };
   }
 
   const cmdSeq = commandSeqById.get(uniqueId) ?? commandSeqCounter;
@@ -264,7 +276,8 @@ export function recordAndBroadcastCommand(
     id: uniqueId,
     seq: cmdSeq,
     cseq: resolvedCseq,
-    issuedAt: isLaunch ? (command as any)?.issuedAt : undefined,
+    issuedAt: isLaunch ? firstSeenAt : undefined,
+    serverAgeMs: isLaunch ? serverAgeMs : undefined,
     fromDevice,
     command,
   });
@@ -284,10 +297,6 @@ export function recordAndBroadcastCommand(
     ) {
       try {
         client.ws.send(forwardPayload);
-        lastDeliveredSeqByDevice.set(
-          client.deviceId,
-          Math.max(lastDeliveredSeqByDevice.get(client.deviceId) || 0, cmdSeq)
-        );
         screensReached++;
       } catch (_) {}
     }

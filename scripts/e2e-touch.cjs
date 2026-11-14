@@ -271,83 +271,6 @@ app.whenReady().then(async () => {
     } catch (_) {}
   }
 
-  testEnv = await startTestEnv({ name: 'e2e-touch', useLanIp: true });
-  const lanIp = testEnv.lanIp;
-  const port = testEnv.port;
-  activeRoomId = testEnv.room;
-  const baseUrl = testEnv.lanBase;
-
-  const preloadPath = path.join(__dirname, '..', 'electron', 'preload.cjs');
-
-  // Ventana PC (?role=screen)
-  const winA = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 800,
-    webPreferences: {
-      partition: 'persist:e2e-touch-screen',
-      preload: preloadPath,
-      webviewTag: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      webSecurity: true,
-      autoplayPolicy: 'no-user-gesture-required',
-    },
-  });
-
-  // Ventana Celular (?role=remote): Crear con show:false, cargar URL, y recién entonces emular por debugger
-  const winB = new BrowserWindow({
-    show: false,
-    width: 390,
-    height: 844,
-    webPreferences: {
-      partition: 'persist:e2e-touch-remote',
-      preload: preloadPath,
-      webviewTag: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      webSecurity: true,
-      autoplayPolicy: 'no-user-gesture-required',
-    },
-  });
-
-  const MOBILE_ANDROID_UA =
-    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
-  winB.webContents.setUserAgent(MOBILE_ANDROID_UA);
-
-  await Promise.all([
-    winA.loadURL(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoomId)}`),
-    winB.loadURL(`${baseUrl}/?role=remote&ui=nuevo&room=${encodeURIComponent(activeRoomId)}`),
-  ]);
-
-  // Emulación por debugger
-  winB.webContents.debugger.attach('1.3');
-  await winB.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
-    width: 390,
-    height: 844,
-    deviceScaleFactor: 2,
-    mobile: true,
-  });
-  await winB.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled', {
-    enabled: true,
-    maxTouchPoints: 1,
-  });
-
-  winA.showInactive();
-  winB.showInactive();
-  await wait(2000);
-
-  const isSecure = await winB.webContents.executeJavaScript('window.isSecureContext');
-  console.log(`[e2e-touch] URL Base: ${baseUrl}`);
-  console.log(`[e2e-touch] window.isSecureContext en celular: ${isSecure}`);
-
-  // Asegurar sala común
-  const roomId = activeRoomId;
-  await winA.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
-  await winB.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
-
   // Sembrar 4 entradas de "Continuar viendo" con episodeTitle="Episodio 1"
   const sampleProgress = [
     {
@@ -459,6 +382,88 @@ app.whenReady().then(async () => {
     },
   ];
 
+  testEnv = await startTestEnv({
+    name: 'e2e-touch',
+    useLanIp: true,
+    seedHistory: false,
+    initialWatchHistory: sampleProgress,
+  });
+  const lanIp = testEnv.lanIp;
+  const port = testEnv.port;
+  activeRoomId = testEnv.room;
+  const baseUrl = testEnv.lanBase;
+
+  const preloadPath = path.join(__dirname, '..', 'electron', 'preload.cjs');
+
+  // Ventana PC (?role=screen)
+  const winA = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 800,
+    webPreferences: {
+      partition: 'persist:e2e-touch-screen',
+      preload: preloadPath,
+      webviewTag: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: true,
+      autoplayPolicy: 'no-user-gesture-required',
+    },
+  });
+
+  // Ventana Celular (?role=remote): Crear con show:false, cargar URL, y recién entonces emular por debugger
+  const winB = new BrowserWindow({
+    show: false,
+    width: 390,
+    height: 844,
+    webPreferences: {
+      partition: 'persist:e2e-touch-remote',
+      preload: preloadPath,
+      webviewTag: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: true,
+      autoplayPolicy: 'no-user-gesture-required',
+    },
+  });
+
+  const MOBILE_ANDROID_UA =
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+  winB.webContents.setUserAgent(MOBILE_ANDROID_UA);
+
+  await Promise.all([
+    winA.loadURL(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoomId)}`),
+    winB.loadURL(`${baseUrl}/?role=remote&ui=nuevo&room=${encodeURIComponent(activeRoomId)}`),
+  ]);
+
+  // Emulación por debugger
+  winB.webContents.debugger.attach('1.3');
+  await winB.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 2,
+    mobile: true,
+  });
+  await winB.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled', {
+    enabled: true,
+    maxTouchPoints: 1,
+  });
+
+  winA.showInactive();
+  winB.showInactive();
+  await wait(2000);
+
+  const isSecure = await winB.webContents.executeJavaScript('window.isSecureContext');
+  console.log(`[e2e-touch] URL Base: ${baseUrl}`);
+  console.log(`[e2e-touch] window.isSecureContext en celular: ${isSecure}`);
+
+  // Asegurar sala común
+  const roomId = activeRoomId;
+  await winA.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
+  await winB.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
+
   winA.webContents.on('console-message', (_e, l, msg) => {
     if (l >= 2 && !msg.includes('bluetooth') && !msg.includes('[vite]')) console.log('[winA console]', msg);
   });
@@ -474,7 +479,32 @@ app.whenReady().then(async () => {
     localStorage.setItem('cinecast_watch_progress_v2', JSON.stringify(${JSON.stringify(sampleProgress)}));
     window.location.hash = '#/';
   `);
-  await wait(1500);
+
+  await Promise.all([
+    new Promise((res) => {
+      winA.webContents.once('did-finish-load', res);
+      winA.reload();
+    }),
+    new Promise((res) => {
+      winB.webContents.once('did-finish-load', res);
+      winB.reload();
+    }),
+  ]);
+
+  const waitForSeededCards = async (w) => {
+    const start = Date.now();
+    while (Date.now() - start < 10000) {
+      const ok = await w.webContents.executeJavaScript(`(() => {
+        const txt = document.body.innerText || '';
+        return txt.includes('Clevatess') && txt.includes('Spider-Man');
+      })()`).catch(() => false);
+      if (ok) return true;
+      await wait(250);
+    }
+    return false;
+  };
+  await Promise.all([waitForSeededCards(winA), waitForSeededCards(winB)]);
+  await wait(800);
 
   const results = [];
 

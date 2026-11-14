@@ -325,10 +325,12 @@ async function startTestEnv(options = {}) {
 
   fs.mkdirSync(dataDir, { recursive: true });
 
-  // Seed initial watch_history.json copy if present so tests never touch public/data/watch_history.json
-  if (options.seedHistory !== false) {
+  // Seed initial watch_history.json explicitly or copy if present so tests never touch public/data/watch_history.json
+  const dstHistory = path.join(dataDir, 'watch_history.json');
+  if (Array.isArray(options.initialWatchHistory)) {
+    fs.writeFileSync(dstHistory, JSON.stringify(options.initialWatchHistory, null, 2), 'utf8');
+  } else if (options.seedHistory !== false) {
     const srcHistory = path.join(ROOT, 'public', 'data', 'watch_history.json');
-    const dstHistory = path.join(dataDir, 'watch_history.json');
     if (fs.existsSync(srcHistory) && !fs.existsSync(dstHistory)) {
       try {
         fs.copyFileSync(srcHistory, dstHistory);

@@ -318,16 +318,14 @@ app.whenReady().then(async () => {
     // (b) Último episodio de la última temporada (S1:E3) -> "Fin de la serie", no cambia id ni inicia nada
     // -------------------------------------------------------------------------
     let sawFinDeLaSerie = false;
-    const pollToastPromise = (async () => {
-      const start = Date.now();
-      while (Date.now() - start < 9000) {
-        const st = await getScreenOverlayState(screenWin);
-        if (st.bodyText.includes('Fin de la serie')) {
-          sawFinDeLaSerie = true;
-        }
-        await wait(250);
+    let pollActiveB = true;
+    const checkFinToast = async () => {
+      const st = await getScreenOverlayState(screenWin);
+      if (st.bodyText.includes('Fin de la serie')) {
+        sawFinDeLaSerie = true;
       }
-    })();
+      return sawFinDeLaSerie;
+    };
 
     await fetch(`${baseUrl}/api/sync/command`, {
       method: 'POST',
@@ -349,8 +347,25 @@ app.whenReady().then(async () => {
     });
 
     await wait(2500);
+
+    // Vigilar en paralelo mientras fastForward lleva al fin y durante 6s completos tras disparar ended
+    const earlyWatchB = (async () => {
+      while (pollActiveB && !sawFinDeLaSerie) {
+        await checkFinToast().catch(() => false);
+        if (sawFinDeLaSerie || !pollActiveB) break;
+        await wait(120);
+      }
+    })();
+
     await fastForwardEmbedVideoToNearEnd(13.8);
-    await pollToastPromise;
+
+    const postEndStart = Date.now();
+    while (!sawFinDeLaSerie && Date.now() - postEndStart < 6000) {
+      if (await checkFinToast().catch(() => false)) break;
+      await wait(120);
+    }
+    pollActiveB = false;
+    await earlyWatchB;
 
     const stateResB = await fetch(`${baseUrl}/api/sync/poll?roomId=${encodeURIComponent(activeRoomId)}&since=0`).then((r) => r.json());
     const pbB = stateResB?.state || {};
@@ -527,7 +542,7 @@ app.whenReady().then(async () => {
     const afterReloadScreen = await getScreenOverlayState(screenWin);
     const notRepeatedAfterReload = !afterReloadScreen.hasVideoPlayer && afterReloadScreen.title !== 'Matrix Recarga Test';
 
-    // Ahora enviar comando de inicio con issuedAt de hace 15 s
+    // Ahora enviar comando de inicio mientras la PC está desconectada y esperar >10s reales en servidor
     const staleMovie = {
       id: 'movie-stale-15s',
       tmdbId: 155,
@@ -536,20 +551,32 @@ app.whenReady().then(async () => {
       category: 'movies',
       servers: [{ name: 'TestEmbed15', url: embedUrl, type: 'iframe', language: 'Latino' }],
     };
-    await fetch(`${baseUrl}/api/sync/command`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        roomId: activeRoomId,
-        issuedAt: Date.now() - 15000,
-        command: {
-          action: 'playDiscoveredMovie',
-          issuedAt: Date.now() - 15000,
-          payload: staleMovie,
-        },
-      }),
-    });
-    await wait(2500);
+    if (!screenWin.webContents.debugger.isAttached()) {
+      screenWin.webContents.debugger.attach('1.3');
+    }
+    try {
+      await screenWin.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
+        offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0,
+      });
+      await fetch(`${baseUrl}/api/sync/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: activeRoomId,
+          command: {
+            action: 'playDiscoveredMovie',
+            payload: staleMovie,
+          },
+        }),
+      });
+      await wait(11500);
+    } finally {
+      await screenWin.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
+        offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+      }).catch(() => {});
+    }
+    await screenWin.webContents.reload();
+    await wait(3500);
 
     const afterStaleScreen = await getScreenOverlayState(screenWin);
     const staleIgnored = !afterStaleScreen.hasVideoPlayer && afterStaleScreen.title !== 'Película Vieja 15s';

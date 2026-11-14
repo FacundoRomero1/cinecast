@@ -162,6 +162,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [countdownToNext, setCountdownToNext] = useState<number | null>(null);
   const [hasAutoSkippedIntro, setHasAutoSkippedIntro] = useState<boolean>(false);
   const [iframeReloadKey, setIframeReloadKey] = useState<number>(0);
+  const prevEpisodeKeyRef = useRef<string | null>(null);
   const [corsMode, setCorsMode] = useState(true);
   const [fallbackActive, setFallbackActive] = useState(false);
   const [cfWarning, setCfWarning] = useState(false);
@@ -629,6 +630,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // ── Reset al cambiar de título / capítulo ────────────────────────────────
   useEffect(() => {
+    const nextEpisodeKey = `${media.id}:${episode?.id || ''}:${selectedSeason}:${selectedEpisode}`;
+    if (prevEpisodeKeyRef.current !== null && prevEpisodeKeyRef.current !== nextEpisodeKey) {
+      setIframeReloadKey((k) => k + 1);
+    }
+    prevEpisodeKeyRef.current = nextEpisodeKey;
     setCurrentTime(0);
     setHasAutoSkippedIntro(false);
     setCountdownToNext(null);

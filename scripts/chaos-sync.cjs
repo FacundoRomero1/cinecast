@@ -143,7 +143,7 @@ async function runScenario(scenarioKey, name, config, ctx) {
   let chaosRunning = true;
   const recoveryEvents = [];
 
-  (async () => {
+  const chaosTask = (async () => {
     while (chaosRunning) {
       if (scenarioKey === 'b') {
         await wait(4500);
@@ -166,13 +166,17 @@ async function runScenario(scenarioKey, name, config, ctx) {
             offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0,
           });
           await wait(3000);
-          if (!chaosRunning) break;
-          console.log('[chaos] Celular online recuperado');
-          await winPhone.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
-            offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
-          });
-          recoveryEvents.push(Date.now());
-        } catch (_) {}
+        } catch (_) {
+        } finally {
+          try {
+            console.log('[chaos] Celular online recuperado');
+            await winPhone.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
+              offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+            });
+            recoveryEvents.push(Date.now());
+          } catch (_) {}
+        }
+        if (!chaosRunning) break;
       } else if (scenarioKey === 'd') {
         await wait(4000);
         if (!chaosRunning) break;
@@ -184,15 +188,19 @@ async function runScenario(scenarioKey, name, config, ctx) {
             document.dispatchEvent(new Event('visibilitychange'));
           `);
           await wait(3000);
-          if (!chaosRunning) break;
-          console.log('[chaos] Celular visible recuperado');
-          await winPhone.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { focus: true });
-          await winPhone.webContents.executeJavaScript(`
-            Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true });
-            document.dispatchEvent(new Event('visibilitychange'));
-          `);
-          recoveryEvents.push(Date.now());
-        } catch (_) {}
+        } catch (_) {
+        } finally {
+          try {
+            console.log('[chaos] Celular visible recuperado');
+            await winPhone.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { focus: true });
+            await winPhone.webContents.executeJavaScript(`
+              Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true });
+              document.dispatchEvent(new Event('visibilitychange'));
+            `);
+            recoveryEvents.push(Date.now());
+          } catch (_) {}
+        }
+        if (!chaosRunning) break;
       } else if (scenarioKey === 'e') {
         await wait(4000);
         if (!chaosRunning) break;
@@ -202,13 +210,17 @@ async function runScenario(scenarioKey, name, config, ctx) {
             offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0,
           });
           await wait(3000);
-          if (!chaosRunning) break;
-          console.log('[chaos] PC online recuperada');
-          await winScreen.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
-            offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
-          });
-          recoveryEvents.push(Date.now());
-        } catch (_) {}
+        } catch (_) {
+        } finally {
+          try {
+            console.log('[chaos] PC online recuperada');
+            await winScreen.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
+              offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+            });
+            recoveryEvents.push(Date.now());
+          } catch (_) {}
+        }
+        if (!chaosRunning) break;
       } else {
         break;
       }
@@ -258,12 +270,13 @@ async function runScenario(scenarioKey, name, config, ctx) {
     }
   }
 
-  console.log(`[chaos-sync] Envío completado. Esperando 2s para absorción de mensajes...`);
-  await wait(2000);
-
   chaosRunning = false;
+  console.log(`[chaos-sync] Envío completado. Esperando cierre de caos y reconexión estable para absorción...`);
+  try {
+    await chaosTask;
+  } catch (_) {}
 
-  // Restaurar red de ambas ventanas si quedó alterada
+  // Restaurar red de ambas ventanas explícitamente tras detener el bucle
   try {
     await winPhone.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
       offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1
@@ -272,6 +285,32 @@ async function runScenario(scenarioKey, name, config, ctx) {
       offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1
     });
   } catch (_) {}
+
+  // Esperar hasta 5s a que ambas ventanas reconecten y completen replay/reintentos
+  const absorbDeadline = Date.now() + 5000;
+  let lastCount = -1;
+  let stableSince = 0;
+  while (Date.now() < absorbDeadline) {
+    const info = await winScreen.webContents.executeJavaScript(`(() => {
+      const ds = window.cinecastDeviceSync;
+      return {
+        status: ds?.getSyncTelemetrySummary?.()?.transporte === 'ws' ? 'connected' : '',
+        len: (window.__receivedCommands || []).length,
+      };
+    })()`).catch(() => ({ status: '', len: 0 }));
+    if (info.len !== lastCount) {
+      lastCount = info.len;
+      stableSince = Date.now();
+    }
+    if (info.status === 'connected' && info.len >= 100) {
+      await wait(400);
+      break;
+    }
+    if (info.status === 'connected' && Date.now() - stableSince >= 2500 && Date.now() >= absorbDeadline - 2000) {
+      break;
+    }
+    await wait(250);
+  }
 
   // Recolectar datos de la PC y del celular como cadenas JSON
   const receivedRaw = await winScreen.webContents.executeJavaScript(`
