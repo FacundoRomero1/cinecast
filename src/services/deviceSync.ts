@@ -1574,6 +1574,7 @@ export class DeviceSyncService {
       vol: state.audioSettings?.volume ?? 100,
       muted: Boolean(state.audioSettings?.isMuted),
       preset: state.audioSettings?.preset || 'standard',
+      sleepMode: state.sleepTimer?.mode || null,
       sleepEndsAt: state.sleepTimer?.endsAt || null,
       spotifyTrack: state.spotifyState?.trackName || null,
       spotifyPlaying: state.spotifyState?.isPlaying ?? null,

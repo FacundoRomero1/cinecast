@@ -99,6 +99,23 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     compressorEnabled: false,
   });
 
+  const [sleepTimerNowMs, setSleepTimerNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!playbackState?.sleepTimer?.endsAt) return;
+    setSleepTimerNowMs(Date.now());
+    const id = setInterval(() => setSleepTimerNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [playbackState?.sleepTimer?.endsAt]);
+
+  const sleepTimerStatusLabel =
+    !playbackState?.sleepTimer || playbackState.sleepTimer.mode === 'off'
+      ? 'Temporizador: apagado'
+      : playbackState.sleepTimer.mode === 'chapter'
+      ? 'Al terminar el capítulo'
+      : playbackState.sleepTimer.endsAt
+      ? `${Math.max(1, Math.ceil((playbackState.sleepTimer.endsAt - sleepTimerNowMs) / 60000))} min restantes`
+      : `${playbackState.sleepTimer.minutes || playbackState.sleepTimer.mode} min restantes`;
+
   const handleUpdateAudioOpts = (changes: Partial<typeof audioOpts>) => {
     const updated = { ...audioOpts, ...changes };
     if (changes.preset === 'dialogos') {
@@ -547,7 +564,9 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-extrabold text-white">¿Seguís viendo?</h3>
-              <p className="text-xs text-amber-200/80">La reproducción se pausará pronto si no hay actividad.</p>
+              <p data-testid="remote-idle-cause" className="text-xs text-amber-200/90 font-semibold">
+                {playbackState.areYouStillThereCause || 'La reproducción se pausará pronto si no hay actividad.'}
+              </p>
             </div>
           </div>
           <button
@@ -1464,13 +1483,25 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <button
           type="button"
           onClick={() => setIsMoreOpen((p) => !p)}
-          className="w-full min-h-[48px] px-4 py-3 flex items-center justify-between text-xs font-bold text-zinc-200 hover:bg-zinc-850 transition"
+          className="w-full min-h-[48px] px-4 py-3 flex items-center justify-between text-xs font-bold text-zinc-200 hover:bg-zinc-850 transition gap-2"
         >
           <div className="flex items-center gap-2">
             <Sliders className="w-4 h-4 text-zinc-400" />
             <span>Más ajustes y funciones</span>
           </div>
-          {isMoreOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              data-testid="sleep-timer-status"
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'
+              }`}
+            >
+              {sleepTimerStatusLabel}
+            </span>
+            {isMoreOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
         </button>
 
         {isMoreOpen && (
@@ -1528,15 +1559,27 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
             {/* Temporizador de reposo (reemplaza Reposo TV clásico) */}
             <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2 mt-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-400" />
-                  <span className="text-xs font-bold text-zinc-200">Temporizador de reposo</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-zinc-200 block">Temporizador de reposo</span>
+                    <span
+                      data-testid="sleep-timer-status-detail"
+                      className={`text-[11px] font-semibold block truncate ${
+                        playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
+                          ? 'text-amber-300'
+                          : 'text-zinc-400'
+                      }`}
+                    >
+                      {sleepTimerStatusLabel}
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => onSendCommand({ action: 'setStandby' })}
-                  className="text-[11px] text-zinc-400 hover:text-white underline"
+                  className="text-[11px] text-zinc-400 hover:text-white underline shrink-0"
                 >
                   Reposo ahora
                 </button>
@@ -1559,12 +1602,20 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                     <button
                       key={opt.mode}
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        if (opt.mode !== 'off') {
+                          try {
+                            localStorage.setItem(
+                              'cinecast_sleep_timer_last_v1',
+                              JSON.stringify({ mode: opt.mode, minutes: opt.minutes, updatedAt: Date.now() })
+                            );
+                          } catch (_) {}
+                        }
                         onSendCommand({
                           action: 'setSleepTimer',
                           payload: { mode: opt.mode, minutes: opt.minutes },
-                        })
-                      }
+                        });
+                      }}
                       className={`min-h-[36px] px-1.5 py-1 rounded-lg text-[10px] font-bold border transition text-center ${
                         isSelected
                           ? 'bg-amber-500 text-black border-amber-400 shadow-sm'

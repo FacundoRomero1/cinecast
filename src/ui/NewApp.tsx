@@ -2027,8 +2027,11 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     isGuestModalOpen,
     setIsGuestModalOpen,
     areYouStillThere,
+    areYouStillThereCause,
     countdownRemaining,
     handleConfirmActiveWatching,
+    notifyUserActivity,
+    handleBeforeAutoAdvance,
   } = useAppRuntime();
 
   const handleSelectCard = useCallback(
@@ -2085,35 +2088,42 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
         </div>
       ) : isPlayingLocally && activeMedia && activeHub === 'cinecast' ? (
         /* 9. Reproductor a pantalla completa sobre todo con las props de App.tsx L1158-1188 */
-        <VideoPlayer
-          key={activeMedia.id + ':' + (activeEpisode?.id ?? '')}
-          media={activeMedia}
-          episode={activeEpisode}
-          audioSettings={audioSettings}
-          playbackSettings={playbackSettings}
-          remoteCommandTrigger={lastRemoteCommand}
-          initialTime={playerInitialTime}
-          onUpdateAudio={(newSettings) => {
-            setAudioSettings((prev) => ({ ...prev, ...newSettings }));
-            deviceSync.broadcastPlaybackState({
-              ...remotePlaybackState,
-              audioSettings: { ...audioSettings, ...newSettings },
-            });
-          }}
-          onClose={() => {
-            setIsPlayingLocally(false);
-            setIsScreenInStandby(false);
-            setActiveMedia(null);
-            setActiveEpisode(null);
-            refreshContinueWatching();
-          }}
-          onNextEpisode={handlePlayNextEpisode}
-          onPrevEpisode={handlePlayPrevEpisode}
-          hasNextEpisode={true}
-          onBroadcastState={handleBroadcastPlayerState}
-          remoteCommandNotification={remoteNotification}
-          onOpenAudioSettings={() => setIsAudioModalOpen(true)}
-        />
+        <div
+          className="contents"
+          onPointerDownCapture={() => notifyUserActivity('player_pointer')}
+          onKeyDownCapture={() => notifyUserActivity('player_key')}
+        >
+          <VideoPlayer
+            key={activeMedia.id + ':' + (activeEpisode?.id ?? '')}
+            media={activeMedia}
+            episode={activeEpisode}
+            audioSettings={audioSettings}
+            playbackSettings={playbackSettings}
+            remoteCommandTrigger={lastRemoteCommand}
+            initialTime={playerInitialTime}
+            onBeforeAutoAdvance={handleBeforeAutoAdvance}
+            onUpdateAudio={(newSettings) => {
+              setAudioSettings((prev) => ({ ...prev, ...newSettings }));
+              deviceSync.broadcastPlaybackState({
+                ...remotePlaybackState,
+                audioSettings: { ...audioSettings, ...newSettings },
+              });
+            }}
+            onClose={() => {
+              setIsPlayingLocally(false);
+              setIsScreenInStandby(false);
+              setActiveMedia(null);
+              setActiveEpisode(null);
+              refreshContinueWatching();
+            }}
+            onNextEpisode={handlePlayNextEpisode}
+            onPrevEpisode={handlePlayPrevEpisode}
+            hasNextEpisode={true}
+            onBroadcastState={handleBroadcastPlayerState}
+            remoteCommandNotification={remoteNotification}
+            onOpenAudioSettings={() => setIsAudioModalOpen(true)}
+          />
+        </div>
       ) : (
         <AppShell
           extraBottomPadding={deviceRole === 'remote'}
@@ -2242,6 +2252,14 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
               <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
                 ¿Seguís ahí?
               </h2>
+              {areYouStillThereCause && (
+                <p
+                  data-testid="are-you-still-there-cause"
+                  className="text-sm font-bold text-amber-300"
+                >
+                  {areYouStillThereCause}
+                </p>
+              )}
               <p className="text-sm text-zinc-400">
                 La pantalla entrará en reposo en{' '}
                 <strong className="text-amber-400 font-mono text-base">{countdownRemaining}</strong> s si no respondes.

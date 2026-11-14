@@ -28,6 +28,7 @@ interface VideoPlayerProps {
   onOpenAudioSettings?: () => void;
   remoteCommandTrigger?: { cmd: RemoteCommand; timestamp: number } | null;
   initialTime?: number;
+  onBeforeAutoAdvance?: (chapterKey: string) => boolean;
 }
 
 const FALLBACK_SRC = 'https://vjs.zencdn.net/v/oceans.mp4';
@@ -143,7 +144,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   media, episode, audioSettings, playbackSettings, onUpdateAudio, onClose,
   onNextEpisode, onPrevEpisode, hasNextEpisode = false, onBroadcastState,
   remoteCommandNotification, onOpenAudioSettings, remoteCommandTrigger, initialTime = 0,
+  onBeforeAutoAdvance,
 }) => {
+  const autoAdvancedChapterGuardRef = useRef<string>('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const controlsTimeoutRef = useRef<any>(null);
@@ -1274,6 +1277,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     simulatedTimeRef.current = 0;
     setCurrentTime(0);
+    if (!isIframeMode && videoRef.current) {
+      try {
+        videoRef.current.currentTime = 0;
+        if (delta > 0) {
+          const p = videoRef.current.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        }
+      } catch (_) {}
+    }
     setIframeReloadKey((k) => k + 1);
     broadcastImmediate();
   }, [isEpisodic, broadcastImmediate, media, marathonMode, triggerSignalToast]);
@@ -1618,10 +1630,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 3000);
   }, [isPlaying, isIframeMode]);
 
+  const tryAutoAdvanceEpisode = useCallback(() => {
+    const chapterKey = `${media.id}_s${selectedSeasonRef.current}_e${selectedEpisodeRef.current}`;
+    if (autoAdvancedChapterGuardRef.current === chapterKey) return;
+    if (onBeforeAutoAdvance && !onBeforeAutoAdvance(chapterKey)) {
+      autoAdvancedChapterGuardRef.current = chapterKey;
+      try {
+        videoRef.current?.pause();
+      } catch (_) {}
+      setIsPlaying(false);
+      return;
+    }
+    autoAdvancedChapterGuardRef.current = chapterKey;
+    handleAdvanceEpisode(1);
+  }, [media.id, onBeforeAutoAdvance, handleAdvanceEpisode]);
+
   const startNextEpisodeCountdown = () => {
     if (marathonMode) {
       // TAREA 5: No muestra cuenta atrás, pasa directo al siguiente capítulo
-      handleAdvanceEpisode(1);
+      tryAutoAdvanceEpisode();
       return;
     }
     let secondsLeft = playbackSettings.nextEpisodeDelay || 5;
@@ -1633,7 +1660,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (secondsLeft <= 0) {
         clearInterval(countdownIntervalRef.current);
         setCountdownToNext(null);
-        handleAdvanceEpisode(1);
+        tryAutoAdvanceEpisode();
       }
     }, 1000);
   };
@@ -1759,7 +1786,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }}
           onError={handleVideoError}
           onEnded={() => {
-            if (isEpisodic && hasNextEpisode && playbackSettings.autoPlayNext) handleAdvanceEpisode(1);
+            if (isEpisodic && hasNextEpisode && playbackSettings.autoPlayNext) tryAutoAdvanceEpisode();
             else setIsPlaying(false);
           }}
           onClick={togglePlay}

@@ -98,11 +98,14 @@ export interface AppRuntimeContextValue {
   setIsGuestModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Temporizador de reposo y ¿Seguís ahí?
-  sleepTimer: { endsAt: number | null; mode: string } | null;
-  setSleepTimer: (timer: { endsAt: number | null; mode: string } | null) => void;
+  sleepTimer: { endsAt: number | null; mode: string; minutes?: number } | null;
+  setSleepTimer: (timer: { endsAt: number | null; mode: string; minutes?: number } | null) => void;
   areYouStillThere: boolean;
+  areYouStillThereCause: string | null;
   countdownRemaining: number;
   handleConfirmActiveWatching: () => void;
+  notifyUserActivity: (source?: string) => void;
+  handleBeforeAutoAdvance: (chapterKey: string) => boolean;
 }
 
 const AppRuntimeContext = createContext<AppRuntimeContextValue | null>(null);
@@ -265,20 +268,28 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [isYouTubePlaying, setIsYouTubePlaying] = useState<boolean>(false);
   const lastAutoSkippedIntroKeyRef = useRef<string>('');
 
-  // Temporizador de reposo y ¿Seguís ahí?
-  const [sleepTimer, setSleepTimerState] = useState<{ endsAt: number | null; mode: string } | null>(() => {
-    try {
-      const saved = localStorage.getItem('cinecast_sleep_timer_v1');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return null;
-  });
-  const sleepTimerRef = useRef<{ endsAt: number | null; mode: string } | null>(sleepTimer);
+  // Temporizador de reposo y ¿Seguís ahí? (siempre inicia desarmado al arrancar; solo persiste última duración elegida)
+  const [sleepTimer, setSleepTimerState] = useState<{ endsAt: number | null; mode: string; minutes?: number } | null>(null);
+  const sleepTimerRef = useRef<{ endsAt: number | null; mode: string; minutes?: number } | null>(sleepTimer);
   useEffect(() => {
     sleepTimerRef.current = sleepTimer;
   }, [sleepTimer]);
+  useEffect(() => {
+    try {
+      localStorage.removeItem('cinecast_sleep_timer_v1');
+    } catch (_) {}
+  }, []);
 
   const [areYouStillThere, setAreYouStillThere] = useState<boolean>(false);
+  const [areYouStillThereCause, setAreYouStillThereCause] = useState<string | null>(null);
+  const areYouStillThereRef = useRef<boolean>(false);
+  const areYouStillThereCauseRef = useRef<string | null>(null);
+  useEffect(() => {
+    areYouStillThereRef.current = areYouStillThere;
+  }, [areYouStillThere]);
+  useEffect(() => {
+    areYouStillThereCauseRef.current = areYouStillThereCause;
+  }, [areYouStillThereCause]);
   const [isOtherTabReplaced, setIsOtherTabReplaced] = useState<boolean>(() =>
     deviceSync.isReplacedByOtherTab()
   );
@@ -296,6 +307,40 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const stillTimeCounterRef = useRef<number>(0);
   const preloadedSeasonKeyRef = useRef<string>('');
   const lastCommandTimeMapRef = useRef<Map<string, number>>(new Map());
+
+  const hasActivePlayback = Boolean(
+    (isPlayingLocally && activeMedia && activeHub === 'cinecast') ||
+      isSpotifyPlaying ||
+      isYouTubePlaying
+  );
+  const hasActivePlaybackRef = useRef<boolean>(hasActivePlayback);
+  hasActivePlaybackRef.current = hasActivePlayback;
+
+  const logSleepTimerEvent = useCallback(
+    (event: 'armed' | 'disarmed' | 'fired', detail: { cause?: string; mode?: string; minutes?: number }) => {
+      if (deviceRole === 'remote') return;
+      try {
+        fetch('/api/client-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tag: 'sleep_timer',
+            event,
+            cause: detail.cause || event,
+            mode: detail.mode || 'off',
+            minutes: detail.minutes ?? null,
+            ts: Date.now(),
+          }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch (_) {}
+    },
+    [deviceRole]
+  );
+
+  const notifyUserActivity = useCallback((_source?: string) => {
+    marathonConsecutiveCountRef.current = 0;
+  }, []);
 
   // COPIA de App.tsx L212-234; borrar al eliminar la UI clásica
   // Last Command Received Trigger for VideoPlayer
@@ -1087,29 +1132,85 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       case 'setSleepTimer': {
         const mode = String(cmd.payload?.mode || 'off');
-        const minutes = typeof cmd.payload?.minutes === 'number' ? cmd.payload.minutes : parseInt(mode, 10);
-        let endsAt: number | null = null;
-        if (mode !== 'off' && mode !== 'chapter' && Number.isFinite(minutes) && minutes > 0) {
-          endsAt = Date.now() + minutes * 60 * 1000;
-        } else if (mode === 'test_5s' || (mode !== 'off' && cmd.payload?.seconds)) {
-          endsAt = Date.now() + (cmd.payload.seconds || 5) * 1000;
+        const rawMinutes = typeof cmd.payload?.minutes === 'number' ? cmd.payload.minutes : parseInt(mode, 10);
+        const secondsOverride =
+          typeof cmd.payload?.seconds === 'number' && Number.isFinite(cmd.payload.seconds) && cmd.payload.seconds > 0
+            ? cmd.payload.seconds
+            : null;
+        const displayMinutes =
+          Number.isFinite(rawMinutes) && rawMinutes > 0
+            ? rawMinutes
+            : secondsOverride !== null
+            ? Math.max(1, Math.ceil(secondsOverride / 60))
+            : 15;
+
+        if (mode !== 'off') {
+          try {
+            localStorage.setItem(
+              'cinecast_sleep_timer_last_v1',
+              JSON.stringify({ mode, minutes: mode === 'chapter' ? undefined : displayMinutes, updatedAt: Date.now() })
+            );
+          } catch (_) {}
         }
-        const timerObj = mode === 'off' ? null : { endsAt, mode };
-        try {
-          if (timerObj) {
-            localStorage.setItem('cinecast_sleep_timer_v1', JSON.stringify(timerObj));
-          } else {
+
+        if (mode === 'off') {
+          try {
             localStorage.removeItem('cinecast_sleep_timer_v1');
+          } catch (_) {}
+          sleepTimerRef.current = null;
+          setSleepTimerState(null);
+          handleBroadcastPlayerState({ sleepTimer: null });
+          logSleepTimerEvent('disarmed', { cause: 'apagado manual', mode: 'off' });
+          triggerNotification('💤 Temporizador apagado');
+          break;
+        }
+
+        if (!hasActivePlaybackRef.current) {
+          try {
+            localStorage.removeItem('cinecast_sleep_timer_v1');
+          } catch (_) {}
+          sleepTimerRef.current = null;
+          setSleepTimerState(null);
+          handleBroadcastPlayerState({ sleepTimer: null });
+          logSleepTimerEvent('disarmed', {
+            cause: 'sin reproducción activa',
+            mode,
+            minutes: mode === 'chapter' ? undefined : displayMinutes,
+          });
+          triggerNotification('⚠️ Sin reproducción activa: temporizador desarmado');
+          break;
+        }
+
+        let endsAt: number | null = null;
+        if (mode !== 'chapter') {
+          if (secondsOverride !== null) {
+            endsAt = Date.now() + secondsOverride * 1000;
+          } else if (Number.isFinite(rawMinutes) && rawMinutes > 0) {
+            endsAt = Date.now() + rawMinutes * 60 * 1000;
+          } else if (mode === 'test_5s') {
+            endsAt = Date.now() + 5000;
           }
-        } catch {}
+        }
+        const timerObj = {
+          endsAt,
+          mode,
+          ...(mode !== 'chapter' ? { minutes: displayMinutes } : {}),
+        };
+        try {
+          localStorage.setItem('cinecast_sleep_timer_v1', JSON.stringify(timerObj));
+        } catch (_) {}
+        sleepTimerRef.current = timerObj;
         setSleepTimerState(timerObj);
         handleBroadcastPlayerState({ sleepTimer: timerObj });
+        logSleepTimerEvent('armed', {
+          cause: mode === 'chapter' ? 'al terminar el capítulo' : `temporizador de ${displayMinutes} min`,
+          mode,
+          minutes: mode === 'chapter' ? undefined : displayMinutes,
+        });
         triggerNotification(
-          mode === 'off'
-            ? '💤 Temporizador apagado'
-            : mode === 'chapter'
+          mode === 'chapter'
             ? '💤 Reposo al terminar el capítulo'
-            : `💤 Reposo en ${minutes} min`
+            : `💤 Reposo en ${displayMinutes} min`
         );
         break;
       }
@@ -1145,24 +1246,34 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           triggerNotification(`📱 Saltando a T${season || 1}:E${episode || 1}`);
           const sNum = Number(season) || 1;
           const eNum = Number(episode) || 1;
+          lastAutoAdvancedChapterRef.current = null;
+          lastObservedTimeRef.current = 0;
+          stillTimeCounterRef.current = 0;
           const found = activeMedia.episodes?.find(
             (e) => (e.seasonNumber === sNum || (!e.seasonNumber && sNum === 1)) && e.episodeNumber === eNum
           );
-          if (found) {
-            setActiveEpisode(found);
-          } else {
-            setActiveEpisode({
-              id: `ep-${activeMedia.id}-s${sNum}-e${eNum}`,
-              title: `Episodio ${eNum}`,
-              episodeNumber: eNum,
-              seasonNumber: sNum,
-              overview: `Temporada ${sNum}, Episodio ${eNum}`,
-              duration: '24m',
-              thumbnailUrl: activeMedia.backdropUrl || activeMedia.posterUrl,
-              videoUrl: '',
-            });
-          }
+          const targetEp: Episode = found || {
+            id: `ep-${activeMedia.id}-s${sNum}-e${eNum}`,
+            title: `Episodio ${eNum}`,
+            episodeNumber: eNum,
+            seasonNumber: sNum,
+            overview: `Temporada ${sNum}, Episodio ${eNum}`,
+            duration: '24m',
+            thumbnailUrl: activeMedia.backdropUrl || activeMedia.posterUrl,
+            videoUrl: '',
+          };
+          setActiveEpisode(targetEp);
+          setPlayerInitialTime(0);
           setIsPlayingLocally(true);
+          handleBroadcastPlayerState({
+            episodeId: targetEp.id,
+            seasonNumber: sNum,
+            episodeNumber: eNum,
+            episodeTitle: targetEp.title,
+            episodeItem: targetEp,
+            isPlaying: true,
+            currentTime: 0,
+          });
         }
         break;
       }
@@ -1829,7 +1940,12 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           isRecapActive: false,
           nextEpisodeCountdown: null,
           sleepTimer: stateUpdate.sleepTimer !== undefined ? stateUpdate.sleepTimer : sleepTimerRef.current,
-          areYouStillThere: stateUpdate.areYouStillThere !== undefined ? stateUpdate.areYouStillThere : areYouStillThere,
+          areYouStillThere:
+            stateUpdate.areYouStillThere !== undefined ? stateUpdate.areYouStillThere : areYouStillThereRef.current,
+          areYouStillThereCause:
+            stateUpdate.areYouStillThereCause !== undefined
+              ? stateUpdate.areYouStillThereCause
+              : areYouStillThereCauseRef.current,
           ...stateUpdate,
           ...(isSeries
             ? {}
@@ -1847,84 +1963,191 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return fullState;
       });
     }
-  }, [activeMedia, activeEpisode, isPlayingLocally, isSpotifyPlaying, isYouTubePlaying, activeHub, isScreenInStandby, audioSettings, playbackSettings, deviceRole, areYouStillThere, isSeriesMediaItem]);
+  }, [activeMedia, activeEpisode, isPlayingLocally, isSpotifyPlaying, isYouTubePlaying, activeHub, isScreenInStandby, audioSettings, playbackSettings, deviceRole, isSeriesMediaItem]);
 
-  // Manejo de "¿Seguís ahí?" con cuenta regresiva (60s prod, 5s test)
-  const triggerAreYouStillThere = useCallback(() => {
-    setAreYouStillThere(true);
-    handleBroadcastPlayerState({ areYouStillThere: true });
+  // Manejo de "¿Seguís ahí?" con cuenta regresiva (60s prod, 5s test) y causa explícita
+  const triggerAreYouStillThere = useCallback(
+    (reason: 'sleep_timer' | 'chapter' | 'marathon' = 'sleep_timer', detail?: { minutes?: number }) => {
+      const causeMsg =
+        reason === 'marathon'
+          ? 'Pasaron 3 capítulos seguidos sin tocar nada'
+          : reason === 'chapter'
+          ? 'Temporizador de reposo (al terminar el capítulo)'
+          : `Temporizador de reposo de ${detail?.minutes ?? 15} min`;
 
-    const isTestMode = typeof window !== 'undefined' && (
-      Boolean((window as any).__CINECAST_TEST) ||
-      new URLSearchParams(window.location.search).get('test') === '1' ||
-      localStorage.getItem('cinecast_test_mode') === '1'
-    );
-    const totalSecs = isTestMode ? 5 : 60;
-    setCountdownRemaining(totalSecs);
+      areYouStillThereRef.current = true;
+      areYouStillThereCauseRef.current = causeMsg;
+      setAreYouStillThere(true);
+      setAreYouStillThereCause(causeMsg);
+      handleBroadcastPlayerState({ areYouStillThere: true, areYouStillThereCause: causeMsg });
+      logSleepTimerEvent('fired', {
+        cause: causeMsg,
+        mode: reason === 'marathon' ? 'marathon' : reason === 'chapter' ? 'chapter' : String(detail?.minutes ?? '15'),
+        minutes: detail?.minutes,
+      });
 
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+      const isTestMode = typeof window !== 'undefined' && (
+        Boolean((window as any).__CINECAST_TEST) ||
+        new URLSearchParams(window.location.search).get('test') === '1' ||
+        localStorage.getItem('cinecast_test_mode') === '1'
+      );
+      const totalSecs = isTestMode ? 5 : 60;
+      setCountdownRemaining(totalSecs);
 
-    let remaining = totalSecs;
-    countdownTimerRef.current = setInterval(() => {
-      remaining -= 1;
-      setCountdownRemaining(remaining);
-      if (remaining <= 0) {
-        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-        countdownTimerRef.current = null;
-        setAreYouStillThere(false);
-        setIsScreenInStandby(true);
-        setIsPlayingLocally(false);
-        try {
-          window.electronAPI?.controlActiveMedia?.({ action: 'pause' });
-        } catch (_) {}
-        handleBroadcastPlayerState({ isPlaying: false, isStandby: true, areYouStillThere: false });
-        setSleepTimerState(null);
-        try {
-          localStorage.removeItem('cinecast_sleep_timer_v1');
-        } catch (_) {}
-      }
-    }, 1000);
-  }, [handleBroadcastPlayerState]);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+
+      let remaining = totalSecs;
+      countdownTimerRef.current = setInterval(() => {
+        remaining -= 1;
+        setCountdownRemaining(remaining);
+        if (remaining <= 0) {
+          if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+          areYouStillThereRef.current = false;
+          areYouStillThereCauseRef.current = null;
+          setAreYouStillThere(false);
+          setAreYouStillThereCause(null);
+          setIsScreenInStandby(true);
+          setIsPlayingLocally(false);
+          try {
+            window.electronAPI?.controlActiveMedia?.({ action: 'pause' });
+          } catch (_) {}
+          sleepTimerRef.current = null;
+          setSleepTimerState(null);
+          try {
+            localStorage.removeItem('cinecast_sleep_timer_v1');
+          } catch (_) {}
+          handleBroadcastPlayerState({
+            isPlaying: false,
+            isStandby: true,
+            areYouStillThere: false,
+            areYouStillThereCause: null,
+            sleepTimer: null,
+          });
+        }
+      }, 1000);
+    },
+    [handleBroadcastPlayerState, logSleepTimerEvent]
+  );
 
   const handleConfirmActiveWatching = useCallback(() => {
     if (countdownTimerRef.current) {
       clearInterval(countdownTimerRef.current);
       countdownTimerRef.current = null;
     }
+    areYouStillThereRef.current = false;
+    areYouStillThereCauseRef.current = null;
     setAreYouStillThere(false);
+    setAreYouStillThereCause(null);
     marathonConsecutiveCountRef.current = 0;
-    handleBroadcastPlayerState({ areYouStillThere: false });
+    handleBroadcastPlayerState({ areYouStillThere: false, areYouStillThereCause: null });
+    logSleepTimerEvent('disarmed', { cause: 'usuario confirmó seguir' });
     triggerNotification('👍 ¡Seguimos viendo!');
-  }, [handleBroadcastPlayerState, triggerNotification]);
+  }, [handleBroadcastPlayerState, logSleepTimerEvent, triggerNotification]);
 
-  // Comprobación periódica de vencimiento del temporizador de reposo
+  // Al cerrar el reproductor o quedar sin reproducción activa: desarmar temporizador y resetear Maratón
   useEffect(() => {
-    const timerCheck = setInterval(() => {
-      let cur = sleepTimerRef.current;
-      try {
-        const saved = localStorage.getItem('cinecast_sleep_timer_v1');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed && (!cur || cur.endsAt !== parsed.endsAt || cur.mode !== parsed.mode)) {
-            cur = parsed;
-            setSleepTimerState(parsed);
-          }
-        } else if (cur) {
-          cur = null;
-          setSleepTimerState(null);
-        }
-      } catch (_) {}
+    if (deviceRole === 'remote') return;
+    if (hasActivePlayback) return;
 
-      if (cur && cur.endsAt && Date.now() >= cur.endsAt && !areYouStillThere) {
+    marathonConsecutiveCountRef.current = 0;
+    lastAutoAdvancedChapterRef.current = null;
+
+    if (sleepTimerRef.current) {
+      const prevTimer = sleepTimerRef.current;
+      sleepTimerRef.current = null;
+      setSleepTimerState(null);
+      try {
+        localStorage.removeItem('cinecast_sleep_timer_v1');
+      } catch (_) {}
+      handleBroadcastPlayerState({ sleepTimer: null });
+      logSleepTimerEvent('disarmed', {
+        cause: 'cierre del reproductor o sin reproducción',
+        mode: prevTimer.mode,
+        minutes: prevTimer.minutes,
+      });
+    }
+  }, [hasActivePlayback, deviceRole, handleBroadcastPlayerState, logSleepTimerEvent]);
+
+  const handleBeforeAutoAdvance = useCallback(
+    (chapterKey: string) => {
+      if (areYouStillThereRef.current) return false;
+      if (sleepTimerRef.current?.mode === 'chapter') {
+        if (lastAutoAdvancedChapterRef.current !== chapterKey) {
+          lastAutoAdvancedChapterRef.current = chapterKey;
+          const prevTimer = sleepTimerRef.current;
+          sleepTimerRef.current = null;
+          setSleepTimerState(null);
+          try {
+            localStorage.removeItem('cinecast_sleep_timer_v1');
+          } catch (_) {}
+          logSleepTimerEvent('disarmed', {
+            cause: 'disparo al terminar capítulo',
+            mode: prevTimer?.mode || 'chapter',
+          });
+          triggerAreYouStillThere('chapter');
+        }
+        return false;
+      }
+      const isMarathonOn = Boolean(
+        remotePlaybackState.marathon ||
+          (typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true')
+      );
+      if (isMarathonOn && activeMedia && isSeriesMediaItem(activeMedia)) {
+        if (lastAutoAdvancedChapterRef.current !== chapterKey) {
+          lastAutoAdvancedChapterRef.current = chapterKey;
+          marathonConsecutiveCountRef.current += 1;
+          if (marathonConsecutiveCountRef.current >= 3) {
+            triggerAreYouStillThere('marathon');
+            return false;
+          }
+          return true;
+        }
+        return false;
+      }
+      return true;
+    },
+    [activeMedia, isSeriesMediaItem, logSleepTimerEvent, remotePlaybackState.marathon, triggerAreYouStillThere]
+  );
+
+  // Comprobación periódica de vencimiento del temporizador de reposo (solo en memoria mientras hay reproducción activa)
+  useEffect(() => {
+    if (deviceRole === 'remote') return;
+    const timerCheck = setInterval(() => {
+      const cur = sleepTimerRef.current;
+      if (!cur) return;
+      if (!hasActivePlaybackRef.current) {
+        sleepTimerRef.current = null;
         setSleepTimerState(null);
         try {
           localStorage.removeItem('cinecast_sleep_timer_v1');
         } catch (_) {}
-        triggerAreYouStillThere();
+        handleBroadcastPlayerState({ sleepTimer: null });
+        logSleepTimerEvent('disarmed', {
+          cause: 'sin reproducción activa',
+          mode: cur.mode,
+          minutes: cur.minutes,
+        });
+        return;
+      }
+      if (cur.endsAt && Date.now() >= cur.endsAt && !areYouStillThereRef.current) {
+        const displayMins =
+          typeof cur.minutes === 'number' && Number.isFinite(cur.minutes)
+            ? cur.minutes
+            : Number.isFinite(parseInt(cur.mode, 10))
+            ? parseInt(cur.mode, 10)
+            : 15;
+        sleepTimerRef.current = null;
+        setSleepTimerState(null);
+        try {
+          localStorage.removeItem('cinecast_sleep_timer_v1');
+        } catch (_) {}
+        handleBroadcastPlayerState({ sleepTimer: null });
+        triggerAreYouStillThere('sleep_timer', { minutes: displayMins });
       }
     }, 500);
     return () => clearInterval(timerCheck);
-  }, [areYouStillThere, triggerAreYouStillThere]);
+  }, [deviceRole, handleBroadcastPlayerState, logSleepTimerEvent, triggerAreYouStillThere]);
 
   // Also broadcast whenever standby, active media, or audio settings change on the PC screen
   useEffect(() => {
@@ -2057,12 +2280,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (shouldAdvance && canAutoAdvanceNow) {
           const currentChapterKey = `${activeMedia?.id || realState.title || 'embed'}_s${activeEpisode?.seasonNumber || remotePlaybackState.seasonNumber || 0}_e${activeEpisode?.episodeNumber || remotePlaybackState.episodeNumber || 0}`;
           if (sleepTimerRef.current?.mode === 'chapter') {
-            if (lastAutoAdvancedChapterRef.current !== currentChapterKey) {
-              lastAutoAdvancedChapterRef.current = currentChapterKey;
-              setSleepTimerState(null);
-              try { localStorage.removeItem('cinecast_sleep_timer_v1'); } catch {}
-              triggerAreYouStillThere();
-            }
+            handleBeforeAutoAdvance(currentChapterKey);
           } else {
             const isMarathonOn = Boolean(
               remotePlaybackState.marathon ||
@@ -2070,14 +2288,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             );
             // PARTE 1 (5): Si es película, el fin de reproducción NO debe avanzar ni iniciar nada; solo avanza en series con Maratón activo
             if (isMarathonOn && activeMedia && isSeriesMediaItem(activeMedia)) {
-              if (lastAutoAdvancedChapterRef.current !== currentChapterKey) {
-                lastAutoAdvancedChapterRef.current = currentChapterKey;
-                marathonConsecutiveCountRef.current += 1;
-                if (marathonConsecutiveCountRef.current >= 3) {
-                  triggerAreYouStillThere();
-                } else {
-                  handlePlayNextEpisode();
-                }
+              if (handleBeforeAutoAdvance(currentChapterKey)) {
+                lastAutoAdvanceTriggeredAtRef.current = Date.now();
+                handlePlayNextEpisode();
               }
             }
           }
@@ -2085,7 +2298,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
     }, pollMs);
     return () => clearInterval(interval);
-  }, [deviceRole, needsFastMediaPoll, isPlayingLocally, activeHub, activeSpotifyTrack, activeYouTubeVideo, activeMedia, activeEpisode, handleBroadcastPlayerState, remotePlaybackState.marathon, remotePlaybackState.seasonNumber, remotePlaybackState.episodeNumber, triggerAreYouStillThere, handlePlayNextEpisode]);
+  }, [deviceRole, needsFastMediaPoll, isPlayingLocally, activeHub, activeSpotifyTrack, activeYouTubeVideo, activeMedia, activeEpisode, handleBroadcastPlayerState, remotePlaybackState.marathon, remotePlaybackState.seasonNumber, remotePlaybackState.episodeNumber, handleBeforeAutoAdvance, handlePlayNextEpisode]);
 
   const value: AppRuntimeContextValue = {
     deviceRole,
@@ -2151,8 +2364,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     sleepTimer,
     setSleepTimer: setSleepTimerState,
     areYouStillThere,
+    areYouStillThereCause,
     countdownRemaining,
     handleConfirmActiveWatching,
+    notifyUserActivity,
+    handleBeforeAutoAdvance,
   };
 
   return (

@@ -236,8 +236,10 @@ export interface PlaybackState {
   sleepTimer?: {
     endsAt: number | null;
     mode: string;
+    minutes?: number;
   } | null;
   areYouStillThere?: boolean;
+  areYouStillThereCause?: string | null;
 }
 
 export type RemoteCommandAction =
