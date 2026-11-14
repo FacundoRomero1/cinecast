@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-sleep-timer.cjs
  * Prueba automatizada de Parte 2 (Control, Maratón unificado y Temporizador de reposo):

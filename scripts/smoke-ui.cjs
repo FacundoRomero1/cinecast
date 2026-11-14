@@ -13,13 +13,14 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 
 const { app, components, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const net = require('net');
-const cp = require('child_process');
+const { startTestEnv } = require('./lib/testenv.cjs');
 
-const baseUrl = (process.argv[2] || 'http://localhost:3000').replace(/\/+$/, '');
+let baseUrl = '';
+let activeRoom = '';
+let testEnv = null;
 
 // Registrar handlers IPC benignos para que electron/preload.cjs no lance errores de canal inexistente
-ipcMain.handle('get-local-ip', () => ({ ip: '127.0.0.1', port: 3000 }));
+ipcMain.handle('get-local-ip', () => ({ ip: '127.0.0.1', port: testEnv ? testEnv.port : 39000 }));
 ipcMain.handle('get-diagnostic-mode', () => false);
 ipcMain.handle('set-diagnostic-mode', () => false);
 ipcMain.handle('get-no-cors-fix', () => false);
@@ -85,6 +86,7 @@ function isIgnoredError(msg) {
   if (lower.includes('background-sync')) return true;
   if (lower.includes('[vite]')) return true;
   if (lower.includes('vite server')) return true;
+  if (lower.includes('@vite/client')) return true;
   return false;
 }
 
@@ -114,25 +116,10 @@ async function resolveRealMovieId() {
   return 'm1';
 }
 
-let serverProcess = null;
-
 app.whenReady().then(async () => {
-  const port = 3000;
-  const inUse = await isPortInUse(port);
-  if (!inUse) {
-    console.log('[smoke-ui] Servidor no activo. Iniciando servidor...');
-    const rootDir = path.resolve(__dirname, '..');
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const env = { ...process.env, PORT: String(port), CINECAST_DISABLE_PREWARM: '1' };
-    delete env.ELECTRON_RUN_AS_NODE;
-    serverProcess = cp.spawn('node', [tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      env,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    await waitForHealth(baseUrl, 30000);
-  }
+  testEnv = await startTestEnv({ name: 'smoke-ui' });
+  baseUrl = testEnv.base;
+  activeRoom = testEnv.room;
 
   if (components && typeof components.whenReady === 'function') {
     try {
@@ -277,7 +264,7 @@ app.whenReady().then(async () => {
 
   for (const route of routes) {
     activeCollector = [];
-    const targetUrl = `${baseUrl}/?role=screen&ui=nuevo${route}`;
+    const targetUrl = `${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoom)}${route}`;
     try {
       await win.loadURL(targetUrl);
     } catch (err) {
@@ -309,7 +296,7 @@ app.whenReady().then(async () => {
   activeCollector = [];
 
   try {
-    await win.loadURL(`${baseUrl}/?role=screen&ui=nuevo#/`);
+    await win.loadURL(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoom)}#/`);
     await installUncaughtHook();
     await wait(2500);
 
@@ -338,11 +325,11 @@ app.whenReady().then(async () => {
   }
 
   clearTimeout(globalTimer);
-  if (serverProcess) {
-    try { serverProcess.kill(); } catch (_) {}
+  win.destroy();
+  if (testEnv) {
+    await testEnv.stop();
   }
   console.log(`\n[smoke-ui] Resumen final: ${totalErrors} errores de render.`);
-  win.destroy();
   app.exit(totalErrors === 0 ? 0 : 1);
 });
 

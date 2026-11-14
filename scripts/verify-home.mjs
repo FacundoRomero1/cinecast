@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 /**
  * scripts/verify-home.mjs
  * Verificación exhaustiva de /api/home:

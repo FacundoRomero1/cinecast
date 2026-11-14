@@ -24,8 +24,9 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const os = require('os');
-const net = require('net');
-const cp = require('child_process');
+const { startTestEnv } = require('./lib/testenv.cjs');
+
+let testEnv = null;
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -92,37 +93,14 @@ const globalTimer = setTimeout(() => {
   app.exit(1);
 }, 120000);
 
-let serverProcess = null;
-
 async function ensureServer() {
-  const lanIp = getLanIp();
-  const url = `http://${lanIp}:3000`;
-  const portUsed = await isPortInUse(3000);
-  if (!portUsed) {
-    console.log('[probe-layout] Iniciando servidor local...');
-    const rootDir = path.resolve(__dirname, '..');
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const env = { ...process.env, PORT: '3000', CINECAST_DISABLE_PREWARM: '1' };
-    delete env.ELECTRON_RUN_AS_NODE;
-    serverProcess = cp.spawn('node', [tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      stdio: 'ignore',
-      windowsHide: true,
-      env,
-    });
-  }
-
-  const ok = await waitForHealth(`http://127.0.0.1:3000`, 35000);
-  if (!ok) {
-    console.error(`[probe-layout] Servidor no responde en http://127.0.0.1:3000`);
-    if (serverProcess) serverProcess.kill();
-    app.exit(1);
-  }
-  return url;
+  testEnv = await startTestEnv({ name: 'probe-layout', useLanIp: true });
+  return testEnv.lanBase;
 }
 
 app.whenReady().then(async () => {
   const baseUrl = await ensureServer();
+  const activeRoom = testEnv.room;
   const results = [];
 
   const win = new BrowserWindow({
@@ -141,7 +119,7 @@ app.whenReady().then(async () => {
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
   win.webContents.setUserAgent(MOBILE_ANDROID_UA);
 
-  const testUrl = `${baseUrl}/?debug=layout#/`;
+  const testUrl = `${baseUrl}/?debug=layout&room=${encodeURIComponent(activeRoom)}#/`;
   console.log(`[probe-layout] Cargando ${testUrl}`);
   await win.loadURL(testUrl);
   await wait(1500);
@@ -380,15 +358,15 @@ app.whenReady().then(async () => {
     }
     console.log('====================================================================================================\n');
 
-    if (serverProcess) {
-      try { serverProcess.kill(); } catch (_) {}
+    if (testEnv) {
+      await testEnv.stop();
     }
     clearTimeout(globalTimer);
     app.exit(allPassed ? 0 : 1);
   } catch (err) {
     console.error('[probe-layout] Error fatal:', err);
-    if (serverProcess) {
-      try { serverProcess.kill(); } catch (_) {}
+    if (testEnv) {
+      await testEnv.stop();
     }
     clearTimeout(globalTimer);
     app.exit(1);

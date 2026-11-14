@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 /**
  * scripts/build-popularity.mjs
  * Recorre discover/movie, discover/tv y animation en TMDB (ordenados por popularidad desc)

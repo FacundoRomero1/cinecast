@@ -1,3 +1,5 @@
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 import { buildSync } from 'esbuild';
 import fs from 'node:fs';
 import http from 'node:http';

@@ -90,6 +90,14 @@ const memoryCache = new Map<string, { timestamp: number; data: any }>();
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
 function getCacheDir(baseDir: string): string {
+  const envDataDir = process.env.CINECAST_DATA_DIR?.trim();
+  if (envDataDir) {
+    const d = path.join(path.resolve(envDataDir), 'cache');
+    try {
+      if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+      return d;
+    } catch (_) {}
+  }
   const candidates = [
     path.join(baseDir, 'scratch', 'cache'),
     path.join(process.cwd(), 'scratch', 'cache'),

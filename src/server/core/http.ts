@@ -1,21 +1,21 @@
-import express, { type Express, type Request } from 'express';
 import compression from 'compression';
+import express, { type Express, type Request } from 'express';
 import path from 'path';
-import { createSyncRouter } from './routes/sync.js';
+import { createAccountsRouter, type AccountsOptions } from './routes/accounts.js';
+import { createArchiveRouter } from './routes/archive.js';
+import { createAuthRouter, type AuthRouterOptions } from './routes/auth.js';
 import { createCatalogRouter, type CatalogItem, type CatalogRouterOptions } from './routes/catalog.js';
-import { createTmdbDetailRouter, type TmdbDetailOptions } from './routes/tmdb-detail.js';
-import { createSearchRouter, type SearchOptions } from './routes/search.js';
-import { createSportsRouter, type SportsOptions } from './routes/sports.js';
-import { createHistoryRouter, type HistoryOptions } from './routes/history.js';
-import { createHistoryRepairRouter } from './routes/historyRepair.js';
+import { createClientLogRouter, isLoopbackIp } from './routes/clientlog.js';
 import { createDiagnosticsRouter, type DiagnosticsOptions } from './routes/diagnostics.js';
 import { createDownloadsRouter, type DownloadsOptions } from './routes/downloads.js';
-import { createArchiveRouter } from './routes/archive.js';
-import { createAccountsRouter, type AccountsOptions } from './routes/accounts.js';
-import { createAuthRouter, type AuthRouterOptions } from './routes/auth.js';
+import { createHistoryRouter, type HistoryOptions } from './routes/history.js';
+import { createHistoryRepairRouter } from './routes/historyRepair.js';
+import { createSearchRouter, type SearchOptions } from './routes/search.js';
+import { createSportsRouter, type SportsOptions } from './routes/sports.js';
+import { createSyncRouter } from './routes/sync.js';
+import { createTmdbDetailRouter, type TmdbDetailOptions } from './routes/tmdb-detail.js';
 import { createYouTubeRouter } from './routes/youtube.js';
-import { createClientLogRouter, isLoopbackIp } from './routes/clientlog.js';
-import { setTmdbConfigDir, getSavedTmdbKey, saveTmdbKeyToConfig } from './tmdb.js';
+import { getSavedTmdbKey, saveTmdbKeyToConfig, setTmdbConfigDir } from './tmdb.js';
 
 export interface CreateAppOptions {
   baseDir?: string | undefined;
@@ -54,12 +54,20 @@ export function createApp(options: CreateAppOptions): Express {
   });
 
   const baseDir = options.baseDir || process.cwd();
-  const userDataDir = options.userDataPath || path.join(baseDir, '.cinecast-data');
+  const envDataDir = process.env.CINECAST_DATA_DIR?.trim()
+    ? path.resolve(process.env.CINECAST_DATA_DIR.trim())
+    : '';
+  const userDataDir = envDataDir || options.userDataPath || path.join(baseDir, '.cinecast-data');
   setTmdbConfigDir(userDataDir);
-  const posterCacheDir = options.posterCacheDir || path.join(userDataDir, 'poster_cache');
-  const mediaCacheDir = options.mediaCacheDir || path.join(userDataDir, 'media_cache');
+  const posterCacheDir =
+    (envDataDir ? path.join(envDataDir, 'poster_cache') : options.posterCacheDir) ||
+    path.join(userDataDir, 'poster_cache');
+  const mediaCacheDir =
+    (envDataDir ? path.join(envDataDir, 'media_cache') : options.mediaCacheDir) ||
+    path.join(userDataDir, 'media_cache');
   const accountsFilePath =
-    options.accountsFilePath || path.join(userDataDir, 'cinecast-accounts.json');
+    (envDataDir ? path.join(envDataDir, 'cinecast-accounts.json') : options.accountsFilePath) ||
+    path.join(userDataDir, 'cinecast-accounts.json');
 
   let sharedCatalogCache: CatalogItem[] | null = null;
   const getCatalogCache = options.getCatalogCache || (() => sharedCatalogCache);
@@ -159,8 +167,8 @@ export function createApp(options: CreateAppOptions): Express {
       typeof req.body?.key === 'string'
         ? req.body.key.trim()
         : typeof req.body?.tmdbKey === 'string'
-        ? req.body.tmdbKey.trim()
-        : '';
+          ? req.body.tmdbKey.trim()
+          : '';
 
     saveTmdbKeyToConfig(rawKey, userDataDir);
     const saved = getSavedTmdbKey(userDataDir);

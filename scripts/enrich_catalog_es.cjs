@@ -1,3 +1,4 @@
+const { startTestEnv } = require('./lib/testenv.cjs');
 const fs = require('fs');
 const path = require('path');
 

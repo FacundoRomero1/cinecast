@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 /**
  * Script generador de catálogo masivo de TMDB (10,000+ títulos).
  * Recolecta películas, series y anime de Hispanoamérica (AR, MX, ES)

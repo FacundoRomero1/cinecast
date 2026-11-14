@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-spotify-device.cjs
  * Prueba de Spotify como dispositivo CineCast (Parte 5):

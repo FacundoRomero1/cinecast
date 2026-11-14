@@ -1,3 +1,4 @@
+const { startTestEnv } = require('./lib/testenv.cjs');
 const { app, components, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const http = require('http');

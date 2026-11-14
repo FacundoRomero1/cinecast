@@ -29,7 +29,9 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 const { app, BrowserWindow, ipcMain, webContents } = require('electron');
 const path = require('path');
 const os = require('os');
-const cp = require('child_process');
+const { startTestEnv } = require('./lib/testenv.cjs');
+
+let testEnv = null;
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -330,36 +332,9 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 app.whenReady().then(async () => {
-  const lanIp = getLanIp();
-  const port = 3000;
-  const baseUrl = `http://${lanIp}:${port}`;
-  const roomId = 'room_resume_test_' + Date.now();
-
-  const isHealthy = await waitForHealth(baseUrl, 3000);
-  if (!isHealthy) {
-    console.log('[probe-resume] Iniciando servidor local...');
-    const rootDir = path.resolve(__dirname, '..');
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const env = {
-      ...process.env,
-      PORT: String(port),
-      CINECAST_TEST: '1',
-      CINECAST_DISABLE_BROWSER: '1',
-      CINECAST_DISABLE_PREWARM: '1',
-    };
-    delete env.ELECTRON_RUN_AS_NODE;
-    spawnedServer = cp.spawn('node', [tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      env,
-      stdio: 'inherit',
-    });
-    const ready = await waitForHealth(baseUrl, 25000);
-    if (!ready) {
-      console.error('[probe-resume] No se pudo levantar el servidor.');
-      app.exit(1);
-      return;
-    }
-  }
+  testEnv = await startTestEnv({ name: 'probe-resume', useLanIp: true });
+  const baseUrl = testEnv.lanBase;
+  const roomId = testEnv.room;
 
   const preloadPath = path.resolve(__dirname, '../electron/preload.cjs');
   const winScreen = new BrowserWindow({
@@ -463,8 +438,8 @@ app.whenReady().then(async () => {
   console.log(`\nResultado global: ${allPassed ? 'PASA' : 'FALLA'}`);
 
   clearTimeout(globalTimeout);
-  if (spawnedServer) {
-    try { spawnedServer.kill(); } catch (_) {}
+  if (testEnv) {
+    await testEnv.stop();
   }
 
   app.exit(allPassed ? 0 : 1);

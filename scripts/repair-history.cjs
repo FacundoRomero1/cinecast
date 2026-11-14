@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/repair-history.cjs
  * - Lee el historial actual de watch_history.json

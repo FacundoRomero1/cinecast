@@ -50,6 +50,14 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
   const baseDir = options.baseDir || process.cwd();
 
   function getWatchHistoryFilePath(): string {
+    const envDataDir = process.env.CINECAST_DATA_DIR?.trim();
+    if (envDataDir) {
+      const d = path.resolve(envDataDir);
+      try {
+        if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+      } catch (_) { }
+      return path.join(d, 'watch_history.json');
+    }
     const candidates = [
       path.join(baseDir, 'public', 'data', 'watch_history.json'),
       path.join(process.cwd(), 'public', 'data', 'watch_history.json'),
@@ -66,7 +74,7 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
     try {
       const d = path.dirname(def);
       if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-    } catch (_) {}
+    } catch (_) { }
     return def;
   }
 
@@ -92,7 +100,7 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
             }
           }
           break;
-        } catch (_) {}
+        } catch (_) { }
       }
     }
     return map;
@@ -108,7 +116,7 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
           if (Array.isArray(parsed)) {
             rawItems = parsed;
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // 1. Respaldo obligatorio con fecha ISO
@@ -119,12 +127,12 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
 
       fs.writeFileSync(backupPath, JSON.stringify(rawItems, null, 2), 'utf8');
 
-      // Copia adicional en scratch/ si existe
+      // Copia adicional en scratch/ si existe (salvo cuando CINECAST_DATA_DIR aísla datos)
       const scratchDir = path.join(baseDir, 'scratch');
-      if (fs.existsSync(scratchDir)) {
+      if (!process.env.CINECAST_DATA_DIR?.trim() && fs.existsSync(scratchDir)) {
         try {
           fs.writeFileSync(path.join(scratchDir, backupFilename), JSON.stringify(rawItems, null, 2), 'utf8');
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // 2. Cargar catálogo oficial para sustituir carátulas unsplash o inválidas
@@ -195,14 +203,14 @@ export function createHistoryRepairRouter(options: HistoryRepairOptions = {}): R
         if (client.ws && client.ws.readyState === WebSocket.OPEN) {
           try {
             client.ws.send(wsMsg);
-          } catch (_) {}
+          } catch (_) { }
         }
       });
 
       if (options.onHistoryUpdated) {
         try {
           options.onHistoryUpdated(repairedList);
-        } catch (_) {}
+        } catch (_) { }
       }
 
       res.json({

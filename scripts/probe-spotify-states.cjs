@@ -24,8 +24,9 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
-const net = require('net');
-const cp = require('child_process');
+const { startTestEnv } = require('./lib/testenv.cjs');
+
+let testEnv = null;
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -65,38 +66,13 @@ const globalTimer = setTimeout(() => {
   app.exit(1);
 }, 90000);
 
-let serverProcess = null;
-
 async function run() {
   console.log('[probe-spotify-states] Iniciando suite de estados Spotify...');
-  const port = 3000;
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const rootDir = path.resolve(__dirname, '..');
-
-  const inUse = await isPortInUse(port);
-  if (!inUse) {
-    console.log('[probe-spotify-states] Levantando servidor para pruebas...');
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const env = {
-      ...process.env,
-      PORT: String(port),
-      CINECAST_TEST: '1',
-      CINECAST_DISABLE_PREWARM: '1',
-      // No seteamos SPOTIFY_CLIENT_ID en env para poder testear missing_client_id
-    };
-    delete env.VITE_SPOTIFY_CLIENT_ID;
-    delete env.SPOTIFY_CLIENT_ID;
-    delete env.ELECTRON_RUN_AS_NODE;
-
-    serverProcess = cp.spawn('node', [tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      env,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    await waitForHealth(baseUrl, 35000);
-    console.log('[probe-spotify-states] Servidor listo.');
-  }
+  testEnv = await startTestEnv({
+    name: 'probe-spotify-states',
+    unsetEnv: ['VITE_SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_ID'],
+  });
+  const baseUrl = testEnv.base;
 
   const testResults = [];
 
@@ -498,8 +474,8 @@ async function run() {
 
   clearTimeout(globalTimer);
   win.destroy();
-  if (serverProcess) {
-    serverProcess.kill('SIGTERM');
+  if (testEnv) {
+    await testEnv.stop();
   }
 
   if (allPassed) {
@@ -511,8 +487,11 @@ async function run() {
   }
 }
 
-app.whenReady().then(run).catch((err) => {
+app.whenReady().then(run).catch(async (err) => {
   console.error('[probe-spotify-states] Error fatal:', err);
+  if (testEnv) {
+    await testEnv.stop();
+  }
   app.exit(1);
 });
 

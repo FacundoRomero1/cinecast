@@ -31,8 +31,9 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const os = require('os');
-const net = require('net');
-const cp = require('child_process');
+const { startTestEnv } = require('./lib/testenv.cjs');
+
+let testEnv = null;
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -86,36 +87,9 @@ const globalTimeout = setTimeout(() => {
 }, 140000);
 
 app.whenReady().then(async () => {
-  const lanIp = getLanIp();
-  const port = 3000;
-  const baseUrl = `http://${lanIp}:${port}`;
-  const roomId = 'room_screen_test_' + Date.now();
-
-  const isHealthy = await waitForHealth(baseUrl, 3000);
-  if (!isHealthy) {
-    console.log('[probe-screen-name] Iniciando servidor local...');
-    const rootDir = path.resolve(__dirname, '..');
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const env = {
-      ...process.env,
-      PORT: String(port),
-      CINECAST_TEST: '1',
-      CINECAST_DISABLE_BROWSER: '1',
-      CINECAST_DISABLE_PREWARM: '1',
-    };
-    delete env.ELECTRON_RUN_AS_NODE;
-    spawnedServer = cp.spawn('node', [tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      env,
-      stdio: 'inherit',
-    });
-    const ready = await waitForHealth(baseUrl, 25000);
-    if (!ready) {
-      console.error('[probe-screen-name] No se pudo levantar el servidor.');
-      app.exit(1);
-      return;
-    }
-  }
+  testEnv = await startTestEnv({ name: 'probe-screen-name', useLanIp: true });
+  const baseUrl = testEnv.lanBase;
+  const roomId = testEnv.room;
 
   // Ventana Pantalla (PC)
   const preloadPath = path.resolve(__dirname, '../electron/preload.cjs');
@@ -413,11 +387,11 @@ app.whenReady().then(async () => {
   console.log(`\nResultado global: ${pass ? 'PASA' : 'FALLA'}`);
 
   clearTimeout(globalTimeout);
-  if (spawnedServer) {
-    try { spawnedServer.kill(); } catch (_) { }
-  }
   winScreen.destroy();
   winPhone.destroy();
+  if (testEnv) {
+    await testEnv.stop();
+  }
 
   app.exit(pass ? 0 : 1);
 });

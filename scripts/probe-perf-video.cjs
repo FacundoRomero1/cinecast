@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-perf-video.cjs
  * PARTE 3 (Pasos 7, 8 y 9):

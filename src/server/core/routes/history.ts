@@ -60,6 +60,14 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
   const baseDir = options.baseDir || process.cwd();
 
   function getWatchHistoryFilePath(): string {
+    const envDataDir = process.env.CINECAST_DATA_DIR?.trim();
+    if (envDataDir) {
+      const d = path.resolve(envDataDir);
+      try {
+        if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+      } catch (_) {}
+      return path.join(d, 'watch_history.json');
+    }
     const candidates = [
       path.join(baseDir, 'public', 'data'),
       path.join(process.cwd(), 'public', 'data'),

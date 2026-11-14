@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-switches.cjs
  * Verificación geométrica y visual de todos los interruptores Switch.tsx en src/ui.

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 import fs from 'fs';
 import path from 'path';
 import http from 'http';

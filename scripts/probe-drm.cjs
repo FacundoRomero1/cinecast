@@ -1,3 +1,4 @@
+const { startTestEnv } = require('./lib/testenv.cjs');
 const { app, components, BrowserWindow } = require('electron');
 
 const globalTimeout = setTimeout(() => {

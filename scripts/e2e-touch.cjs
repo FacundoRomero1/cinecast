@@ -1,9 +1,22 @@
+if (process.env.ELECTRON_RUN_AS_NODE) {
+  const { spawnSync } = require('child_process');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const res = spawnSync(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env,
+  });
+  process.exit(res.status ?? 1);
+}
+
 const { app, components, BrowserWindow, ipcMain, webContents } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const net = require('net');
-const cp = require('child_process');
+const { startTestEnv } = require('./lib/testenv.cjs');
+
+let testEnv = null;
+let activeRoomId = 'cine-home-1';
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -48,7 +61,7 @@ async function waitForHealth(url, timeoutMs = 30000) {
 }
 
 // Registrar handlers IPC necesarios para preload.cjs
-ipcMain.handle('get-local-ip', () => ({ ip: getLanIp(), port: 3000 }));
+ipcMain.handle('get-local-ip', () => ({ ip: getLanIp(), port: testEnv ? testEnv.port : 39000 }));
 ipcMain.handle('get-diagnostic-mode', () => false);
 ipcMain.handle('set-diagnostic-mode', () => false);
 ipcMain.handle('get-no-cors-fix', () => false);
@@ -234,7 +247,7 @@ async function tapAt(win, x, y) {
   await wait(200);
 }
 
-async function pollServerCommands(baseUrl, roomId = 'cine-home-1', since = 0) {
+async function pollServerCommands(baseUrl, roomId = activeRoomId, since = 0) {
   try {
     const res = await fetch(
       `${baseUrl}/api/sync/poll?roomId=${encodeURIComponent(roomId)}&since=${since}`,
@@ -258,29 +271,11 @@ app.whenReady().then(async () => {
     } catch (_) {}
   }
 
-  const lanIp = getLanIp();
-  const port = 3000;
-  const baseUrl = `http://${lanIp}:${port}`;
-
-  const inUse = await isPortInUse(port);
-  if (!inUse) {
-    console.log(`[e2e-touch] Servidor no activo en puerto ${port}. Iniciando servidor dev...`);
-    const rootDir = path.join(__dirname, '..');
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const env = { ...process.env, PORT: String(port), CINECAST_DISABLE_PREWARM: '1' };
-    delete env.ELECTRON_RUN_AS_NODE;
-    spawnedServer = cp.spawn('node', [tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      env,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    const ready = await waitForHealth(`http://localhost:${port}`, 40000);
-    if (!ready) {
-      console.error('[e2e-touch] No se pudo levantar el servidor.');
-      app.exit(1);
-    }
-  }
+  testEnv = await startTestEnv({ name: 'e2e-touch', useLanIp: true });
+  const lanIp = testEnv.lanIp;
+  const port = testEnv.port;
+  activeRoomId = testEnv.room;
+  const baseUrl = testEnv.lanBase;
 
   const preloadPath = path.join(__dirname, '..', 'electron', 'preload.cjs');
 
@@ -323,8 +318,8 @@ app.whenReady().then(async () => {
   winB.webContents.setUserAgent(MOBILE_ANDROID_UA);
 
   await Promise.all([
-    winA.loadURL(`${baseUrl}/?role=screen&ui=nuevo`),
-    winB.loadURL(`${baseUrl}/?role=remote&ui=nuevo`),
+    winA.loadURL(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoomId)}`),
+    winB.loadURL(`${baseUrl}/?role=remote&ui=nuevo&room=${encodeURIComponent(activeRoomId)}`),
   ]);
 
   // Emulación por debugger
@@ -349,7 +344,7 @@ app.whenReady().then(async () => {
   console.log(`[e2e-touch] window.isSecureContext en celular: ${isSecure}`);
 
   // Asegurar sala común
-  const roomId = 'cine-home-1';
+  const roomId = activeRoomId;
   await winA.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
   await winB.webContents.executeJavaScript(`localStorage.setItem('cinecast_room_id', '${roomId}');`);
 
@@ -1518,8 +1513,8 @@ app.whenReady().then(async () => {
               seasonNumber: 1,
               episodeNumber: 5,
               servers: [
-                { name: 'Servidor 1', url: 'http://localhost:3000/api/mock-1' },
-                { name: 'Servidor 2', url: 'http://localhost:3000/api/mock-2' },
+                { name: 'Servidor 1', url: `${baseUrl}/api/mock-1` },
+                { name: 'Servidor 2', url: `${baseUrl}/api/mock-2` },
               ],
             },
           },
@@ -2058,7 +2053,7 @@ app.whenReady().then(async () => {
         const portInput = document.getElementById('screen-port-input');
         if (nameInput) setVal(nameInput, 'Sala');
         if (ipInput) setVal(ipInput, '${lanIp}');
-        if (portInput) setVal(portInput, '3000');
+        if (portInput) setVal(portInput, '${port}');
       })()
     `);
     await wait(300);
@@ -2313,10 +2308,8 @@ app.whenReady().then(async () => {
     console.log(`| ${r.id} | ${r.name} | ${r.pass ? 'PASA' : 'FALLA'} | ${r.detail} |`);
   });
 
-  if (spawnedServer) {
-    try {
-      spawnedServer.kill();
-    } catch (_) {}
+  if (testEnv) {
+    await testEnv.stop();
   }
 
   clearTimeout(globalTimer);

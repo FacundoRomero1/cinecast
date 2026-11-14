@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-switches-speed.cjs
  * Verificación de interruptores inmediatos (Parte 2):

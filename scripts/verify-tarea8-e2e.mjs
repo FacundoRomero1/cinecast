@@ -1,3 +1,5 @@
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 import { chromium } from 'playwright';
 import fs from 'fs';
 import path from 'path';

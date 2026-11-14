@@ -1,3 +1,5 @@
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 import dns from 'node:dns';
 
 const domains = [

@@ -25,8 +25,9 @@ const { app, BrowserWindow, ipcMain, webContents } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const net = require('net');
-const cp = require('child_process');
+const { startTestEnv } = require('./lib/testenv.cjs');
+
+let testEnv = null;
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -468,7 +469,7 @@ async function runScenarioG(name, ctx) {
     if (msg.startsWith('[client-ws-close]')) console.log(msg);
   });
 
-  await winPhone2.loadURL(`${baseUrl}/?role=remote&ui=nuevo`);
+  await winPhone2.loadURL(`${baseUrl}/?role=remote&ui=nuevo&room=${encodeURIComponent(ctx.roomId)}`);
   await wait(800);
   await setupWindowMetrics(winPhone2, 'winPhone2');
 
@@ -566,21 +567,13 @@ async function runScenarioG(name, ctx) {
 }
 
 app.whenReady().then(async () => {
-  const lanIp = getLanIp();
-  const port = 3000;
-  const baseUrl = `http://${lanIp}:${port}`;
   const rootDir = path.resolve(__dirname, '..');
-
-  const inUse = await isPortInUse(port);
-  if (!inUse) {
-    console.log(`[chaos-sync] Levantando servidor en puerto ${port}...`);
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const traceHookPath = path.join(rootDir, 'scratch', 'ws-server-trace.cjs');
-    try {
-      fs.mkdirSync(path.dirname(traceHookPath), { recursive: true });
-      fs.writeFileSync(
-        traceHookPath,
-        `
+  const traceHookPath = path.join(rootDir, 'scratch', 'ws-server-trace.cjs');
+  try {
+    fs.mkdirSync(path.dirname(traceHookPath), { recursive: true });
+    fs.writeFileSync(
+      traceHookPath,
+      `
 const wsMod = require('ws');
 let sockCounter = 0;
 const activeByDevice = new Map();
@@ -619,34 +612,24 @@ wsMod.WebSocketServer.prototype.emit = function(ev, ws, ...rest) {
   return origEmit.call(this, ev, ws, ...rest);
 };
 `,
-        'utf8'
-      );
-    } catch (_) {}
-    const env = { ...process.env, PORT: String(port), CINECAST_TEST: '1', CINECAST_DISABLE_PREWARM: '1' };
-    delete env.ELECTRON_RUN_AS_NODE;
-    spawnedServer = cp.spawn('node', ['--require', traceHookPath, tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-    let srvLogCount = 0;
-    spawnedServer.stdout.on('data', (chunk) => {
-      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
-      for (const l of lines) {
-        if (l.includes('[server-ws]') && srvLogCount < 40) {
-          srvLogCount++;
-          console.log(l);
-        }
-      }
-    });
-    const ready = await waitForHealth(`http://localhost:${port}`, 35000);
-    if (!ready) {
-      console.error('[chaos-sync] Servidor no respondió.');
-      app.exit(1);
-    }
-  }
+      'utf8'
+    );
+  } catch (_) {}
 
+  let srvLogCount = 0;
+  testEnv = await startTestEnv({
+    name: 'chaos-sync',
+    useLanIp: true,
+    nodeArgs: ['--require', traceHookPath],
+    onStdoutLine: (l) => {
+      if (l.includes('[server-ws]') && srvLogCount < 40) {
+        srvLogCount++;
+        console.log(l);
+      }
+    },
+  });
+  const baseUrl = testEnv.lanBase;
+  const activeRoom = testEnv.room;
   const preloadPath = path.join(rootDir, 'electron', 'preload.cjs');
 
   // Ventana PC (screen)
@@ -679,10 +662,10 @@ wsMod.WebSocketServer.prototype.emit = function(ev, ws, ...rest) {
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
   );
 
-  console.log(`[chaos-sync] Cargando ventanas en ${baseUrl}...`);
+  console.log(`[chaos-sync] Cargando ventanas en ${baseUrl} (room=${activeRoom})...`);
   await Promise.all([
-    winScreen.loadURL(`${baseUrl}/?role=screen&ui=nuevo`),
-    winPhone.loadURL(`${baseUrl}/?role=remote&ui=nuevo`),
+    winScreen.loadURL(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoom)}`),
+    winPhone.loadURL(`${baseUrl}/?role=remote&ui=nuevo&room=${encodeURIComponent(activeRoom)}`),
   ]);
 
   // Habilitar depuradores para CDP
@@ -754,7 +737,7 @@ wsMod.WebSocketServer.prototype.emit = function(ev, ws, ...rest) {
     void 0;
   `);
 
-  const ctx = { winScreen, winPhone, baseUrl, preloadPath, roomId: 'cine-home-1' };
+  const ctx = { winScreen, winPhone, baseUrl, preloadPath, roomId: activeRoom };
 
   const onlyArg = process.argv.find((a) => a.startsWith('--only='));
   const onlyKeys = onlyArg ? onlyArg.slice(7).split(',').map((s) => s.trim().toLowerCase()) : null;
@@ -793,8 +776,8 @@ wsMod.WebSocketServer.prototype.emit = function(ev, ws, ...rest) {
   console.log('================================================================================\n');
 
   clearTimeout(globalTimeout);
-  if (spawnedServer) {
-    try { spawnedServer.kill(); } catch (_) {}
+  if (testEnv) {
+    await testEnv.stop();
   }
 
   // Guardar resultado estructurado para comparación antes/después

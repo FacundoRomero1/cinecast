@@ -1,3 +1,5 @@
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 import fs from 'node:fs';
 import path from 'node:path';
 

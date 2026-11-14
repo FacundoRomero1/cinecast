@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 /**
  * Verificador de proveedores embed de CineCast.
  * Uso:  npm run check:providers

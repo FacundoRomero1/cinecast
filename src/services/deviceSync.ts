@@ -81,7 +81,8 @@ export class DeviceSyncService {
 
   private knownDevices: Map<string, DeviceInfo> = new Map();
   private lanIp: string = '';
-  private lanPort: number = 3000;
+  private lanPort: number =
+    typeof window !== 'undefined' && Number(window.location.port) ? Number(window.location.port) : 3000;
   private wakeLockSentinel: any = null;
 
   // Entrega garantizada y reintentos

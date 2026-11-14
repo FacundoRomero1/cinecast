@@ -1,3 +1,5 @@
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';

@@ -14,12 +14,14 @@ export { getLocalIpAddress };
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.CINECAST_PORT || process.env.PORT || 3000);
 
 let devDiagnosticMode = false;
 let devNoCorsFix = false;
 const devAuthStore: Record<string, StoredAuthData> = {};
-const devUserDataPath = path.join(__dirname, '.cinecast-data');
+const devUserDataPath = process.env.CINECAST_DATA_DIR?.trim()
+  ? path.resolve(process.env.CINECAST_DATA_DIR.trim())
+  : path.join(__dirname, '.cinecast-data');
 
 const app = createApp({
   baseDir: __dirname,

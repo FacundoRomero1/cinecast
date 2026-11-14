@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 /**
  * scripts/audit-filters.mjs
  * Auditoría automatizada de filtros, facetas, desempate por id y consistencia SQLite vs memoria.

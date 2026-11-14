@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/bench-client.cjs
  * Benchmark de cliente en Electron (390x844 mobile + throttling CPU 4x + URL LAN):

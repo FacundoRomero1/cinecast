@@ -110,6 +110,19 @@ export function resolveCatalogDbPath(baseDir: string, userDataPath?: string): st
   if (override) {
     return path.resolve(override);
   }
+  const envDataDir = process.env.CINECAST_DATA_DIR?.trim();
+  if (envDataDir) {
+    const targetDir = path.resolve(envDataDir);
+    const targetDb = path.join(targetDir, 'catalog.sqlite');
+    const sourceDb = path.join(path.resolve(baseDir || process.cwd()), 'data', 'catalog.sqlite');
+    if (!fs.existsSync(targetDb) && fs.existsSync(sourceDb)) {
+      try {
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.copyFileSync(sourceDb, targetDb);
+      } catch (_) {}
+    }
+    return targetDb;
+  }
   const resolvedBase = path.resolve(baseDir || process.cwd());
   const resolvedUserData = userDataPath ? path.resolve(userDataPath) : '';
   const isProd =

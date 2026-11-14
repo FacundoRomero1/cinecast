@@ -1,3 +1,5 @@
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

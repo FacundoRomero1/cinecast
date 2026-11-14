@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 /**
  * Extiende el catálogo de TMDB de forma aditiva y reanudable en
  * `public/data/catalog.extended.json`, SIN modificar `public/data/catalog.json`.

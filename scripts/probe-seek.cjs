@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-seek.cjs
  * Verificación de salto real (seek/seekRelative) en reproductores incrustados con CINECAST_TEST=1.

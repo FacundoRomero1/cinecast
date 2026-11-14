@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/bench-catalog.cjs
  * Benchmark de línea base y post-optimización del servidor de catálogo:

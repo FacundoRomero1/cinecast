@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-slider.cjs
  * Prueba de barra de tiempo deslizable táctil (role="slider")

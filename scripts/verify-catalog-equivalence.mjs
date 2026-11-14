@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import testenvPkg from './lib/testenv.cjs';
+const { startTestEnv } = testenvPkg;
 /**
  * scripts/verify-catalog-equivalence.mjs
  * Compara 40 queries variadas de catálogo entre CINECAST_CATALOG_ENGINE=memory vs SQLite,

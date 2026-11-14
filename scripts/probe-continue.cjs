@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { startTestEnv } = require('./lib/testenv.cjs');
 /**
  * scripts/probe-continue.cjs
  * Verificación de "Continuar viendo" abriendo el episodio guardado (datos fijos):

@@ -20,9 +20,10 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 
 const { app, BrowserWindow, webContents } = require('electron');
 const path = require('path');
-const net = require('net');
-const cp = require('child_process');
 const WebSocket = require('ws');
+const { startTestEnv } = require('./lib/testenv.cjs');
+
+let testEnv = null;
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -62,34 +63,12 @@ const globalTimer = setTimeout(() => {
   app.exit(1);
 }, 100000);
 
-let serverProcess = null;
-
 async function run() {
   console.log('[probe-dpad] Iniciando prueba...');
-  const port = 3000;
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const rootDir = path.resolve(__dirname, '..');
-
-  const inUse = await isPortInUse(port);
-  if (!inUse) {
-    console.log('[probe-dpad] Iniciando servidor en puerto 3000...');
-    const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    const env = { ...process.env, PORT: String(port), CINECAST_TEST: '1', CINECAST_DISABLE_PREWARM: '1' };
-    delete env.ELECTRON_RUN_AS_NODE;
-    serverProcess = cp.spawn('node', [tsxCli, 'server.ts'], {
-      cwd: rootDir,
-      env,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    console.log('[probe-dpad] Esperando /api/health...');
-    await waitForHealth(baseUrl, 35000);
-    console.log('[probe-dpad] Servidor listo.');
-  } else {
-    console.log('[probe-dpad] Servidor ya activo en puerto 3000.');
-  }
-
-  const roomId = 'cine-probe-dpad';
+  testEnv = await startTestEnv({ name: 'probe-dpad' });
+  const port = testEnv.port;
+  const baseUrl = testEnv.base;
+  const roomId = testEnv.room;
 
   // Ventana de la pantalla simulando el hub cargado con /__test/keys.html
   const winA = new BrowserWindow({
@@ -375,17 +354,17 @@ async function run() {
 
   try { ws.close(); } catch (_) {}
   try { screenWs.close(); } catch (_) {}
-  if (serverProcess) {
-    try { serverProcess.kill(); } catch (_) {}
+  if (testEnv) {
+    await testEnv.stop();
   }
   clearTimeout(globalTimer);
   app.exit(allPass ? 0 : 1);
 }
 
-app.whenReady().then(run).catch((err) => {
+app.whenReady().then(run).catch(async (err) => {
   console.error('[probe-dpad FATAL]', err);
-  if (serverProcess) {
-    try { serverProcess.kill(); } catch (_) {}
+  if (testEnv) {
+    await testEnv.stop();
   }
   clearTimeout(globalTimer);
   app.exit(1);

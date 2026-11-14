@@ -39,6 +39,18 @@ function printDiagLog() {
 
 const requestOriginMap = new Map();
 
+// Aislar datos y puerto cuando CINECAST_DATA_DIR / CINECAST_PORT están definidos (PARTE 0)
+const ENV_PORT = Number(process.env.CINECAST_PORT || process.env.PORT || 3000);
+const ENV_DATA_DIR = process.env.CINECAST_DATA_DIR?.trim()
+  ? path.resolve(process.env.CINECAST_DATA_DIR.trim())
+  : '';
+if (ENV_DATA_DIR) {
+  try {
+    fs.mkdirSync(ENV_DATA_DIR, { recursive: true });
+    app.setPath('userData', ENV_DATA_DIR);
+  } catch (_) {}
+}
+
 // Instancia única: dos procesos sobre el mismo perfil rompen cache/quota/cookies de Cloudflare
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -464,9 +476,9 @@ function startEmbeddedServer() {
     const express = require('express');
     const http = require('http');
 
-    const PORT = 3000;
+    const PORT = ENV_PORT;
     const baseDir = path.join(__dirname, '..');
-    const userDataPath = app.getPath('userData');
+    const userDataPath = ENV_DATA_DIR || app.getPath('userData');
     const posterCacheDir = path.join(userDataPath, 'poster_cache');
     const mediaCacheDir = path.join(userDataPath, 'media_cache');
     const accountsFilePath = getAccountsFilePath();
@@ -1025,14 +1037,15 @@ function createPlayerWindow(url) {
   // =========================================================================
   // 6. CARGA DE LA APLICACIÓN
   // =========================================================================
-  const port = process.env.PORT || 3000;
+  const port = ENV_PORT;
   const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
   const uiArg = process.argv.includes('--ui=nuevo')
     ? 'nuevo'
     : process.argv.includes('--ui=clasico')
     ? 'clasico'
     : null;
-  const startUrl = `http://localhost:${port}/?role=screen${uiArg ? `&ui=${uiArg}` : ''}`;
+  const roomArg = process.env.CINECAST_ROOM ? `&room=${encodeURIComponent(process.env.CINECAST_ROOM)}` : '';
+  const startUrl = `http://localhost:${port}/?role=screen${uiArg ? `&ui=${uiArg}` : ''}${roomArg}`;
   const fileQuery = uiArg ? { role: 'screen', ui: uiArg } : { role: 'screen' };
 
   // Cargar siempre vía servidor HTTP local (0.0.0.0:3000) para habilitar WebSocket nativo,
