@@ -1301,6 +1301,84 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
   const [localIp, setLocalIp] = useState<string>('127.0.0.1');
   const [port, setPort] = useState<number>(3000);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [tmdbKeyInput, setTmdbKeyInput] = useState<string>('');
+  const [tmdbKeyMasked, setTmdbKeyMasked] = useState<string>('');
+  const [tmdbKeyStatus, setTmdbKeyStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [isTestingTmdbKey, setIsTestingTmdbKey] = useState<boolean>(false);
+  const [isSavingTmdbKey, setIsSavingTmdbKey] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetch('/api/config/tmdb-key')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.masked) {
+          setTmdbKeyMasked(d.masked);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleTestTmdbKey = async () => {
+    const key = tmdbKeyInput.trim();
+    if (!key) {
+      setTmdbKeyStatus({ ok: false, msg: 'Ingresá una clave de TMDB para probar.' });
+      return;
+    }
+    setIsTestingTmdbKey(true);
+    setTmdbKeyStatus(null);
+    try {
+      const isBearer = key.startsWith('eyJ') && key.length > 40;
+      const url = isBearer
+        ? 'https://api.themoviedb.org/3/configuration'
+        : `https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(key)}`;
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (isBearer) headers.Authorization = `Bearer ${key}`;
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.images) {
+          setTmdbKeyStatus({ ok: true, msg: '✓ Clave de TMDB válida (conexión verificada).' });
+        } else {
+          setTmdbKeyStatus({ ok: false, msg: '✗ Respuesta inesperada de TMDB.' });
+        }
+      } else {
+        setTmdbKeyStatus({ ok: false, msg: `✗ Clave inválida (HTTP ${res.status}).` });
+      }
+    } catch (_) {
+      setTmdbKeyStatus({ ok: false, msg: '✗ No se pudo conectar con api.themoviedb.org.' });
+    }
+    setIsTestingTmdbKey(false);
+  };
+
+  const handleSaveTmdbKey = async () => {
+    const key = tmdbKeyInput.trim();
+    setIsSavingTmdbKey(true);
+    setTmdbKeyStatus(null);
+    try {
+      const res = await fetch('/api/config/tmdb-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
+        setTmdbKeyMasked(data.masked || '');
+        setTmdbKeyInput('');
+        setTmdbKeyStatus({
+          ok: true,
+          msg: key ? `✓ Clave guardada (${data.masked}).` : '✓ Clave personalizada eliminada (usando valor por defecto).',
+        });
+      } else {
+        setTmdbKeyStatus({
+          ok: false,
+          msg: data?.error || `✗ Error al guardar clave (HTTP ${res.status}).`,
+        });
+      }
+    } catch (_) {
+      setTmdbKeyStatus({ ok: false, msg: '✗ Error de red al guardar la clave.' });
+    }
+    setIsSavingTmdbKey(false);
+  };
 
   useEffect(() => {
     return diagnosticService.onChange((enabled) => {
@@ -1532,6 +1610,57 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
         >
           {isRepairingHistory ? 'Reparando...' : 'Reparar historial'}
         </button>
+      </div>
+
+      {/* PARTE 4 (Paso 10): Clave de TMDB configurable */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <div className="text-sm font-bold text-white">Clave de TMDB</div>
+            <div className="text-xs text-zinc-400">
+              Personalizá tu API Key de The Movie Database (guardada en userData/cinecast-config.json).
+              {tmdbKeyMasked ? ` Actual: ${tmdbKeyMasked}` : ' Usando clave por defecto.'}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <input
+            type="password"
+            value={tmdbKeyInput}
+            onChange={(e) => setTmdbKeyInput(e.target.value)}
+            placeholder={tmdbKeyMasked ? `Guardada: ${tmdbKeyMasked}` : 'Ingresar clave de TMDB...'}
+            aria-label="Clave de TMDB"
+            autoComplete="off"
+            className="flex-1 min-h-[42px] px-3.5 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-emerald-500"
+          />
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleTestTmdbKey}
+              disabled={isTestingTmdbKey}
+              className="min-h-[42px] px-4 py-2 rounded-xl text-xs font-bold border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition disabled:opacity-50"
+            >
+              {isTestingTmdbKey ? 'Probando...' : 'Probar'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveTmdbKey}
+              disabled={isSavingTmdbKey}
+              className="min-h-[42px] px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition disabled:opacity-50"
+            >
+              {isSavingTmdbKey ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        </div>
+        {tmdbKeyStatus && (
+          <div
+            className={`text-xs font-semibold ${
+              tmdbKeyStatus.ok ? 'text-emerald-400' : 'text-red-400'
+            }`}
+          >
+            {tmdbKeyStatus.msg}
+          </div>
+        )}
       </div>
 
       {/* Sección Spotify (dispositivo CineCast) */}

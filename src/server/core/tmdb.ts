@@ -1,8 +1,75 @@
+import fs from 'fs';
+import path from 'path';
+
 const DEFAULT_TMDB_KEY = '2dca580c2a14b55200e784d157207b4d';
 export const TMDB_URL = 'https://api.themoviedb.org/3';
 
-export function getTmdbKey(): string {
-  return process.env.TMDB_API_KEY || DEFAULT_TMDB_KEY;
+let configuredUserDataPath: string | null = null;
+
+export function setTmdbConfigDir(userDataDir: string): void {
+  if (userDataDir && typeof userDataDir === 'string') {
+    configuredUserDataPath = userDataDir;
+  }
+}
+
+export function getTmdbConfigFilePath(overrideUserDataDir?: string): string {
+  const dir =
+    overrideUserDataDir ||
+    configuredUserDataPath ||
+    process.env.CINECAST_USER_DATA_DIR ||
+    path.join(process.cwd(), '.cinecast-data');
+  return path.join(dir, 'cinecast-config.json');
+}
+
+export function getSavedTmdbKey(overrideUserDataDir?: string): string | null {
+  try {
+    const filePath = getTmdbConfigFilePath(overrideUserDataDir);
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const key =
+      typeof parsed?.tmdbKey === 'string' && parsed.tmdbKey.trim()
+        ? parsed.tmdbKey.trim()
+        : typeof parsed?.tmdbApiKey === 'string' && parsed.tmdbApiKey.trim()
+        ? parsed.tmdbApiKey.trim()
+        : null;
+    return key;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function saveTmdbKeyToConfig(newKey: string, overrideUserDataDir?: string): void {
+  const filePath = getTmdbConfigFilePath(overrideUserDataDir);
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  let existing: Record<string, any> = {};
+  try {
+    if (fs.existsSync(filePath)) {
+      existing = JSON.parse(fs.readFileSync(filePath, 'utf8')) || {};
+    }
+  } catch (_) {
+    existing = {};
+  }
+  const trimmed = (newKey || '').trim();
+  if (trimmed) {
+    existing.tmdbKey = trimmed;
+  } else {
+    delete existing.tmdbKey;
+    delete existing.tmdbApiKey;
+  }
+  fs.writeFileSync(filePath, JSON.stringify(existing, null, 2), 'utf8');
+}
+
+export function getTmdbKey(overrideUserDataDir?: string): string {
+  if (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY.trim()) {
+    return process.env.TMDB_API_KEY.trim();
+  }
+  const fromFile = getSavedTmdbKey(overrideUserDataDir);
+  if (fromFile) {
+    return fromFile;
+  }
+  return DEFAULT_TMDB_KEY;
 }
 
 export interface MediaServerEntry {

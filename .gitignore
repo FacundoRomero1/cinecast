@@ -14,6 +14,7 @@ coverage/
 scratch/
 electron/core.cjs
 .cinecast-data/
+**/cinecast-config.json
 public/data/watch_history.json
 public/data/historial-respaldo-*.json
 public/data/catalog.extended.json

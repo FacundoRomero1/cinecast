@@ -14,7 +14,8 @@ import { createArchiveRouter } from './routes/archive.js';
 import { createAccountsRouter, type AccountsOptions } from './routes/accounts.js';
 import { createAuthRouter, type AuthRouterOptions } from './routes/auth.js';
 import { createYouTubeRouter } from './routes/youtube.js';
-import { createClientLogRouter } from './routes/clientlog.js';
+import { createClientLogRouter, isLoopbackIp } from './routes/clientlog.js';
+import { setTmdbConfigDir, getSavedTmdbKey, saveTmdbKeyToConfig } from './tmdb.js';
 
 export interface CreateAppOptions {
   baseDir?: string | undefined;
@@ -54,6 +55,7 @@ export function createApp(options: CreateAppOptions): Express {
 
   const baseDir = options.baseDir || process.cwd();
   const userDataDir = options.userDataPath || path.join(baseDir, '.cinecast-data');
+  setTmdbConfigDir(userDataDir);
   const posterCacheDir = options.posterCacheDir || path.join(userDataDir, 'poster_cache');
   const mediaCacheDir = options.mediaCacheDir || path.join(userDataDir, 'media_cache');
   const accountsFilePath =
@@ -125,6 +127,49 @@ export function createApp(options: CreateAppOptions): Express {
   app.use('/api', createAccountsRouter(accountsOpts));
   app.use('/api', createYouTubeRouter());
   app.use('/api', createClientLogRouter());
+
+  // PARTE 4 (Paso 10): Clave de TMDB configurable en userData/cinecast-config.json (POST solo desde 127.0.0.1)
+  const maskTmdbKey = (k: string | null): string => {
+    if (!k) return '';
+    if (k.length <= 6) return '••••••';
+    return `${k.slice(0, 3)}••••••••${k.slice(-3)}`;
+  };
+
+  app.get('/api/config/tmdb-key', (_req, res) => {
+    const saved = getSavedTmdbKey(userDataDir);
+    res.json({
+      ok: true,
+      hasCustomKey: Boolean(saved),
+      masked: maskTmdbKey(saved),
+    });
+  });
+
+  app.post('/api/config/tmdb-key', (req, res) => {
+    const remoteAddr = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '').trim();
+    const forwarded = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim();
+    if (!isLoopbackIp(remoteAddr) || (forwarded && !isLoopbackIp(forwarded))) {
+      res.status(403).json({
+        ok: false,
+        error: 'Solo permitido desde 127.0.0.1 (la clave de TMDB no puede modificarse desde el celular)',
+      });
+      return;
+    }
+
+    const rawKey =
+      typeof req.body?.key === 'string'
+        ? req.body.key.trim()
+        : typeof req.body?.tmdbKey === 'string'
+        ? req.body.tmdbKey.trim()
+        : '';
+
+    saveTmdbKeyToConfig(rawKey, userDataDir);
+    const saved = getSavedTmdbKey(userDataDir);
+    res.json({
+      ok: true,
+      hasCustomKey: Boolean(saved),
+      masked: maskTmdbKey(saved),
+    });
+  });
 
   if (options.auth) {
     app.use('/', createAuthRouter(options.auth));

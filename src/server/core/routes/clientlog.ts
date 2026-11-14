@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { getSavedTmdbKey } from '../tmdb.js';
 
 export interface ClientLogEntry {
   id?: string;
@@ -24,8 +25,16 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function maskSecretString(str: string): string {
   if (typeof str !== 'string') return str;
+  let result = str;
+  const savedTmdb = getSavedTmdbKey();
+  if (savedTmdb && savedTmdb.length >= 4 && result.includes(savedTmdb)) {
+    result = result.split(savedTmdb).join('[REDACTED_TMDB_KEY]');
+  }
+  if (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY.length >= 4 && result.includes(process.env.TMDB_API_KEY)) {
+    result = result.split(process.env.TMDB_API_KEY).join('[REDACTED_TMDB_KEY]');
+  }
   // Match potential client IDs (hex strings of 32 chars)
-  let result = str.replace(/\b([a-f0-9]{4})[a-f0-9]{24}([a-f0-9]{4})\b/gi, '$1...$2');
+  result = result.replace(/\b([a-f0-9]{4})[a-f0-9]{24}([a-f0-9]{4})\b/gi, '$1...$2');
   // Match tokens like BQ... or generic long tokens (20+ chars)
   result = result.replace(/([a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]{20,}([a-zA-Z0-9_-]{4})/g, (_match, prefix, suffix) => {
     return `${prefix}...${suffix}`;
@@ -50,7 +59,11 @@ export function sanitizeLogValue(val: any): any {
         lower.includes('secret') ||
         lower.includes('authorization') ||
         lower.includes('clientid') ||
-        lower.includes('client_id')
+        lower.includes('client_id') ||
+        lower.includes('tmdbkey') ||
+        lower.includes('tmdb_key') ||
+        lower.includes('apikey') ||
+        lower.includes('api_key')
       ) {
         if (typeof v === 'string') {
           cleaned[k] = v.length > 8 ? `${v.slice(0, 4)}...${v.slice(-4)}` : '****';
