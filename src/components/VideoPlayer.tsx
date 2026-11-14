@@ -446,7 +446,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const consecutiveUnavailableCountRef = useRef<number>(0);
   const iframeLoadedAtRef = useRef<number>(Date.now());
 
-  const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(true);
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('cinecast_subtitles_pref') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [seekUnsupported, setSeekUnsupported] = useState<boolean>(false);
   const [resumeState, setResumeState] = useState<ResumeState | null>(null);
   const [isEstimatedTime, setIsEstimatedTime] = useState<boolean>(false);
@@ -1427,6 +1433,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       case 'toggleSubtitles': {
         const nextSub = typeof cmd.payload === 'boolean' ? cmd.payload : !subtitlesEnabled;
         setSubtitlesEnabled(nextSub);
+        subtitlesEnabledRef.current = nextSub;
+        try {
+          localStorage.setItem('cinecast_subtitles_pref', nextSub ? '1' : '0');
+        } catch {}
         window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: nextSub });
         onBroadcastState?.({ subtitlesEnabled: nextSub });
         break;
@@ -1664,6 +1674,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 rotateToNextServer('Timeout de 10s sin respuesta en webview');
               }}
               onDomReady={() => {
+                window.electronAPI?.controlActiveMedia?.({
+                  action: 'toggleSubtitles',
+                  value: subtitlesEnabledRef.current,
+                });
+                onBroadcastState?.({ subtitlesEnabled: subtitlesEnabledRef.current });
                 setTimeout(() => {
                   const webviewEl = containerRef.current?.querySelector('webview');
                   if (!webviewEl) return;
@@ -2107,27 +2122,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
           {/* Lado Derecho: Controles + Botón Ocultar Barra + Pantalla Completa */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Botón Subtítulos (solo modo nativo) */}
-            {!isIframeMode && (
-              <button
-                type="button"
-                onClick={async () => {
-                  const nextSub = !subtitlesEnabled;
-                  setSubtitlesEnabled(nextSub);
-                  await window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: nextSub });
-                  onBroadcastState?.({ subtitlesEnabled: nextSub });
-                }}
-                className={`px-2 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 border shadow-lg ${
-                  subtitlesEnabled
-                    ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:text-white'
-                    : 'bg-red-950/80 border-red-700/80 text-red-300'
-                }`}
-                title="Activar / Desactivar Subtítulos"
-              >
-                <span>💬</span>
-                <span className="hidden sm:inline">Subs: {subtitlesEnabled ? 'ON' : 'OFF'}</span>
-              </button>
-            )}
+            {/* Botón Subtítulos */}
+            <button
+              type="button"
+              onClick={async () => {
+                const nextSub = !subtitlesEnabled;
+                setSubtitlesEnabled(nextSub);
+                subtitlesEnabledRef.current = nextSub;
+                try {
+                  localStorage.setItem('cinecast_subtitles_pref', nextSub ? '1' : '0');
+                } catch {}
+                await window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: nextSub });
+                onBroadcastState?.({ subtitlesEnabled: nextSub });
+              }}
+              className={`px-2 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 border shadow-lg ${
+                subtitlesEnabled
+                  ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:text-white'
+                  : 'bg-red-950/80 border-red-700/80 text-red-300'
+              }`}
+              title="Activar / Desactivar Subtítulos"
+            >
+              <span>💬</span>
+              <span className="hidden sm:inline">Subs: {subtitlesEnabled ? 'ON' : 'OFF'}</span>
+            </button>
 
             {onOpenAudioSettings && !isIframeMode && (
               <button

@@ -982,7 +982,13 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       case 'toggleSubtitles': {
         if (!(isPlayingLocally && activeHub === 'cinecast')) {
-          window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: cmd.payload });
+          const curPref = typeof window !== 'undefined' && localStorage.getItem('cinecast_subtitles_pref') === '1';
+          const nextSub = typeof cmd.payload === 'boolean' ? cmd.payload : !curPref;
+          try {
+            localStorage.setItem('cinecast_subtitles_pref', nextSub ? '1' : '0');
+          } catch {}
+          window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: nextSub });
+          handleBroadcastPlayerState({ subtitlesEnabled: nextSub });
         }
         triggerNotification(`📱 Subtítulos alterados`);
         break;
@@ -1803,6 +1809,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             typeof stateUpdate.marathon === 'boolean'
               ? stateUpdate.marathon
               : typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true',
+          subtitlesEnabled:
+            typeof stateUpdate.subtitlesEnabled === 'boolean'
+              ? stateUpdate.subtitlesEnabled
+              : typeof window !== 'undefined' && localStorage.getItem('cinecast_subtitles_pref') === '1',
           hasIntroTimings: hasTimings,
           isIntroActive: false,
           isRecapActive: false,
