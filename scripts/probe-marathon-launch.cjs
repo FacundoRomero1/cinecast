@@ -225,7 +225,7 @@ app.whenReady().then(async () => {
     });
 
     await screenWin.loadURL(`${baseUrl}/?role=screen&room=${encodeURIComponent(activeRoomId)}`);
-    await remoteWin.loadURL(`${baseUrl}/control?role=remote&room=${encodeURIComponent(activeRoomId)}`);
+    await remoteWin.loadURL(`${baseUrl}/?role=remote&room=${encodeURIComponent(activeRoomId)}#/control`);
     await wait(3500);
 
     // Activar Maratón en PC y Remote

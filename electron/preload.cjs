@@ -97,4 +97,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPerfConfig: (cfg) => ipcRenderer.invoke('set-perf-config', cfg),
   recordEmbedAudioCall: () => ipcRenderer.invoke('record-embed-audio-call'),
   isDebugPerf: () => process.env.CINECAST_DEBUG_PERF === '1',
+  getCompatibilityMode: () => ipcRenderer.invoke('get-compatibility-mode'),
+  setCompatibilityMode: (enabled) => ipcRenderer.invoke('set-compatibility-mode', enabled),
+  onCompatibilityModeChanged: (cb) => {
+    const listener = (_e, val) => cb(val);
+    ipcRenderer.on('compatibility-mode-changed', listener);
+    return () => ipcRenderer.removeListener('compatibility-mode-changed', listener);
+  },
+  getLoadRecording: () => ipcRenderer.invoke('get-load-recording'),
+  setLoadRecording: (enabled) => ipcRenderer.invoke('set-load-recording', enabled),
+  startLoadTrace: (payload) => ipcRenderer.invoke('start-load-trace', payload),
+  recordLoadTraceEvent: (payload) => ipcRenderer.invoke('record-load-trace-event', payload),
+  getLoadTraces: () => ipcRenderer.invoke('get-load-traces'),
+  clearLoadTraces: () => ipcRenderer.invoke('clear-load-traces'),
 });

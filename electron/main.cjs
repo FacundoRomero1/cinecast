@@ -1,6 +1,9 @@
-const { app, BrowserWindow, session, ipcMain, shell, webContents, protocol, safeStorage, components } = require('electron');
+const { app, BrowserWindow, session, ipcMain, shell, webContents, protocol, safeStorage, components, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns');
+const netNode = require('net');
+const tls = require('tls');
 const { createApp, attachWebSocket, getLocalIpAddress } = require('./core.cjs');
 
 // =========================================================================
@@ -32,6 +35,139 @@ const perfCounters = {
 };
 let perfDisableEmbedAudio = process.env.CINECAST_DISABLE_EMBED_AUDIO === '1';
 let perfDisableTimePoll = process.env.CINECAST_DISABLE_TIME_POLL === '1';
+
+// PARTE 4 (Paso 12): Modo compatibilidad (apagado por defecto, guardado en cinecast-config.json)
+let isCompatibilityMode = false;
+
+function getCinecastConfigFilePath() {
+  try {
+    return path.join(app.getPath('userData'), 'cinecast-config.json');
+  } catch (_) {
+    return path.join(process.cwd(), '.cinecast-data', 'cinecast-config.json');
+  }
+}
+
+function loadCompatibilityModeFromDisk() {
+  try {
+    const p = getCinecastConfigFilePath();
+    if (!fs.existsSync(p)) return false;
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return Boolean(raw && raw.compatibilityMode === true);
+  } catch (_) {
+    return false;
+  }
+}
+
+function saveCompatibilityModeToDisk(enabled) {
+  try {
+    const p = getCinecastConfigFilePath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    let existing = {};
+    if (fs.existsSync(p)) {
+      try {
+        existing = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+      } catch (_) {}
+    }
+    existing.compatibilityMode = Boolean(enabled);
+    fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+// PARTE 4 (Paso 11): "Grabar carga" (registro por cada inicio de reproducción)
+let isLoadRecordingEnabled = false;
+const loadTraces = [];
+let currentLoadTrace = null;
+
+function probeFirstServerWithNetRequest(rawUrl) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let parsed;
+    try {
+      parsed = new URL(rawUrl);
+    } catch (err) {
+      resolve({ url: rawUrl, host: 'invalid', dnsMs: 0, tcpMs: 0, tlsMs: 0, ttfbMs: 0, statusCode: 0, error: err.message });
+      return;
+    }
+
+    const host = parsed.hostname;
+    const port = Number(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80);
+    const isHttps = parsed.protocol === 'https:';
+    let dnsMs = 0;
+    let tcpMs = 0;
+    let tlsMs = 0;
+
+    const finishWithNetRequest = () => {
+      const reqStart = Date.now();
+      let settled = false;
+      const done = (result) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        done({ url: rawUrl, host, dnsMs, tcpMs, tlsMs, ttfbMs: Date.now() - reqStart, statusCode: 0, error: 'timeout' });
+      }, 6000);
+
+      try {
+        const req = net.request({ method: 'GET', url: rawUrl, redirect: 'manual' });
+        req.on('response', (res) => {
+          const ttfbMs = Date.now() - reqStart;
+          const statusCode = res.statusCode || 0;
+          res.once('data', () => {});
+          clearTimeout(timer);
+          try { req.abort(); } catch (_) {}
+          done({ url: rawUrl, host, dnsMs, tcpMs, tlsMs, ttfbMs, statusCode, error: null });
+        });
+        req.on('error', (err) => {
+          clearTimeout(timer);
+          done({ url: rawUrl, host, dnsMs, tcpMs, tlsMs, ttfbMs: Date.now() - reqStart, statusCode: 0, error: err?.message || String(err) });
+        });
+        req.end();
+      } catch (err) {
+        clearTimeout(timer);
+        done({ url: rawUrl, host, dnsMs, tcpMs, tlsMs, ttfbMs: Date.now() - startedAt, statusCode: 0, error: err?.message || String(err) });
+      }
+    };
+
+    const tDns0 = Date.now();
+    dns.lookup(host, (dnsErr, address) => {
+      dnsMs = Date.now() - tDns0;
+      if (dnsErr || !address) {
+        finishWithNetRequest();
+        return;
+      }
+      const tTcp0 = Date.now();
+      const sock = netNode.connect({ host: address, port, timeout: 3000 }, () => {
+        tcpMs = Date.now() - tTcp0;
+        if (!isHttps) {
+          try { sock.destroy(); } catch (_) {}
+          finishWithNetRequest();
+          return;
+        }
+        const tTls0 = Date.now();
+        const tlsSock = tls.connect({ socket: sock, servername: host, rejectUnauthorized: false }, () => {
+          tlsMs = Date.now() - tTls0;
+          try { tlsSock.destroy(); } catch (_) {}
+          finishWithNetRequest();
+        });
+        tlsSock.on('error', () => {
+          tlsMs = Date.now() - tTls0;
+          try { tlsSock.destroy(); } catch (_) {}
+          finishWithNetRequest();
+        });
+      });
+      sock.on('error', () => {
+        tcpMs = Date.now() - tTcp0;
+        try { sock.destroy(); } catch (_) {}
+        finishWithNetRequest();
+      });
+      sock.on('timeout', () => {
+        try { sock.destroy(); } catch (_) {}
+        finishWithNetRequest();
+      });
+    });
+  });
+}
 
 function printDiagLog() {
   console.log(`[DIAG] adblock=${isDiagnosticMode ? 'OFF' : 'ON'} popups=${isDiagnosticMode ? 'ALLOW' : 'BLOCK'} shields=${isDiagnosticMode ? 'OFF' : 'ON'} ua=${isDiagnosticMode ? 'OFF' : 'ON'} corsFix=${isNoCorsFix ? 'OFF' : 'ON'}`);
@@ -831,6 +967,9 @@ function createWindow() {
       return;
     }
     adBlockCount++;
+    if (currentLoadTrace) {
+      currentLoadTrace.network.adBlockedRequests++;
+    }
     if (adBlockCount % 100 === 0) {
       console.log(`[AdBlock] Bloqueados: ${adBlockCount}`);
     }
@@ -842,6 +981,41 @@ function createWindow() {
   };
   customSession.webRequest.onBeforeRequest({ urls: AD_FILTER_PATTERNS }, fakeAdResponse);
   session.defaultSession.webRequest.onBeforeRequest({ urls: AD_FILTER_PATTERNS }, fakeAdResponse);
+
+  const videoSesForTrace = session.fromPartition('persist:videosession', { cache: true });
+  videoSesForTrace.webRequest.onBeforeRequest({ urls: AD_FILTER_PATTERNS }, fakeAdResponse);
+  registerCineProtocol(videoSesForTrace);
+
+  videoSesForTrace.webRequest.onCompleted((details) => {
+    if (!currentLoadTrace) return;
+    const u = details.url || '';
+    if (u.startsWith('cine://')) return;
+    currentLoadTrace.network.totalRequests++;
+    if (details.statusCode >= 400) {
+      let host = 'unknown';
+      try { host = new URL(u).hostname; } catch (_) {}
+      currentLoadTrace.network.failedRequests.push({
+        host,
+        code: `HTTP_${details.statusCode}`,
+        status: details.statusCode,
+      });
+    }
+  });
+
+  videoSesForTrace.webRequest.onErrorOccurred((details) => {
+    if (!currentLoadTrace) return;
+    const u = details.url || '';
+    if (u.startsWith('cine://') || details.error === 'net::ERR_ABORTED') return;
+    currentLoadTrace.network.totalRequests++;
+    let host = 'unknown';
+    try { host = new URL(u).hostname; } catch (_) {}
+    currentLoadTrace.network.failedRequests.push({
+      host,
+      code: details.error || 'ERR_UNKNOWN',
+      status: 0,
+    });
+  });
+
   registerCineProtocol(customSession);
   registerCineProtocol(session.defaultSession);
 
@@ -958,9 +1132,16 @@ function createWindow() {
     delete webPreferences.preloadURL;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
-    webPreferences.sandbox = true;
-    webPreferences.webSecurity = true;
-    webPreferences.allowRunningInsecureContent = false;
+    const isVideoPartition = params && params.partition === 'persist:videosession';
+    if (isVideoPartition && isCompatibilityMode) {
+      webPreferences.sandbox = false;
+      webPreferences.webSecurity = true;
+      webPreferences.allowRunningInsecureContent = true;
+    } else {
+      webPreferences.sandbox = true;
+      webPreferences.webSecurity = true;
+      webPreferences.allowRunningInsecureContent = false;
+    }
 
     const src = params && typeof params.src === 'string' ? params.src : '';
     let validHttp = false;
@@ -980,6 +1161,54 @@ function createWindow() {
     if (!contents || contents.isDestroyed()) return;
     const videoSes = session.fromPartition('persist:videosession', { cache: true });
     const isVideoSession = contents.session === videoSes;
+
+    if (isVideoSession && !contents.__loadTraceHooked) {
+      contents.__loadTraceHooked = true;
+      contents.on('did-start-loading', () => {
+        if (currentLoadTrace && currentLoadTrace.timestamps.didStartLoadingMs === null) {
+          currentLoadTrace.timestamps.didStartLoadingMs = Math.max(0, Date.now() - currentLoadTrace.t0);
+        }
+      });
+      contents.on('dom-ready', () => {
+        if (currentLoadTrace && currentLoadTrace.timestamps.domReadyMs === null) {
+          currentLoadTrace.timestamps.domReadyMs = Math.max(0, Date.now() - currentLoadTrace.t0);
+        }
+        try {
+          contents.executeJavaScript(`(() => {
+            if (window.__cineLoadProbeActive) return;
+            window.__cineLoadProbeActive = true;
+            window.__cineVideoFoundAt = null;
+            window.__cineReadyState3At = null;
+            window.__cineFirstFrameAt = null;
+            const check = () => {
+              const v = document.querySelector('video');
+              if (v) {
+                if (window.__cineVideoFoundAt === null) window.__cineVideoFoundAt = Date.now();
+                if (v.readyState >= 3 && window.__cineReadyState3At === null) {
+                  window.__cineReadyState3At = Date.now();
+                }
+                if (!window.__cineRvfcHooked && typeof v.requestVideoFrameCallback === 'function') {
+                  window.__cineRvfcHooked = true;
+                  v.requestVideoFrameCallback(() => {
+                    if (window.__cineFirstFrameAt === null) window.__cineFirstFrameAt = Date.now();
+                  });
+                }
+              }
+            };
+            check();
+            const iv = setInterval(() => {
+              check();
+              if (window.__cineFirstFrameAt !== null) clearInterval(iv);
+            }, 100);
+          })()`, false).catch(() => {});
+        } catch (_) {}
+      });
+      contents.on('did-finish-load', () => {
+        if (currentLoadTrace && currentLoadTrace.timestamps.didFinishLoadMs === null) {
+          currentLoadTrace.timestamps.didFinishLoadMs = Math.max(0, Date.now() - currentLoadTrace.t0);
+        }
+      });
+    }
 
     contents.setWindowOpenHandler(({ url }) => {
       if (isVideoSession) {
@@ -1645,6 +1874,9 @@ app.on('certificate-error', (event, _wc, url, error, _cert, cb) => {
   try {
     host = new URL(url).hostname.toLowerCase();
   } catch (_) {}
+  if (currentLoadTrace) {
+    currentLoadTrace.network.certErrors.push({ host, error: String(error || '') });
+  }
   const logKey = `${host}|${error}`;
   if (!loggedCertErrors.has(logKey)) {
     loggedCertErrors.add(logKey);
@@ -1897,6 +2129,163 @@ ipcMain.handle('get-perf-snapshot', async () => {
   };
 });
 
+// PARTE 4 (Paso 12): Modo compatibilidad ("Modo compatibilidad" en Ajustes > Reproductor)
+ipcMain.handle('get-compatibility-mode', () => {
+  return isCompatibilityMode;
+});
+
+ipcMain.handle('set-compatibility-mode', (_event, enabled) => {
+  isCompatibilityMode = Boolean(enabled);
+  saveCompatibilityModeToDisk(isCompatibilityMode);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('compatibility-mode-changed', isCompatibilityMode);
+  }
+  return isCompatibilityMode;
+});
+
+// PARTE 4 (Paso 11): "Grabar carga" (en Ajustes > Diagnóstico)
+ipcMain.handle('get-load-recording', () => {
+  return isLoadRecordingEnabled;
+});
+
+ipcMain.handle('set-load-recording', (_event, enabled) => {
+  isLoadRecordingEnabled = Boolean(enabled);
+  return isLoadRecordingEnabled;
+});
+
+ipcMain.handle('start-load-trace', async (_event, payload = {}) => {
+  const t0 = Date.now();
+  const firstUrl = payload.firstServerUrl || '';
+  let firstHost = '';
+  try {
+    if (firstUrl) firstHost = new URL(firstUrl).hostname;
+  } catch (_) {}
+
+  const trace = {
+    id: 'load_' + t0 + '_' + Math.random().toString(36).slice(2, 6),
+    title: payload.title || 'Reproducción',
+    startedAtIso: new Date(t0).toISOString(),
+    t0,
+    serversTried: firstUrl
+      ? [{ name: payload.firstServerName || 'Servidor 1', host: firstHost || firstUrl, url: firstUrl, elapsedSec: 0 }]
+      : [],
+    timestamps: {
+      webviewCreatedMs: 0,
+      didStartLoadingMs: null,
+      domReadyMs: null,
+      didFinishLoadMs: null,
+      firstVideoMs: null,
+      readyState3Ms: null,
+      firstFrameMs: null,
+    },
+    network: {
+      totalRequests: 0,
+      failedRequests: [],
+      adBlockedRequests: 0,
+      certErrors: [],
+    },
+    rotations: [],
+    cpuAt5s: null,
+    firstServerNetProbe: null,
+  };
+
+  currentLoadTrace = trace;
+  loadTraces.unshift(trace);
+  if (loadTraces.length > 20) loadTraces.length = 20;
+
+  if (firstUrl && (firstUrl.startsWith('http://') || firstUrl.startsWith('https://'))) {
+    probeFirstServerWithNetRequest(firstUrl)
+      .then((res) => {
+        trace.firstServerNetProbe = res;
+      })
+      .catch(() => {});
+  }
+
+  setTimeout(() => {
+    try {
+      const metrics = app.getAppMetrics();
+      const cpu = { Browser: 0, Tab: 0, GPU: 0 };
+      for (const m of metrics) {
+        if (m.type === 'Browser' || m.type === 'Tab' || m.type === 'GPU') {
+          cpu[m.type] = Number((cpu[m.type] + (m.cpu?.percentCPUUsage || 0)).toFixed(2));
+        }
+      }
+      trace.cpuAt5s = cpu;
+    } catch (_) {}
+  }, 5000);
+
+  return { ok: true, id: trace.id };
+});
+
+ipcMain.handle('record-load-trace-event', (_event, payload = {}) => {
+  if (!currentLoadTrace) return { ok: false };
+  const elapsedMs = Math.max(0, Date.now() - currentLoadTrace.t0);
+  const elapsedSec = Number((elapsedMs / 1000).toFixed(2));
+
+  if (payload.kind === 'server_tried') {
+    let host = payload.host || '';
+    if (!host && payload.url) {
+      try { host = new URL(payload.url).hostname; } catch (_) { host = payload.url; }
+    }
+    currentLoadTrace.serversTried.push({
+      name: payload.name || '',
+      host,
+      url: payload.url || '',
+      elapsedSec,
+    });
+  } else if (payload.kind === 'rotation') {
+    currentLoadTrace.rotations.push({
+      method: payload.method || 'rotateToNextServer',
+      reason: payload.reason || '',
+      elapsedSec: typeof payload.elapsedSec === 'number' ? payload.elapsedSec : elapsedSec,
+    });
+  } else if (payload.kind === 'timestamp' && payload.field) {
+    if (currentLoadTrace.timestamps[payload.field] === null || currentLoadTrace.timestamps[payload.field] === undefined) {
+      currentLoadTrace.timestamps[payload.field] = typeof payload.ms === 'number' ? payload.ms : elapsedMs;
+    }
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('get-load-traces', async () => {
+  if (currentLoadTrace) {
+    const frames = getAllFrames();
+    for (const frame of frames) {
+      if (mainWindow && !mainWindow.isDestroyed() && frame === mainWindow.webContents.mainFrame) continue;
+      try {
+        const probe = await frame.executeJavaScript(`(() => {
+          return {
+            videoFoundAt: window.__cineVideoFoundAt || null,
+            readyState3At: window.__cineReadyState3At || null,
+            firstFrameAt: window.__cineFirstFrameAt || null,
+          };
+        })()`, false);
+        if (probe) {
+          if (probe.videoFoundAt && currentLoadTrace.timestamps.firstVideoMs === null) {
+            currentLoadTrace.timestamps.firstVideoMs = Math.max(0, probe.videoFoundAt - currentLoadTrace.t0);
+          }
+          if (probe.readyState3At && currentLoadTrace.timestamps.readyState3Ms === null) {
+            currentLoadTrace.timestamps.readyState3Ms = Math.max(0, probe.readyState3At - currentLoadTrace.t0);
+          }
+          if (probe.firstFrameAt && currentLoadTrace.timestamps.firstFrameMs === null) {
+            currentLoadTrace.timestamps.firstFrameMs = Math.max(0, probe.firstFrameAt - currentLoadTrace.t0);
+          }
+        }
+      } catch (_) {}
+    }
+  }
+  return {
+    recording: isLoadRecordingEnabled,
+    traces: loadTraces,
+  };
+});
+
+ipcMain.handle('clear-load-traces', () => {
+  loadTraces.length = 0;
+  currentLoadTrace = null;
+  return { ok: true };
+});
+
 // Endurecimiento de permisos por sesión (denegar por defecto salvo lista blanca explícita)
 const loggedPermDenied = new Set();
 
@@ -1940,6 +2329,7 @@ function hardenSession(ses, permitidos) {
 // Ciclo de vida de la aplicación
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
+  isCompatibilityMode = loadCompatibilityModeFromDisk();
 
   if (components?.whenReady) {
     try {

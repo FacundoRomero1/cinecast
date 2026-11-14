@@ -1306,6 +1306,28 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
   const [tmdbKeyStatus, setTmdbKeyStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [isTestingTmdbKey, setIsTestingTmdbKey] = useState<boolean>(false);
   const [isSavingTmdbKey, setIsSavingTmdbKey] = useState<boolean>(false);
+  const [compatMode, setCompatMode] = useState<boolean>(false);
+
+  useEffect(() => {
+    const api = (window as any).electronAPI;
+    if (api?.getCompatibilityMode) {
+      api.getCompatibilityMode().then((res: any) => {
+        if (typeof res?.enabled === 'boolean') setCompatMode(res.enabled);
+      }).catch(() => {});
+    }
+    if (api?.onCompatibilityModeChanged) {
+      return api.onCompatibilityModeChanged((val: boolean) => setCompatMode(Boolean(val)));
+    }
+  }, []);
+
+  const handleToggleCompatMode = async () => {
+    const next = !compatMode;
+    setCompatMode(next);
+    try {
+      const res = await (window as any).electronAPI?.setCompatibilityMode?.(next);
+      if (typeof res?.enabled === 'boolean') setCompatMode(res.enabled);
+    } catch (_) {}
+  };
 
   useEffect(() => {
     fetch('/api/config/tmdb-key')
@@ -1565,6 +1587,26 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
           checked={diagEnabled}
           ariaLabel="Alternar Modo diagnóstico"
           onChange={handleToggleDiag}
+        />
+      </div>
+
+      {/* PARTE 4 (Paso 12): Modo compatibilidad (Reproductor) */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+            <Sliders className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-sm font-bold text-white">Reproductor: Modo compatibilidad</div>
+            <div className="text-xs text-amber-300/90">
+              Desactiva el sandbox del reproductor embebido y permite contenido mixto (menor aislamiento de seguridad; aplica a los reproductores que se abran después).
+            </div>
+          </div>
+        </div>
+        <Switch
+          checked={compatMode}
+          ariaLabel="Alternar Modo compatibilidad"
+          onChange={handleToggleCompatMode}
         />
       </div>
 

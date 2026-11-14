@@ -651,6 +651,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     simulatedTimeRef.current = 0;
     corsRetryRef.current = 0;
     cfAttemptRef.current = 0;
+    (window as any).electronAPI?.startLoadTrace?.({
+      title: currentTitle,
+      firstServerName: activeServer?.name || '',
+      firstServerUrl: activeEmbedUrl || activeServer?.url || '',
+    });
   }, [media.id, episode?.id, selectedSeason, selectedEpisode]);
 
   // ── Sincronizar fuente cuando el servidor activo es directo (mp4/hls) ────
@@ -734,6 +739,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setDetectedTracks(null);
     setTvSignalDown(false);
     iframeLoadedAtRef.current = Date.now();
+    (window as any).electronAPI?.recordLoadTraceEvent?.({
+      kind: 'server_tried',
+      name: srv.name,
+      url: srv.url,
+    });
     try {
       localStorage.setItem(PREFERRED_SERVER_STORAGE_KEY, srv.name);
     } catch (_) {}
@@ -782,6 +792,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     console.warn(
       `[Auto-Rotate][${new Date().toISOString()}] (Rotación ${autoSkipCountRef.current}/3, back-off ${delay}ms) Motivo: ${reason} | Servidor: ${activeServer?.name} -> Siguiente: ${nextSrv?.name}`
     );
+    (window as any).electronAPI?.recordLoadTraceEvent?.({
+      kind: 'rotation',
+      method: 'rotateWithBackoff',
+      reason,
+      elapsedSec: Number(((Date.now() - iframeLoadedAtRef.current) / 1000).toFixed(2)),
+    });
 
     triggerSignalToast(`Rotando servidor en ${delay / 1000}s...`);
     isRotatingRef.current = true;
@@ -802,6 +818,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const nextIdx = (activeServerIndexRef.current + 1) % availableServersRef.current.length;
     const nextSrv = availableServersRef.current[nextIdx];
     console.warn(`[rotateToNextServer] Motivo: ${reason} | ${activeServer?.name} -> Siguiente: ${nextSrv?.name}`);
+    (window as any).electronAPI?.recordLoadTraceEvent?.({
+      kind: 'rotation',
+      method: 'rotateToNextServer',
+      reason,
+      elapsedSec: Number(((Date.now() - iframeLoadedAtRef.current) / 1000).toFixed(2)),
+    });
     if (nextSrv) {
       triggerSignalToast(`Cambiando a ${nextSrv.name}...`);
       handleSelectServer(nextIdx, { auto: true });

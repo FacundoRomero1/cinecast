@@ -295,10 +295,18 @@ export function createApp(options: CreateAppOptions): Express {
       const params = new URLSearchParams(window.location.search);
       const noEmbedAudio = params.get('noaudio') === '1';
       const lazyAudio = params.get('lazyaudio') === '1';
+      const delayMs = Math.max(0, Number(params.get('delay')) || 0);
+      const t0 = performance.now();
+      window.__t0 = t0;
+      window.__firstFrameMs = null;
       const canvas = document.getElementById('src-canvas');
       const ctx = canvas.getContext('2d');
       const video = document.getElementById('test-video');
       window.__embedAudioCalls = 0;
+
+      if (delayMs > 0 && video && video.parentNode) {
+        video.parentNode.removeChild(video);
+      }
 
       let frame = 0;
       setInterval(() => {
@@ -331,8 +339,34 @@ export function createApp(options: CreateAppOptions): Express {
         if (audioTrack) stream.addTrack(audioTrack);
       } catch (_) {}
 
-      video.srcObject = stream;
-      video.play().catch(() => {});
+      function startVideoPlayback() {
+        if (delayMs > 0 && !document.getElementById('test-video')) {
+          document.body.appendChild(video);
+        }
+        if (typeof video.requestVideoFrameCallback === 'function') {
+          video.requestVideoFrameCallback(function(now) {
+            if (window.__firstFrameMs === null) {
+              window.__firstFrameMs = Math.round(now - t0);
+            }
+          });
+        } else {
+          video.addEventListener('loadeddata', function() {
+            if (window.__firstFrameMs === null) {
+              window.__firstFrameMs = Math.round(performance.now() - t0);
+            }
+          }, { once: true });
+        }
+        video.srcObject = stream;
+        video.muted = true;
+        video.play().catch(() => {});
+        window.__testVideo = video;
+      }
+
+      if (delayMs > 0) {
+        setTimeout(startVideoPlayback, delayMs);
+      } else {
+        startVideoPlayback();
+      }
 
       // Simular cadena de audio embebido (src/app/embedAudio.ts) cuando está activa
       let audioChainCtx = null;

@@ -27,6 +27,8 @@ export const ConnectionDiagnosticSection: React.FC = () => {
   const [isRecordingPerf, setIsRecordingPerf] = useState<boolean>(false);
   const [perfElapsedSec, setPerfElapsedSec] = useState<number>(0);
   const [perfReportText, setPerfReportText] = useState<string>('');
+  const [isRecordingLoad, setIsRecordingLoad] = useState<boolean>(false);
+  const [loadTraces, setLoadTraces] = useState<any[]>([]);
 
   const deviceId = deviceSync.getDeviceId();
   const deviceName = deviceSync.getDeviceName();
@@ -42,6 +44,53 @@ export const ConnectionDiagnosticSection: React.FC = () => {
     setServerBuildId(health.buildId);
     const sw = await checkServiceWorkerRegistered();
     setSwRegistered(sw);
+    try {
+      const api = (window as any).electronAPI;
+      if (api?.getLoadRecording) {
+        const rec = await api.getLoadRecording();
+        if (typeof rec?.enabled === 'boolean') setIsRecordingLoad(rec.enabled);
+      }
+      if (api?.getLoadTraces) {
+        const res = await api.getLoadTraces();
+        if (Array.isArray(res?.traces)) setLoadTraces(res.traces);
+      }
+    } catch (_) {}
+  };
+
+  const handleToggleLoadRecording = async () => {
+    const next = !isRecordingLoad;
+    setIsRecordingLoad(next);
+    try {
+      const api = (window as any).electronAPI;
+      const res = await api?.setLoadRecording?.(next);
+      if (typeof res?.enabled === 'boolean') setIsRecordingLoad(res.enabled);
+      const tr = await api?.getLoadTraces?.();
+      if (Array.isArray(tr?.traces)) setLoadTraces(tr.traces);
+    } catch (_) {}
+  };
+
+  const formatLoadTracesTable = (traces: any[]): string => {
+    const lines: string[] = [
+      'ID | Título | Hosts probados | Timestamps (creado/start/dom/load/video/rs3/frame ms) | Reqs (tot/fail/ad/cert) | Rotaciones | CPU 5s (Brw/Tab/GPU %) | net.request 1er srv (DNS/TCP/TLS/TTFB ms)',
+      '---|--------|----------------|-------------------------------------------------------|-------------------------|------------|------------------------|------------------------------------------',
+    ];
+    for (const t of traces) {
+      const hosts = (t.serversTried || []).map((s: any) => s.host || s.name).join(' -> ') || '-';
+      const ts = t.timestamps || {};
+      const tsStr = `${ts.webviewCreatedMs ?? '-'} / ${ts.didStartLoadingMs ?? '-'} / ${ts.domReadyMs ?? '-'} / ${ts.didFinishLoadMs ?? '-'} / ${ts.firstVideoMs ?? '-'} / ${ts.readyState3Ms ?? '-'} / ${ts.firstFrameMs ?? '-'}`;
+      const nw = t.network || {};
+      const failDetails = Array.isArray(nw.failedDetails) && nw.failedDetails.length > 0
+        ? ` [${nw.failedDetails.map((f: any) => f.statusOrCode).join(',')}]`
+        : '';
+      const reqStr = `${nw.totalRequests ?? 0}/${nw.failedRequests ?? 0}${failDetails}/${nw.adBlockedRequests ?? 0}/${nw.certErrors ?? 0}`;
+      const rotStr = (t.rotations || []).map((r: any) => `${r.method}(${r.reason}@${r.elapsedSec}s)`).join('; ') || '0';
+      const cpu = t.cpuAt5s || {};
+      const cpuStr = `${cpu.Browser ?? '-'}% / ${cpu.Tab ?? '-'}% / ${cpu.GPU ?? '-'}%`;
+      const nr = t.firstServerNetProbe || {};
+      const nrStr = `${nr.dnsMs ?? '-'} / ${nr.connectMs ?? '-'} / ${nr.tlsMs ?? '-'} / ${nr.ttfbMs ?? '-'}`;
+      lines.push(`${t.id} | ${t.title || '-'} | ${hosts} | ${tsStr} | ${reqStr} | ${rotStr} | ${cpuStr} | ${nrStr}`);
+    }
+    return lines.join('\n');
   };
 
   useEffect(() => {
@@ -357,6 +406,19 @@ export const ConnectionDiagnosticSection: React.FC = () => {
 
         <button
           type="button"
+          onClick={handleToggleLoadRecording}
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition ${
+            isRecordingLoad
+              ? 'bg-amber-600 hover:bg-amber-500 text-white'
+              : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700'
+          }`}
+        >
+          <Cpu className="w-4 h-4" />
+          <span>{isRecordingLoad ? 'Grabar carga: ACTIVO' : 'Grabar carga'}</span>
+        </button>
+
+        <button
+          type="button"
           onClick={handleClearCache}
           disabled={isClearing}
           className="min-h-[44px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs flex items-center justify-center gap-2 border border-zinc-700 transition disabled:opacity-50"
@@ -391,6 +453,62 @@ export const ConnectionDiagnosticSection: React.FC = () => {
           />
         </div>
       )}
+
+      {/* PARTE 4 (Paso 11): Informe de "Grabar carga" */}
+      <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-bold text-amber-400">
+            Grabar carga ({loadTraces.length} inicios registrados)
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={loadData}
+              className="min-h-[32px] px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-200 border border-zinc-700 transition"
+            >
+              Actualizar
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const jsonStr = JSON.stringify(loadTraces, null, 2);
+                try {
+                  await navigator.clipboard.writeText(jsonStr);
+                  alert('Informe de carga (JSON) copiado al portapapeles');
+                } catch (_) {}
+              }}
+              className="min-h-[32px] px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-200 border border-zinc-700 transition"
+            >
+              Copiar JSON
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const tableStr = formatLoadTracesTable(loadTraces);
+                try {
+                  await navigator.clipboard.writeText(tableStr);
+                  alert('Informe de carga (Tabla) copiado al portapapeles');
+                } catch (_) {}
+              }}
+              className="min-h-[32px] px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-200 border border-zinc-700 transition"
+            >
+              Copiar tabla de texto
+            </button>
+          </div>
+        </div>
+        {loadTraces.length > 0 ? (
+          <textarea
+            readOnly
+            value={formatLoadTracesTable(loadTraces)}
+            rows={6}
+            className="w-full rounded-lg bg-zinc-900 border border-zinc-800 p-2 font-mono text-[11px] text-zinc-300"
+          />
+        ) : (
+          <div className="text-[11px] text-zinc-500 italic">
+            Activá "Grabar carga" e iniciá una reproducción para registrar servidores, marcas de tiempo, red, rotaciones, CPU a los 5 s y net.request.
+          </div>
+        )}
+      </div>
     </div>
   );
 };
