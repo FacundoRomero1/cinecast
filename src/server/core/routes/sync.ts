@@ -145,10 +145,15 @@ export function createSyncRouter(): Router {
     const existing = fromDevice ? globalDevices.get(fromDevice) : undefined;
     if (existing) existing.lastSeen = Date.now();
 
+    if (typeof (body as any).issuedAt === 'number' && typeof (command as any).issuedAt !== 'number') {
+      (command as any).issuedAt = (body as any).issuedAt;
+    }
+
     const result = recordAndBroadcastCommand(roomId, fromDevice || 'remote_http', command, targetDeviceId, id, (body as any).cseq);
     res.json({
       ok: true,
       seq: commandSeqCounter,
+      issuedAt: (command as any)?.issuedAt,
       ack: result.delivered ? { id, delivered: true } : undefined,
       nack: !result.delivered ? { id, reason: 'sin-pantalla' } : undefined,
     });
@@ -204,12 +209,18 @@ export function createSyncRouter(): Router {
     }
 
     const now = Date.now();
-    const baseline = deviceId && lastDeliveredSeqByDevice.has(deviceId)
-      ? Math.max(sinceSeq, lastDeliveredSeqByDevice.get(deviceId) || 0)
-      : commandSeqCounter;
+    const baseline = deviceId
+      ? (lastDeliveredSeqByDevice.has(deviceId)
+          ? Math.max(sinceSeq, lastDeliveredSeqByDevice.get(deviceId) || 0)
+          : commandSeqCounter)
+      : sinceSeq;
 
     const newCommands = commandHistory.filter(
-      (c) => c.seq > baseline && c.fromDevice !== deviceId && now - c.timestamp < 8000
+      (c) =>
+        c.roomId === roomId &&
+        c.seq > baseline &&
+        c.fromDevice !== deviceId &&
+        now - c.timestamp < 8000
     );
     if (deviceId && newCommands.length > 0) {
       const maxSeq = Math.max(...newCommands.map((c) => c.seq));

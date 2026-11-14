@@ -834,20 +834,60 @@ export class DeviceSyncService {
     this.notifyDevicesListeners();
   }
 
+  public static readonly LAUNCH_ACTIONS = new Set<string>([
+    'playMedia',
+    'playDiscoveredMovie',
+    'playSpotifyTrack',
+    'playYouTubeVideo',
+    'playYouTube',
+    'randomEpisode',
+    'switchHub',
+    'switchTab',
+    'changeServer',
+    'selectServer',
+    'jumpToEpisode',
+    'nextEpisode',
+    'prevEpisode',
+  ]);
+
+  public isLaunchAction(action?: string): boolean {
+    return Boolean(action && DeviceSyncService.LAUNCH_ACTIONS.has(action));
+  }
+
   private markCommandExecuted(cmdId?: string): boolean {
     if (!cmdId) return true;
     if (this.executedCommandIds.has(cmdId)) {
       return false;
     }
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const raw = sessionStorage.getItem('cinecast_executed_cmd_ids');
+        if (raw) {
+          const arr: string[] = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.includes(cmdId)) {
+            this.executedCommandIds.add(cmdId);
+            return false;
+          }
+        }
+      }
+    } catch (_) {}
+
     this.executedCommandIds.add(cmdId);
     if (this.executedCommandIds.size > 500) {
       const oldest = this.executedCommandIds.values().next().value;
       if (oldest) this.executedCommandIds.delete(oldest);
     }
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const recent = Array.from(this.executedCommandIds).slice(-200);
+        sessionStorage.setItem('cinecast_executed_cmd_ids', JSON.stringify(recent));
+      }
+    } catch (_) {}
     return true;
   }
 
   private isTransportOrNavAction(action: string): boolean {
+    if (this.isLaunchAction(action)) return false;
     const set = new Set([
       'seekRelative',
       'seek',
@@ -861,9 +901,6 @@ export class DeviceSyncService {
       'select',
       'enter',
       'back',
-      'nextEpisode',
-      'prevEpisode',
-      'jumpToEpisode',
     ]);
     return set.has(action);
   }
@@ -968,7 +1005,9 @@ export class DeviceSyncService {
 
   private flushOfflineCommandQueue() {
     const now = Date.now();
-    const toSend = this.offlineCommandQueue.filter((item) => now - item.sentAt <= 8000);
+    const toSend = this.offlineCommandQueue.filter(
+      (item) => now - item.sentAt <= 8000 && !this.isLaunchAction(item.command?.action)
+    );
     this.offlineCommandQueue = [];
     for (const item of toSend) {
       this.sendCommand(item.command, item.targetDeviceId);
@@ -1076,6 +1115,20 @@ export class DeviceSyncService {
         const fromDevice = msg.fromDevice || 'remote_anon';
         const cseq = typeof msg.cseq === 'number' ? msg.cseq : (typeof (cmd as any)?.cseq === 'number' ? (cmd as any).cseq : undefined);
 
+        if (this.isLaunchAction(cmd.action)) {
+          const rawIssuedAt = Number(
+            (cmd as any)?.issuedAt ??
+              msg.issuedAt ??
+              (cmd as any)?.payload?.issuedAt
+          );
+          if (Number.isFinite(rawIssuedAt) && rawIssuedAt > 0) {
+            (cmd as any).issuedAt = rawIssuedAt;
+            if (Date.now() - rawIssuedAt > 10000) {
+              return;
+            }
+          }
+        }
+
         if (this.markCommandExecuted(cmdId)) {
           const ABSOLUTE_ACTIONS = new Set([
             'seek',
@@ -1129,6 +1182,16 @@ export class DeviceSyncService {
     const cseq = this.clientCommandSeq;
     (command as any).cseq = cseq;
 
+    if (this.isLaunchAction(command.action)) {
+      const existingIssuedAt = Number(
+        (command as any).issuedAt ?? (command as any)?.payload?.issuedAt
+      );
+      (command as any).issuedAt =
+        Number.isFinite(existingIssuedAt) && existingIssuedAt > 0
+          ? existingIssuedAt
+          : Date.now();
+    }
+
     const entry: CommandDiagnosticEntry = {
       id: cmdId,
       action: command.action,
@@ -1142,6 +1205,7 @@ export class DeviceSyncService {
       type: 'command',
       id: cmdId,
       cseq,
+      issuedAt: this.isLaunchAction(command.action) ? (command as any).issuedAt : undefined,
       roomId: this.roomId,
       fromDevice: this.deviceId,
       targetDeviceId,

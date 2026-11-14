@@ -9,6 +9,7 @@ import {
   globalDevices,
   globalLatestPlaybackState,
   incrementCommandSeq,
+  isLaunchAction,
   lastDeliveredSeqByDevice,
   recordAndBroadcastCommand,
   recordAndBroadcastState,
@@ -208,6 +209,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
                     q.roomId === roomId &&
                     q.seq > baselineSeq &&
                     now - q.timestamp < 8000 &&
+                    !isLaunchAction((q.command as any)?.action) &&
                     (!q.targetDeviceId || q.targetDeviceId === deviceId)
                 );
                 let maxDelivered = baselineSeq;
@@ -239,6 +241,9 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               clientInfo.isAlive = true;
             }
             if (msg.command) {
+              if (typeof (msg as any).issuedAt === 'number' && typeof (msg.command as any).issuedAt !== 'number') {
+                (msg.command as any).issuedAt = (msg as any).issuedAt;
+              }
               const res = recordAndBroadcastCommand(rId, fromId, msg.command, msg.targetDeviceId, msg.id, msg.cseq);
               if (msg.id) {
                 if (res.delivered) {

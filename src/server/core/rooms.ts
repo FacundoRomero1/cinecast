@@ -65,6 +65,26 @@ export let commandSeqCounter = 0;
 export const commandHistory: QueuedCommand[] = [];
 export const seenCommandIds = new Set<string>();
 
+export const LAUNCH_ACTIONS = new Set<string>([
+  'playMedia',
+  'playDiscoveredMovie',
+  'playSpotifyTrack',
+  'playYouTubeVideo',
+  'playYouTube',
+  'randomEpisode',
+  'switchHub',
+  'switchTab',
+  'changeServer',
+  'selectServer',
+  'jumpToEpisode',
+  'nextEpisode',
+  'prevEpisode',
+]);
+
+export function isLaunchAction(action: unknown): boolean {
+  return typeof action === 'string' && LAUNCH_ACTIONS.has(action);
+}
+
 // Track latest remote connection event so screens polling via HTTP also wake up from standby
 export let latestRemoteJoinEvent: RemoteJoinEvent | null = null;
 
@@ -195,6 +215,19 @@ export function recordAndBroadcastCommand(
 ): { delivered: boolean; screenCount: number } {
   const uniqueId = msgId || `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const resolvedCseq = typeof cseq === 'number' ? cseq : (typeof (command as any)?.cseq === 'number' ? (command as any).cseq : undefined);
+  const actionName = typeof (command as any)?.action === 'string' ? (command as any).action : '';
+  const isLaunch = isLaunchAction(actionName);
+
+  if (isLaunch && command && typeof command === 'object') {
+    const serverNow = Date.now();
+    const rawIssuedAt = Number((command as any).issuedAt ?? (command as any)?.payload?.issuedAt);
+    const stampedIssuedAt =
+      Number.isFinite(rawIssuedAt) && rawIssuedAt > 0
+        ? Math.min(serverNow, rawIssuedAt)
+        : serverNow;
+    (command as any).issuedAt = stampedIssuedAt;
+  }
+
   const isDuplicate = seenCommandIds.has(uniqueId);
   if (!isDuplicate) {
     seenCommandIds.add(uniqueId);
@@ -208,18 +241,20 @@ export function recordAndBroadcastCommand(
 
     commandSeqCounter += 1;
     commandSeqById.set(uniqueId, commandSeqCounter);
-    const queued: QueuedCommand = {
-      seq: commandSeqCounter,
-      cseq: resolvedCseq,
-      id: uniqueId,
-      roomId,
-      fromDevice,
-      targetDeviceId,
-      command,
-      timestamp: Date.now(),
-    };
-    commandHistory.push(queued);
-    if (commandHistory.length > 100) commandHistory.shift();
+    if (!isLaunch) {
+      const queued: QueuedCommand = {
+        seq: commandSeqCounter,
+        cseq: resolvedCseq,
+        id: uniqueId,
+        roomId,
+        fromDevice,
+        targetDeviceId,
+        command,
+        timestamp: Date.now(),
+      };
+      commandHistory.push(queued);
+      if (commandHistory.length > 100) commandHistory.shift();
+    }
   }
 
   const cmdSeq = commandSeqById.get(uniqueId) ?? commandSeqCounter;
@@ -229,6 +264,7 @@ export function recordAndBroadcastCommand(
     id: uniqueId,
     seq: cmdSeq,
     cseq: resolvedCseq,
+    issuedAt: isLaunch ? (command as any)?.issuedAt : undefined,
     fromDevice,
     command,
   });

@@ -2043,7 +2043,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
       ) : isPlayingLocally && activeMedia && activeHub === 'cinecast' ? (
         /* 9. Reproductor a pantalla completa sobre todo con las props de App.tsx L1158-1188 */
         <VideoPlayer
-          key={`${activeMedia.id}_s${activeEpisode?.seasonNumber || 1}_e${activeEpisode?.episodeNumber || 1}`}
+          key={activeMedia.id + ':' + (activeEpisode?.id ?? '')}
           media={activeMedia}
           episode={activeEpisode}
           audioSettings={audioSettings}

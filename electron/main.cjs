@@ -1369,6 +1369,7 @@ ipcMain.handle('get-real-media-state', async () => {
               found: true,
               currentTime: cur,
               duration: dur,
+              ended: Boolean(el.ended || (dur > 0 && cur >= dur - 0.15)),
               isPlaying: !el.paused && !el.ended,
               isLive: !Number.isFinite(el.duration) && el.readyState >= 2,
               title: document.title || ''

@@ -238,6 +238,10 @@ export function createApp(options: CreateAppOptions): Express {
     const dur = Number(params.get('dur')) || ${durParam};
     const wavBlob = createWavBlob(dur);
     video.src = URL.createObjectURL(wavBlob);
+    if (params.get('autoplay') !== '0') {
+      video.muted = true;
+      video.play().catch(() => {});
+    }
 
     video.addEventListener('timeupdate', () => {
       display.textContent = video.currentTime.toFixed(2);
