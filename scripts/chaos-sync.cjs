@@ -145,7 +145,7 @@ async function runScenario(scenarioKey, name, config, ctx) {
   (async () => {
     while (chaosRunning) {
       if (scenarioKey === 'b') {
-        await wait(8000);
+        await wait(4500);
         if (!chaosRunning) break;
         try {
           console.log('[chaos] Forzando terminate() en WS de celular...');
@@ -157,7 +157,7 @@ async function runScenario(scenarioKey, name, config, ctx) {
           recoveryEvents.push(Date.now());
         } catch (_) {}
       } else if (scenarioKey === 'c') {
-        await wait(7000);
+        await wait(4000);
         if (!chaosRunning) break;
         try {
           console.log('[chaos] Celular offline (3s)...');
@@ -173,7 +173,7 @@ async function runScenario(scenarioKey, name, config, ctx) {
           recoveryEvents.push(Date.now());
         } catch (_) {}
       } else if (scenarioKey === 'd') {
-        await wait(7000);
+        await wait(4000);
         if (!chaosRunning) break;
         try {
           console.log('[chaos] Celular oculto (3s)...');
@@ -193,7 +193,7 @@ async function runScenario(scenarioKey, name, config, ctx) {
           recoveryEvents.push(Date.now());
         } catch (_) {}
       } else if (scenarioKey === 'e') {
-        await wait(7000);
+        await wait(4000);
         if (!chaosRunning) break;
         try {
           console.log('[chaos] PC offline (3s)...');
@@ -248,12 +248,12 @@ async function runScenario(scenarioKey, name, config, ctx) {
       })()
     `);
 
-    // A ~7 por seg (140ms) con pequeñas pausas aleatorias cada 25 comandos
+    // A ~10 por seg (95ms) con pequeñas pausas cada 25 comandos
     if (i % 25 === 0) {
-      const pause = 200 + Math.floor(Math.random() * 300);
+      const pause = 150 + Math.floor(Math.random() * 150);
       await wait(pause);
     } else {
-      await wait(140);
+      await wait(95);
     }
   }
 
@@ -359,6 +359,212 @@ async function runScenario(scenarioKey, name, config, ctx) {
   return result;
 }
 
+async function runScenarioG(name, ctx) {
+  const { winScreen, winPhone, baseUrl, preloadPath } = ctx;
+  console.log(`\n================================================================================`);
+  console.log(`[chaos-sync] Iniciando Escenario (g): ${name} (60s)`);
+  console.log(`================================================================================`);
+
+  await winScreen.webContents.executeJavaScript(`
+    window.__receivedCommands = [];
+    if (window.__chaosUnsub) window.__chaosUnsub();
+    window.__chaosUnsub = window.cinecastDeviceSync?.onCommand((cmd) => {
+      const now = Date.now();
+      const cId = (cmd && (cmd.__chaosId || (cmd.payload && cmd.payload.__chaosId))) || '';
+      window.__receivedCommands.push({
+        id: cId,
+        action: String(cmd?.action || ''),
+        receivedAt: now,
+      });
+    });
+    void 0;
+  `);
+
+  const setupWindowMetrics = async (win, label) => {
+    await win.webContents.executeJavaScript(`
+      (function() {
+        window.__sentCommands = [];
+        window.__gStartRecon = window.cinecastDeviceSync?.getSyncTelemetrySummary?.()?.reconexiones || 0;
+        window.__gIndicatorFlips = 0;
+        window.__gLastConnState = window.cinecastDeviceSync?.isConnected ? 'connected' : 'disconnected';
+        window.__gScreenLostCount = 0;
+        const myInitId = window.cinecastDeviceSync?.getDeviceId?.();
+        const initDevs = window.cinecastDeviceSync?.getDevices?.() || [];
+        window.__gHadScreen = initDevs.some((d) => (d.type === 'screen' || d.type === 'hybrid') && d.id !== myInitId);
+        window.__gCloseEvents = [];
+
+        // Intercept WebSocket construction to log close codes and joins
+        if (!window.__OrigWS) {
+          window.__OrigWS = window.WebSocket;
+          const OrigWS = window.__OrigWS;
+          window.WebSocket = function(url, protocols) {
+            const wsInst = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+            wsInst.addEventListener('close', (ev) => {
+              window.__gCloseEvents.push({
+                ts: Date.now(),
+                code: ev.code,
+                reason: ev.reason,
+                wasClean: ev.wasClean,
+              });
+              console.log('[client-ws-close][' + ${JSON.stringify(label)} + '] code=' + ev.code + ' wasClean=' + ev.wasClean + ' reason=' + ev.reason);
+            });
+            return wsInst;
+          };
+          window.WebSocket.prototype = OrigWS.prototype;
+          window.WebSocket.CONNECTING = OrigWS.CONNECTING;
+          window.WebSocket.OPEN = OrigWS.OPEN;
+          window.WebSocket.CLOSING = OrigWS.CLOSING;
+          window.WebSocket.CLOSED = OrigWS.CLOSED;
+        }
+
+        let firstConnCall = true;
+        if (window.__gConnUnsub) window.__gConnUnsub();
+        window.__gConnUnsub = window.cinecastDeviceSync?.onConnectionStatus?.((info) => {
+          if (firstConnCall) {
+            firstConnCall = false;
+            window.__gLastConnState = info.state;
+            return;
+          }
+          if (info.state !== window.__gLastConnState) {
+            window.__gIndicatorFlips++;
+            window.__gLastConnState = info.state;
+          }
+        });
+
+        if (window.__gDevUnsub) window.__gDevUnsub();
+        window.__gDevUnsub = window.cinecastDeviceSync?.onDevicesUpdate?.((devs) => {
+          const myId = window.cinecastDeviceSync?.getDeviceId?.();
+          const hasScreen = Array.isArray(devs) && devs.some((d) => (d.type === 'screen' || d.type === 'hybrid') && d.id !== myId);
+          if (window.__gHadScreen && !hasScreen) {
+            window.__gScreenLostCount++;
+          }
+          window.__gHadScreen = hasScreen;
+        });
+      })();
+    `);
+  };
+
+  await setupWindowMetrics(winPhone, 'winPhone1');
+
+  // Abrir segunda ventana remote compartiendo la MISMA partición ('persist:chaos-phone')
+  const winPhone2 = new BrowserWindow({
+    show: false,
+    width: 390,
+    height: 844,
+    webPreferences: {
+      partition: 'persist:chaos-phone',
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  winPhone2.webContents.setUserAgent(
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
+  );
+  winPhone2.webContents.on('console-message', (_e, _level, msg) => {
+    if (msg.startsWith('[client-ws-close]')) console.log(msg);
+  });
+  winPhone.webContents.on('console-message', (_e, _level, msg) => {
+    if (msg.startsWith('[client-ws-close]')) console.log(msg);
+  });
+
+  await winPhone2.loadURL(`${baseUrl}/?role=remote&ui=nuevo`);
+  await wait(800);
+  await setupWindowMetrics(winPhone2, 'winPhone2');
+
+  const TOTAL_COMMANDS = 100;
+  const startTime = Date.now();
+  const DURATION_MS = 60000;
+
+  for (let i = 1; i <= TOTAL_COMMANDS; i++) {
+    const cmdId = `chaos_g_${i}_${Date.now()}`;
+    const action = i % 2 === 0 ? 'seekRelative' : 'togglePlay';
+    const payload = action === 'seekRelative' ? { seconds: i, __chaosId: cmdId } : { __chaosId: cmdId };
+
+    await winPhone.webContents.executeJavaScript(`
+      (function() {
+        const cmdId = ${JSON.stringify(cmdId)};
+        const action = ${JSON.stringify(action)};
+        const payload = ${JSON.stringify(payload)};
+        window.__sentCommands.push({ id: cmdId, action, payload, sentAt: Date.now() });
+        window.cinecastDeviceSync?.sendCommand({ action, payload, __chaosId: cmdId });
+      })()
+    `);
+    await wait(550);
+  }
+
+  const elapsed = Date.now() - startTime;
+  if (elapsed < DURATION_MS) {
+    await wait(DURATION_MS - elapsed);
+  }
+
+  const collectWinStats = async (win) => {
+    const raw = await win.webContents.executeJavaScript(`
+      JSON.stringify({
+        deviceId: window.cinecastDeviceSync?.getDeviceId?.(),
+        reconNow: window.cinecastDeviceSync?.getSyncTelemetrySummary?.()?.reconexiones || 0,
+        reconStart: window.__gStartRecon || 0,
+        flips: window.__gIndicatorFlips || 0,
+        screenLost: window.__gScreenLostCount || 0,
+        closeEvents: window.__gCloseEvents || [],
+      })
+    `);
+    return JSON.parse(raw);
+  };
+
+  const stats1 = await collectWinStats(winPhone);
+  const stats2 = await collectWinStats(winPhone2);
+
+  const receivedRaw = await winScreen.webContents.executeJavaScript(`
+    JSON.stringify(window.__receivedCommands || [])
+  `);
+  const receivedList = JSON.parse(receivedRaw || '[]');
+  const uniqueIds = new Set(receivedList.map((r) => r.id).filter((id) => id && id.startsWith('chaos_g_')));
+  let duplicates = 0;
+  const seen = new Set();
+  for (const r of receivedList) {
+    if (!r.id || !r.id.startsWith('chaos_g_')) continue;
+    if (seen.has(r.id)) duplicates++;
+    else seen.add(r.id);
+  }
+
+  try {
+    winPhone2.destroy();
+  } catch (_) {}
+
+  const recon1 = Math.max(0, stats1.reconNow - stats1.reconStart);
+  const recon2 = Math.max(0, stats2.reconNow - stats2.reconStart);
+  const gResult = {
+    key: 'g',
+    name,
+    deviceId1: stats1.deviceId,
+    deviceId2: stats2.deviceId,
+    reconWin1PerMin: recon1,
+    reconWin2PerMin: recon2,
+    screenLostTotal: stats1.screenLost + stats2.screenLost,
+    indicatorFlipsWin1: stats1.flips,
+    indicatorFlipsWin2: stats2.flips,
+    delivered: `${uniqueIds.size}/${TOTAL_COMMANDS}`,
+    deliveredNum: uniqueIds.size,
+    duplicates,
+    outOfOrder: 0,
+    p50: '-',
+    p95: '-',
+    max: '-',
+    convergence: '-',
+  };
+
+  console.log('\n================================================================================');
+  console.log('TABLA ESCENARIO (g) - DOS VENTANAS MISMO DEVICEID (60s)');
+  console.log('================================================================================');
+  console.log('| deviceId compartido | Reconexiones/min (Win1 / Win2) | Pérdidas de pantalla | Cambios verde/ámbar (Win1 / Win2) | Comandos entregados |');
+  console.log('| :--- | :---: | :---: | :---: | :---: |');
+  console.log(`| ${gResult.deviceId1} | ${recon1} / ${recon2} | ${gResult.screenLostTotal} | ${gResult.indicatorFlipsWin1} / ${gResult.indicatorFlipsWin2} | ${gResult.delivered} |`);
+  console.log('================================================================================\n');
+
+  return gResult;
+}
+
 app.whenReady().then(async () => {
   const lanIp = getLanIp();
   const port = 3000;
@@ -369,13 +575,70 @@ app.whenReady().then(async () => {
   if (!inUse) {
     console.log(`[chaos-sync] Levantando servidor en puerto ${port}...`);
     const tsxCli = path.join(rootDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+    const traceHookPath = path.join(rootDir, 'scratch', 'ws-server-trace.cjs');
+    try {
+      fs.mkdirSync(path.dirname(traceHookPath), { recursive: true });
+      fs.writeFileSync(
+        traceHookPath,
+        `
+const wsMod = require('ws');
+let sockCounter = 0;
+const activeByDevice = new Map();
+const origEmit = wsMod.WebSocketServer.prototype.emit;
+wsMod.WebSocketServer.prototype.emit = function(ev, ws, ...rest) {
+  if (ev === 'connection' && ws && !ws.__traceId) {
+    ws.__traceId = 'sock#' + (++sockCounter);
+    const origTerm = ws.terminate.bind(ws);
+    ws.terminate = function(...a) {
+      console.log('[server-ws] terminate() llamado sobre ' + ws.__traceId + ' (deviceId=' + (ws.__deviceId || '?') + ')');
+      return origTerm(...a);
+    };
+    const origClose = ws.close.bind(ws);
+    ws.close = function(code, reason) {
+      if (code === 4001) {
+        console.log('[server-ws] close(4001, ' + JSON.stringify(String(reason || '')) + ') sobre ' + ws.__traceId + ' (deviceId=' + (ws.__deviceId || '?') + ')');
+      }
+      return origClose(code, reason);
+    };
+    ws.on('message', (raw) => {
+      try {
+        const m = JSON.parse(raw.toString());
+        if (m && m.type === 'join' && m.deviceId) {
+          const prev = activeByDevice.get(m.deviceId);
+          ws.__deviceId = m.deviceId;
+          activeByDevice.set(m.deviceId, ws.__traceId);
+          if (prev && prev !== ws.__traceId) {
+            console.log('[server-ws] JOIN REPETIDO deviceId=' + m.deviceId + ' nuevo=' + ws.__traceId + ' previo=' + prev);
+          } else {
+            console.log('[server-ws] JOIN inicial deviceId=' + m.deviceId + ' sock=' + ws.__traceId + ' role=' + m.deviceType);
+          }
+        }
+      } catch (_) {}
+    });
+  }
+  return origEmit.call(this, ev, ws, ...rest);
+};
+`,
+        'utf8'
+      );
+    } catch (_) {}
     const env = { ...process.env, PORT: String(port), CINECAST_TEST: '1', CINECAST_DISABLE_PREWARM: '1' };
     delete env.ELECTRON_RUN_AS_NODE;
-    spawnedServer = cp.spawn('node', [tsxCli, 'server.ts'], {
+    spawnedServer = cp.spawn('node', ['--require', traceHookPath, tsxCli, 'server.ts'], {
       cwd: rootDir,
       env,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+    });
+    let srvLogCount = 0;
+    spawnedServer.stdout.on('data', (chunk) => {
+      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+      for (const l of lines) {
+        if (l.includes('[server-ws]') && srvLogCount < 40) {
+          srvLogCount++;
+          console.log(l);
+        }
+      }
     });
     const ready = await waitForHealth(`http://localhost:${port}`, 35000);
     if (!ready) {
@@ -491,7 +754,7 @@ app.whenReady().then(async () => {
     void 0;
   `);
 
-  const ctx = { winScreen, winPhone, baseUrl, roomId: 'cine-home-1' };
+  const ctx = { winScreen, winPhone, baseUrl, preloadPath, roomId: 'cine-home-1' };
 
   const onlyArg = process.argv.find((a) => a.startsWith('--only='));
   const onlyKeys = onlyArg ? onlyArg.slice(7).split(',').map((s) => s.trim().toLowerCase()) : null;
@@ -502,14 +765,20 @@ app.whenReady().then(async () => {
     { key: 'c', name: 'Celular offline 3 s cada 10 s (Network offline)' },
     { key: 'd', name: 'Celular oculto/visible cada 10 s (visibilitychange/focus)' },
     { key: 'e', name: 'PC desconectada 3 s y vuelta (Network offline)' },
+    { key: 'g', name: 'Dos ventanas remote con mismo deviceId (60 s)' },
   ];
 
   const scenarios = allScenarios.filter((s) => !onlyKeys || onlyKeys.includes(s.key));
 
   const results = [];
   for (const s of scenarios) {
-    const res = await runScenario(s.key, s.name, {}, ctx);
-    results.push(res);
+    if (s.key === 'g') {
+      const res = await runScenarioG(s.name, ctx);
+      results.push(res);
+    } else {
+      const res = await runScenario(s.key, s.name, {}, ctx);
+      results.push(res);
+    }
     await wait(600);
   }
 

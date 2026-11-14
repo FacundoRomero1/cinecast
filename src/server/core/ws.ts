@@ -122,11 +122,16 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
             const { roomId = 'cine-home-1', deviceId, deviceName, deviceType } = msg;
             if (!deviceId) return;
 
-            // Reemplazo limpio: si existía un socket previo para este deviceId, terminarlo
+            // Si existía un socket previo para este deviceId, avisar 'replaced' y cerrar con 4001 (sin terminate abrupto)
             const existingClient = globalDevices.get(deviceId);
             if (existingClient && existingClient.ws && existingClient.ws !== ws) {
+              const oldWs = existingClient.ws;
+              existingClient.ws = undefined;
               try {
-                existingClient.ws.terminate();
+                if (oldWs.readyState === WebSocket.OPEN) {
+                  oldWs.send(JSON.stringify({ type: 'replaced', reason: 'otra-conexion' }));
+                }
+                oldWs.close(4001, 'otra-conexion');
               } catch (_) {}
             }
 
@@ -250,10 +255,13 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
 
     ws.on('close', () => {
       if (clientInfo) {
-        const room = rooms.get(clientInfo.roomId);
-        if (room) room.delete(clientInfo.deviceId);
-        globalDevices.delete(clientInfo.deviceId);
-        broadcastRoomDevices(clientInfo.roomId);
+        const currentInGlobal = globalDevices.get(clientInfo.deviceId);
+        if (currentInGlobal === clientInfo) {
+          const room = rooms.get(clientInfo.roomId);
+          if (room) room.delete(clientInfo.deviceId);
+          globalDevices.delete(clientInfo.deviceId);
+          broadcastRoomDevices(clientInfo.roomId);
+        }
       }
     });
   });

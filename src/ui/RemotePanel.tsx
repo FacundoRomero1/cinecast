@@ -164,8 +164,11 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   );
 
   const [connStatus, setConnStatus] = useState<{
-    state: 'connected' | 'reconnecting' | 'disconnected';
+    state: 'connected' | 'reconnecting' | 'disconnected' | 'otra-pestana';
     latencyMs: number;
+    isUnstable?: boolean;
+    closeCode?: number;
+    wasClean?: boolean;
   }>({
     state: isConnected ? 'connected' : 'disconnected',
     latencyMs: 0,
@@ -181,6 +184,9 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
       setConnStatus({
         state: info.state,
         latencyMs: info.latencyMs,
+        isUnstable: info.isUnstable,
+        closeCode: info.closeCode,
+        wasClean: info.wasClean,
       });
     });
 
@@ -556,6 +562,24 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         </section>
       )}
 
+      {connStatus.state === 'otra-pestana' && (
+        <section
+          aria-label="Aviso de otra pestaña"
+          className="p-4 rounded-2xl bg-amber-950/80 border border-amber-500/50 shadow-xl flex items-center justify-between gap-3"
+        >
+          <p className="text-xs font-extrabold text-amber-100">
+            La app está abierta en otra pestaña
+          </p>
+          <button
+            type="button"
+            onClick={() => deviceSync.takeTabLease()}
+            className="min-h-[44px] px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition shrink-0"
+          >
+            Usar esta pestaña
+          </button>
+        </section>
+      )}
+
       {/* 1. Estado de la pantalla */}
       <section
         aria-label="Estado de la pantalla"
@@ -564,7 +588,11 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <div className="flex items-center gap-2.5 min-w-0">
           <span
             className={`w-3 h-3 rounded-full shrink-0 ${
-              !isConnected || connStatus.state === 'disconnected'
+              connStatus.state === 'otra-pestana'
+                ? 'bg-amber-500'
+                : connStatus.isUnstable
+                ? 'bg-amber-500'
+                : !isConnected || connStatus.state === 'disconnected'
                 ? 'bg-rose-500'
                 : connStatus.state === 'reconnecting' || isScreenReconnecting
                 ? 'bg-amber-500 animate-pulse'
@@ -574,7 +602,11 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <p className="text-[11px] uppercase tracking-wider font-bold text-zinc-400">
-                {!isConnected || connStatus.state === 'disconnected'
+                {connStatus.state === 'otra-pestana'
+                  ? 'La app está abierta en otra pestaña'
+                  : connStatus.isUnstable
+                  ? `Conexión inestable (code=${connStatus.closeCode ?? 1006}, wasClean=${String(Boolean(connStatus.wasClean))})`
+                  : !isConnected || connStatus.state === 'disconnected'
                   ? 'Sin conexión'
                   : connStatus.state === 'reconnecting' || isScreenReconnecting
                   ? 'Reconectando...'

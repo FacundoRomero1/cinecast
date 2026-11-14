@@ -27,10 +27,14 @@ export interface SyncTelemetry {
 }
 
 export interface ConnectionStatusInfo {
-  state: 'connected' | 'reconnecting' | 'disconnected';
+  state: 'connected' | 'reconnecting' | 'disconnected' | 'otra-pestana';
   latencyMs: number;
   transport: 'ws' | 'http' | 'none';
   hasData: boolean;
+  isUnstable?: boolean;
+  closeCode?: number;
+  wasClean?: boolean;
+  reason?: string;
 }
 
 export class DeviceSyncService {
@@ -42,7 +46,7 @@ export class DeviceSyncService {
   private broadcastChannel: BroadcastChannel | null = null;
   public isConnected: boolean = false;
   private reconnectTimer: any = null;
-  private reconnectDelay: number = 500; // 0.5s -> 8s backoff
+  private reconnectDelay: number = 500; // 0.5s -> 8s (o 30s en tormenta) backoff
   private wsConnectingFallbackTimer: any = null;
   private pingTimer: any = null;
   private httpPollTimer: any = null;
@@ -51,6 +55,20 @@ export class DeviceSyncService {
   private clientCommandSeq: number = 0;
   private lastAppliedCseqBySender: Map<string, number> = new Map();
 
+  // Control de pestaña única (lease en localStorage) y estado otra-pestana
+  private tabId: string = 'tab_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now();
+  private tabLeaseTimer: any = null;
+  private isOtherTabActive: boolean = false;
+
+  // Control de tormenta de reconexiones y retardo de 3s para ámbar
+  private reconnectTimestamps: number[] = [];
+  private isUnstableConnection: boolean = false;
+  private lastCloseCode: number = 1000;
+  private lastCloseWasClean: boolean = true;
+  private disconnectedSince: number = 0;
+  private hasEverConnected: boolean = false;
+  private amberDelayTimer: any = null;
+
   private commandListeners: Set<CommandHandler> = new Set();
   private stateListeners: Set<StateSyncHandler> = new Set();
   private devicesListeners: Set<DevicesUpdateHandler> = new Set();
@@ -58,6 +76,7 @@ export class DeviceSyncService {
   private watchHistoryListeners: Set<(items: any[]) => void> = new Set();
   private connectionStatusListeners: Set<(info: ConnectionStatusInfo) => void> = new Set();
   private commandStatusListeners: Set<(info: { id: string; status: 'confirmed' | 'retrying' | 'failed'; rttMs?: number; reason?: string }) => void> = new Set();
+  private tabReplacedListeners: Set<(isReplaced: boolean, reason?: string) => void> = new Set();
 
   private knownDevices: Map<string, DeviceInfo> = new Map();
   private lanIp: string = '';
@@ -250,14 +269,154 @@ export class DeviceSyncService {
           const parsed = JSON.parse(e.newValue);
           this.handleIncomingRawMessage(parsed);
         } catch (_) {}
+      } else if (e.key === 'cinecast_tab_lease' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed && parsed.tabId && parsed.tabId !== this.tabId) {
+            this.enterOtherTabState('otra-conexion');
+          }
+        } catch (_) {}
       }
     });
+  }
+
+  private tryAcquireTabLease(force = false): boolean {
+    if (typeof window === 'undefined') return true;
+    const now = Date.now();
+    try {
+      const raw = localStorage.getItem('cinecast_tab_lease');
+      if (raw && !force) {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed &&
+          typeof parsed.tabId === 'string' &&
+          parsed.tabId !== this.tabId &&
+          typeof parsed.ts === 'number' &&
+          now - parsed.ts <= 6000
+        ) {
+          return false;
+        }
+      }
+      localStorage.setItem('cinecast_tab_lease', JSON.stringify({ tabId: this.tabId, ts: now }));
+      this.startTabLeaseRenewal();
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  private startTabLeaseRenewal() {
+    if (this.tabLeaseTimer) clearInterval(this.tabLeaseTimer);
+    this.tabLeaseTimer = setInterval(() => {
+      if (typeof window === 'undefined' || this.isOtherTabActive) return;
+      try {
+        const raw = localStorage.getItem('cinecast_tab_lease');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.tabId && parsed.tabId !== this.tabId && Date.now() - (parsed.ts || 0) <= 6000) {
+            this.enterOtherTabState('otra-conexion');
+            return;
+          }
+        }
+        localStorage.setItem('cinecast_tab_lease', JSON.stringify({ tabId: this.tabId, ts: Date.now() }));
+      } catch (_) {}
+    }, 2000);
+  }
+
+  private stopTabLeaseRenewal() {
+    if (this.tabLeaseTimer) {
+      clearInterval(this.tabLeaseTimer);
+      this.tabLeaseTimer = null;
+    }
+  }
+
+  private enterOtherTabState(reason = 'otra-conexion') {
+    this.isOtherTabActive = true;
+    this.isConnected = false;
+    this.stopTabLeaseRenewal();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.wsConnectingFallbackTimer) {
+      clearTimeout(this.wsConnectingFallbackTimer);
+      this.wsConnectingFallbackTimer = null;
+    }
+    if (this.amberDelayTimer) {
+      clearTimeout(this.amberDelayTimer);
+      this.amberDelayTimer = null;
+    }
+    this.stopHeartbeat();
+    this.stopHttpPolling();
+    if (this.ws) {
+      const sock = this.ws;
+      this.ws = null;
+      try {
+        sock.onclose = null;
+        sock.onerror = null;
+        sock.close();
+      } catch (_) {}
+    }
+    this.notifyConnectionStatus('otra-pestana', 'none');
+    this.tabReplacedListeners.forEach((fn) => {
+      try {
+        fn(true, reason);
+      } catch (_) {}
+    });
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('cinecast:otra-pestana', { detail: { state: 'otra-pestana', reason } })
+        );
+      } catch (_) {}
+    }
+  }
+
+  public takeTabLease() {
+    this.isOtherTabActive = false;
+    this.tryAcquireTabLease(true);
+    this.tabReplacedListeners.forEach((fn) => {
+      try {
+        fn(false);
+      } catch (_) {}
+    });
+    this.reconnectDelay = 500;
+    this.connect();
+  }
+
+  public isReplacedByOtherTab(): boolean {
+    return this.isOtherTabActive;
+  }
+
+  public onTabReplaced(handler: (isReplaced: boolean, reason?: string) => void) {
+    this.tabReplacedListeners.add(handler);
+    if (this.isOtherTabActive) {
+      try {
+        handler(true, 'otra-conexion');
+      } catch (_) {}
+    }
+    return () => {
+      this.tabReplacedListeners.delete(handler);
+    };
   }
 
   private initLifecycleListeners() {
     if (typeof window === 'undefined') return;
 
+    window.addEventListener('beforeunload', () => {
+      try {
+        const raw = localStorage.getItem('cinecast_tab_lease');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.tabId === this.tabId) {
+            localStorage.removeItem('cinecast_tab_lease');
+          }
+        }
+      } catch (_) {}
+    });
+
     const triggerImmediateReconnect = () => {
+      if (this.isOtherTabActive) return;
       this.reconnectDelay = 500;
       if (this.ws) {
         try {
@@ -325,6 +484,16 @@ export class DeviceSyncService {
       localStorage.setItem('cinecast_device_type', deviceType);
     }
 
+    if (this.isOtherTabActive) {
+      return;
+    }
+
+    // Verificar lease de pestaña antes de abrir conexión
+    if (!this.tryAcquireTabLease(false)) {
+      this.enterOtherTabState('otra-conexion');
+      return;
+    }
+
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -339,6 +508,7 @@ export class DeviceSyncService {
 
     // Si WebSocket no logra conectar en 5 s, encender HTTP polling como respaldo
     this.wsConnectingFallbackTimer = setTimeout(() => {
+      if (this.isOtherTabActive) return;
       if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
         this.sendHttpJoin();
         this.startHttpPolling();
@@ -348,10 +518,13 @@ export class DeviceSyncService {
 
     // Conectar WebSocket principal
     if (this.ws) {
-      try {
-        this.ws.close();
-      } catch (_) {}
+      const prevWs = this.ws;
       this.ws = null;
+      try {
+        prevWs.onclose = null;
+        prevWs.onerror = null;
+        prevWs.close();
+      } catch (_) {}
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -366,8 +539,23 @@ export class DeviceSyncService {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
+        if (this.isOtherTabActive) {
+          try { this.ws?.close(); } catch (_) {}
+          return;
+        }
         this.isConnected = true;
-        this.reconnectDelay = 500; // Reset backoff
+        this.hasEverConnected = true;
+        this.disconnectedSince = 0;
+        if (this.amberDelayTimer) {
+          clearTimeout(this.amberDelayTimer);
+          this.amberDelayTimer = null;
+        }
+        const now = Date.now();
+        this.reconnectTimestamps = this.reconnectTimestamps.filter((t) => now - t <= 60000);
+        if (this.reconnectTimestamps.length <= 6) {
+          this.isUnstableConnection = false;
+          this.reconnectDelay = 500;
+        }
         if (this.wsConnectingFallbackTimer) {
           clearTimeout(this.wsConnectingFallbackTimer);
           this.wsConnectingFallbackTimer = null;
@@ -388,10 +576,33 @@ export class DeviceSyncService {
         }
       };
 
-      this.ws.onclose = () => {
+      this.ws.onclose = (event: CloseEvent) => {
         this.isConnected = false;
         this.stopHeartbeat();
-        this.notifyConnectionStatus('reconnecting', 'none');
+        this.lastCloseCode = typeof event?.code === 'number' ? event.code : 1006;
+        this.lastCloseWasClean = Boolean(event?.wasClean);
+
+        if (this.lastCloseCode === 4001 || this.isOtherTabActive) {
+          this.enterOtherTabState('otra-conexion');
+          return;
+        }
+
+        if (!this.disconnectedSince) {
+          this.disconnectedSince = Date.now();
+        }
+
+        // El ámbar solo aparece tras 3 s sin conexión para evitar parpadeo verde/ámbar
+        if (!this.amberDelayTimer) {
+          const elapsed = Date.now() - this.disconnectedSince;
+          const waitMs = Math.max(0, 3000 - elapsed);
+          this.amberDelayTimer = setTimeout(() => {
+            this.amberDelayTimer = null;
+            if (!this.isConnected && !this.isOtherTabActive) {
+              this.notifyConnectionStatus('reconnecting', 'none');
+            }
+          }, waitMs);
+        }
+
         this.scheduleReconnect(false);
       };
 
@@ -406,6 +617,7 @@ export class DeviceSyncService {
   }
 
   public disconnect() {
+    this.stopTabLeaseRenewal();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -414,10 +626,15 @@ export class DeviceSyncService {
       clearTimeout(this.wsConnectingFallbackTimer);
       this.wsConnectingFallbackTimer = null;
     }
+    if (this.amberDelayTimer) {
+      clearTimeout(this.amberDelayTimer);
+      this.amberDelayTimer = null;
+    }
     this.stopHeartbeat();
     this.stopHttpPolling();
     if (this.ws) {
       try {
+        this.ws.onclose = null;
         this.ws.close();
       } catch (_) {}
       this.ws = null;
@@ -427,6 +644,7 @@ export class DeviceSyncService {
   }
 
   private scheduleReconnect(immediate = false) {
+    if (this.isOtherTabActive) return;
     if (this.reconnectTimer) {
       if (immediate) {
         clearTimeout(this.reconnectTimer);
@@ -436,13 +654,33 @@ export class DeviceSyncService {
       }
     }
 
+    const now = Date.now();
+    this.reconnectTimestamps = this.reconnectTimestamps.filter((t) => now - t <= 60000);
+    if (!immediate) {
+      this.reconnectTimestamps.push(now);
+    }
+    const isStorm = this.reconnectTimestamps.length > 6;
+    if (isStorm) {
+      this.isUnstableConnection = true;
+    }
+
     const delay = immediate ? 0 : this.reconnectDelay;
-    this.notifyConnectionStatus('reconnecting');
+
+    // Solo notificar reconnecting de inmediato si ya pasaron >= 3s sin conexión o hay tormenta
+    if (
+      isStorm ||
+      !this.hasEverConnected ||
+      (this.disconnectedSince > 0 && now - this.disconnectedSince >= 3000)
+    ) {
+      this.notifyConnectionStatus('reconnecting');
+    }
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      if (this.isOtherTabActive) return;
       if (!immediate) {
-        this.reconnectDelay = Math.min(8000, this.reconnectDelay * 2);
+        const maxBackoff = this.isUnstableConnection ? 30000 : 8000;
+        this.reconnectDelay = Math.min(maxBackoff, this.reconnectDelay * 2);
       }
       this.telemetryCounters.reconexiones++;
       this.connect();
@@ -678,7 +916,7 @@ export class DeviceSyncService {
   }
 
   private notifyConnectionStatus(
-    stateOverride?: 'connected' | 'reconnecting' | 'disconnected',
+    stateOverride?: 'connected' | 'reconnecting' | 'disconnected' | 'otra-pestana',
     transportOverride?: 'ws' | 'http' | 'none'
   ) {
     const transport =
@@ -689,18 +927,31 @@ export class DeviceSyncService {
         ? 'http'
         : 'none');
     const state =
-      stateOverride ||
-      (this.isConnected && this.ws?.readyState === WebSocket.OPEN
-        ? 'connected'
-        : this.httpPollTimer
-        ? 'reconnecting'
-        : 'disconnected');
+      this.isOtherTabActive
+        ? 'otra-pestana'
+        : stateOverride ||
+          (this.isConnected && this.ws?.readyState === WebSocket.OPEN
+            ? 'connected'
+            : this.httpPollTimer ||
+              (this.disconnectedSince > 0 && Date.now() - this.disconnectedSince >= 3000)
+            ? 'reconnecting'
+            : this.hasEverConnected
+            ? 'connected'
+            : 'disconnected');
 
     const info: ConnectionStatusInfo = {
       state,
       latencyMs: this.currentLatencyMs,
       transport,
       hasData: Date.now() - this.lastStateReceivedTime <= 3000,
+      isUnstable: this.isUnstableConnection,
+      closeCode: this.lastCloseCode,
+      wasClean: this.lastCloseWasClean,
+      reason: this.isOtherTabActive
+        ? 'otra-conexion'
+        : this.isUnstableConnection
+        ? `code=${this.lastCloseCode} wasClean=${String(this.lastCloseWasClean)}`
+        : undefined,
     };
 
     this.connectionStatusListeners.forEach((fn) => {
@@ -783,6 +1034,11 @@ export class DeviceSyncService {
 
     if (typeof msg.seq === 'number' && msg.seq > this.lastSeq) {
       this.lastSeq = msg.seq;
+    }
+
+    if (msg.type === 'replaced') {
+      this.enterOtherTabState(msg.reason || 'otra-conexion');
+      return;
     }
 
     if (msg.type === 'ack' && msg.id) {

@@ -278,6 +278,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [sleepTimer]);
 
   const [areYouStillThere, setAreYouStillThere] = useState<boolean>(false);
+  const [isOtherTabReplaced, setIsOtherTabReplaced] = useState<boolean>(() =>
+    deviceSync.isReplacedByOtherTab()
+  );
+  useEffect(() => {
+    return deviceSync.onTabReplaced((replaced) => {
+      setIsOtherTabReplaced(replaced);
+    });
+  }, []);
   const [countdownRemaining, setCountdownRemaining] = useState<number>(60);
   const countdownTimerRef = useRef<any>(null);
   const marathonConsecutiveCountRef = useRef<number>(0);
@@ -1750,6 +1758,23 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           <Users className="w-4 h-4" />
           <span>¡Te uniste como Invitado a la sala! Podés poner música o videos en la pantalla.</span>
           <button onClick={() => setIsGuestMode(false)} className="ml-2 text-white/80 hover:text-white">✕</button>
+        </div>
+      )}
+
+      {isOtherTabReplaced && (
+        <div
+          role="alert"
+          aria-label="Aviso de otra pestaña"
+          className="fixed top-2 inset-x-3 z-[9999] mx-auto max-w-lg px-4 py-3 rounded-2xl bg-amber-950/95 border border-amber-500/60 text-amber-100 text-xs sm:text-sm font-bold flex items-center justify-between gap-3 shadow-2xl backdrop-blur-xl"
+        >
+          <span>La app está abierta en otra pestaña</span>
+          <button
+            type="button"
+            onClick={() => deviceSync.takeTabLease()}
+            className="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition shrink-0"
+          >
+            Usar esta pestaña
+          </button>
         </div>
       )}
 
