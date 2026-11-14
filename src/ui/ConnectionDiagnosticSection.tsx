@@ -24,6 +24,9 @@ export const ConnectionDiagnosticSection: React.FC = () => {
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [testSteps, setTestSteps] = useState<ConnectionTestStep[] | null>(null);
   const [isClearing, setIsClearing] = useState<boolean>(false);
+  const [isRecordingPerf, setIsRecordingPerf] = useState<boolean>(false);
+  const [perfElapsedSec, setPerfElapsedSec] = useState<number>(0);
+  const [perfReportText, setPerfReportText] = useState<string>('');
 
   const deviceId = deviceSync.getDeviceId();
   const deviceName = deviceSync.getDeviceName();
@@ -68,6 +71,82 @@ export const ConnectionDiagnosticSection: React.FC = () => {
     setIsClearing(true);
     await clearCacheAndReload();
   };
+
+  // PARTE 3 (Paso 7): Grabación de rendimiento cada 5 s durante 2 min (o con CINECAST_DEBUG_PERF=1)
+  const startPerfRecording = (durationSec = 120) => {
+    if (isRecordingPerf) return;
+    setIsRecordingPerf(true);
+    setPerfElapsedSec(0);
+    const samples: any[] = [];
+    let longTaskCount = 0;
+    let longTaskTotalMs = 0;
+    let obs: PerformanceObserver | null = null;
+    try {
+      if (typeof PerformanceObserver !== 'undefined') {
+        obs = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            longTaskCount += 1;
+            longTaskTotalMs += entry.duration || 0;
+          }
+        });
+        obs.observe({ entryTypes: ['longtask'] });
+      }
+    } catch (_) {}
+
+    let lastSnap: any = null;
+    let lastBroadcastCount = deviceSync.getStatesBroadcastCount();
+    let elapsed = 0;
+
+    (window as any).electronAPI?.getPerfSnapshot?.().then((initial: any) => {
+      lastSnap = initial;
+    }).catch(() => {});
+
+    const timer = setInterval(async () => {
+      elapsed += 5;
+      setPerfElapsedSec(elapsed);
+      try {
+        const snap = await (window as any).electronAPI?.getPerfSnapshot?.();
+        const curBroadcast = deviceSync.getStatesBroadcastCount();
+        const dt = 5;
+        const dGetReal = snap && lastSnap ? Math.max(0, snap.counters.getRealMediaState - lastSnap.counters.getRealMediaState) : 0;
+        const dCtrl = snap && lastSnap ? Math.max(0, snap.counters.controlActiveMedia - lastSnap.counters.controlActiveMedia) : 0;
+        const dAudio = snap && lastSnap ? Math.max(0, snap.counters.embedAudioScript - lastSnap.counters.embedAudioScript) : 0;
+        const dStates = Math.max(0, curBroadcast - lastBroadcastCount);
+        lastSnap = snap || lastSnap;
+        lastBroadcastCount = curBroadcast;
+
+        const row = {
+          tSec: elapsed,
+          processes: snap?.processes || null,
+          video: snap?.videoQuality || null,
+          longtasks: { count: longTaskCount, totalMs: Number(longTaskTotalMs.toFixed(1)) },
+          callsPerSec: {
+            getRealMediaState: Number((dGetReal / dt).toFixed(2)),
+            controlActiveMedia: Number((dCtrl / dt).toFixed(2)),
+            embedAudioScript: Number((dAudio / dt).toFixed(2)),
+            statesBroadcast: Number((dStates / dt).toFixed(2)),
+            statesBroadcastTotal: dStates,
+          },
+        };
+        longTaskCount = 0;
+        longTaskTotalMs = 0;
+        samples.push(row);
+        setPerfReportText(JSON.stringify({ generatedAt: new Date().toISOString(), durationSec: elapsed, samples }, null, 2));
+      } catch (_) {}
+
+      if (elapsed >= durationSec) {
+        clearInterval(timer);
+        try { obs?.disconnect(); } catch (_) {}
+        setIsRecordingPerf(false);
+      }
+    }, 5000);
+  };
+
+  useEffect(() => {
+    if ((window as any).electronAPI?.isDebugPerf?.() || (window as any).CINECAST_DEBUG_PERF) {
+      startPerfRecording(120);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const versionsDiffer =
     serverBuildId !== 'cargando...' &&
@@ -255,7 +334,7 @@ export const ConnectionDiagnosticSection: React.FC = () => {
       )}
 
       {/* Acciones */}
-      <div className="pt-1 flex flex-col sm:flex-row gap-2.5">
+      <div className="pt-1 flex flex-col sm:flex-row flex-wrap gap-2.5">
         <button
           type="button"
           onClick={handleTestConnection}
@@ -268,6 +347,16 @@ export const ConnectionDiagnosticSection: React.FC = () => {
 
         <button
           type="button"
+          onClick={() => startPerfRecording(120)}
+          disabled={isRecordingPerf}
+          className="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
+        >
+          <Cpu className="w-4 h-4" />
+          <span>{isRecordingPerf ? `Grabando rendimiento (${perfElapsedSec}s / 120s)...` : 'Grabar rendimiento 2 min'}</span>
+        </button>
+
+        <button
+          type="button"
           onClick={handleClearCache}
           disabled={isClearing}
           className="min-h-[44px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs flex items-center justify-center gap-2 border border-zinc-700 transition disabled:opacity-50"
@@ -276,6 +365,32 @@ export const ConnectionDiagnosticSection: React.FC = () => {
           <span>{isClearing ? 'Limpiando...' : 'Limpiar caché y recargar'}</span>
         </button>
       </div>
+
+      {perfReportText && (
+        <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold text-emerald-400">Informe de rendimiento (muestras cada 5 s)</span>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(perfReportText);
+                  alert('Informe de rendimiento copiado al portapapeles');
+                } catch (_) {}
+              }}
+              className="min-h-[32px] px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-200 border border-zinc-700 transition"
+            >
+              Copiar informe de rendimiento
+            </button>
+          </div>
+          <textarea
+            readOnly
+            value={perfReportText}
+            rows={8}
+            className="w-full rounded-lg bg-zinc-900 border border-zinc-800 p-2 font-mono text-[11px] text-zinc-300"
+          />
+        </div>
+      )}
     </div>
   );
 };

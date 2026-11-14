@@ -25,10 +25,32 @@ export interface ResumeState {
 }
 
 export class ResumeController {
+  private static activeCount = 0;
   private activeTimer: any = null;
   private isDestroyed: boolean = false;
+  private isActiveCounted: boolean = false;
+  private isPollingInFlight: boolean = false;
   private state: ResumeState = { status: 'idle', objetivo: 0 };
   private onUpdateCallback: ((state: ResumeState) => void) | null = null;
+
+  public static isAnyActive(): boolean {
+    return ResumeController.activeCount > 0;
+  }
+
+  private setActiveFlag(active: boolean) {
+    if (active && !this.isActiveCounted) {
+      this.isActiveCounted = true;
+      ResumeController.activeCount += 1;
+    } else if (!active && this.isActiveCounted) {
+      this.isActiveCounted = false;
+      ResumeController.activeCount = Math.max(0, ResumeController.activeCount - 1);
+    }
+    if (typeof window !== 'undefined') {
+      const isAct = ResumeController.activeCount > 0;
+      (window as any).__cinecastResumeActive = isAct;
+      (window as any).electronAPI?.setResumeActive?.(isAct);
+    }
+  }
 
   public getState(): ResumeState {
     return { ...this.state };
@@ -48,6 +70,7 @@ export class ResumeController {
     }
 
     const targetSeconds = initialTime;
+    this.setActiveFlag(true);
     this.updateState('esperando', targetSeconds);
 
     const startTime = Date.now();
@@ -58,9 +81,12 @@ export class ResumeController {
         clearInterval(checkReadyInterval);
         return;
       }
+      if (this.isPollingInFlight) return;
+      this.isPollingInFlight = true;
 
       const elapsed = Date.now() - startTime;
       if (elapsed > maxTimeoutMs) {
+        this.isPollingInFlight = false;
         clearInterval(checkReadyInterval);
         console.warn(`[ResumeController] Timeout de 25s esperando metadatos listos para ${targetSeconds}s`);
         this.updateState('fallo', targetSeconds);
@@ -71,7 +97,7 @@ export class ResumeController {
       let realState: any = null;
       try {
         if (typeof window !== 'undefined' && (window as any).electronAPI?.getRealMediaState) {
-          realState = await (window as any).electronAPI.getRealMediaState();
+          realState = await (window as any).electronAPI.getRealMediaState({ force: true });
         }
       } catch (_) {}
 
@@ -83,11 +109,15 @@ export class ResumeController {
 
       if (isReady) {
         clearInterval(checkReadyInterval);
+        this.activeTimer = null;
+        this.isPollingInFlight = false;
         if (this.isDestroyed) return;
 
         // Iniciar secuencia de salto y verificación
         await this.executeSeekAndVerify(targetSeconds);
+        return;
       }
+      this.isPollingInFlight = false;
     }, 500);
 
     this.activeTimer = checkReadyInterval;
@@ -123,7 +153,7 @@ export class ResumeController {
       let verifyState: any = null;
       try {
         if (typeof window !== 'undefined' && (window as any).electronAPI?.getRealMediaState) {
-          verifyState = await (window as any).electronAPI.getRealMediaState();
+          verifyState = await (window as any).electronAPI.getRealMediaState({ force: true });
         }
       } catch (_) {}
 
@@ -149,13 +179,25 @@ export class ResumeController {
 
   private updateState(status: ResumeStatus, objetivo: number) {
     this.state = { status, objetivo };
+    // PARTE 3 (Paso 9d): Dejar de consultar apenas llega a 'ok' o 'fallo'
+    if (status === 'ok' || status === 'fallo') {
+      if (this.activeTimer) {
+        clearInterval(this.activeTimer);
+        this.activeTimer = null;
+      }
+      this.setActiveFlag(false);
+    }
     if (this.onUpdateCallback && !this.isDestroyed) {
       this.onUpdateCallback(this.state);
+    }
+    if (status === 'ok' || status === 'fallo') {
+      this.isDestroyed = true;
     }
   }
 
   public stop() {
     this.isDestroyed = true;
+    this.setActiveFlag(false);
     if (this.activeTimer) {
       clearInterval(this.activeTimer);
       this.activeTimer = null;

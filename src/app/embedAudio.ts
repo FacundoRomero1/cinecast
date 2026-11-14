@@ -39,8 +39,26 @@ export class EmbedAudioChain {
   private isBypassed: boolean = false;
   private isMeasuring: boolean = false;
   private config: EmbedAudioConfig = { ...DEFAULT_EMBED_AUDIO_CONFIG };
+  private pendingMediaEl: HTMLMediaElement | null = null;
+  private pendingSimulatedCors: boolean = false;
+
+  public isNeutralConfig(cfg: EmbedAudioConfig = this.config): boolean {
+    const p = String(cfg.preset || 'estandar').toLowerCase();
+    const isNormalPreset = p === 'estandar' || p === 'standard' || p === 'normal';
+    return (
+      isNormalPreset &&
+      Number(cfg.volume ?? 100) === 100 &&
+      Number(cfg.bassDb ?? 0) === 0 &&
+      Number(cfg.midDb ?? 0) === 0 &&
+      Number(cfg.trebleDb ?? 0) === 0 &&
+      !cfg.compressorEnabled
+    );
+  }
 
   public attach(mediaEl: HTMLMediaElement, isSimulatedCors = false): boolean {
+    this.pendingMediaEl = mediaEl;
+    this.pendingSimulatedCors = isSimulatedCors;
+
     if (typeof window === 'undefined' || typeof AudioContext === 'undefined') {
       this.isBypassed = true;
       return false;
@@ -52,6 +70,16 @@ export class EmbedAudioChain {
       return false;
     }
 
+    // PARTE 3 (Paso 9a): No inyectar cadena Web Audio mientras el preset sea Normal, volumen 100% y sin efectos
+    if (this.isNeutralConfig(this.config)) {
+      return false;
+    }
+
+    return this.initGraph(mediaEl);
+  }
+
+  private initGraph(mediaEl: HTMLMediaElement): boolean {
+    if (this.audioCtx || this.isBypassed) return Boolean(this.audioCtx);
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       this.audioCtx = new AudioContextClass();
@@ -176,7 +204,18 @@ export class EmbedAudioChain {
       this.config.compressorEnabled = false;
     }
 
-    if (this.isBypassed || !this.audioCtx) return;
+    if (this.isBypassed) return;
+
+    // PARTE 3 (Paso 9a): Recién se inyecta cuando el usuario cambia algo respecto de Normal 100% sin efectos
+    if (!this.audioCtx) {
+      if (this.isNeutralConfig(this.config)) {
+        return;
+      }
+      if (this.pendingMediaEl && !this.pendingSimulatedCors) {
+        this.initGraph(this.pendingMediaEl);
+      }
+      if (!this.audioCtx) return;
+    }
 
     if (this.audioCtx.state === 'suspended') {
       this.audioCtx.resume().catch(() => {});

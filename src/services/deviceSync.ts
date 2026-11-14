@@ -1242,8 +1242,19 @@ export class DeviceSyncService {
   private lastStateBroadcastTime: number = 0;
   private pendingBroadcastTimer: any = null;
   private lastBroadcastedStateSummary: string = '';
+  private lastBroadcastedCurrentTime: number = -1;
+  private statesBroadcastCount: number = 0;
+
+  public getStatesBroadcastCount(): number {
+    return this.statesBroadcastCount;
+  }
+
+  public resetStatesBroadcastCount(): void {
+    this.statesBroadcastCount = 0;
+  }
 
   private sendBroadcastStatePayload(state: PlaybackState) {
+    this.statesBroadcastCount++;
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('cinecast_last_playback_state_' + this.roomId, JSON.stringify(state));
@@ -1283,31 +1294,56 @@ export class DeviceSyncService {
 
   public broadcastPlaybackState(state: PlaybackState) {
     const now = Date.now();
-    const summary = `${state.isPlaying}:${state.mediaId}:${state.episodeId}:${state.isStandby}`;
-    const isDiscreteChange = summary !== this.lastBroadcastedStateSummary;
+    // PARTE 3 (Paso 9c): Firma de todos los campos discretos (sin reenviar estados iguales salvo que haya cambiado algo o pasado 1 s reproduciendo)
+    const summary = JSON.stringify({
+      isPlaying: Boolean(state.isPlaying),
+      mediaId: state.mediaId || null,
+      episodeId: state.episodeId || null,
+      mediaTitle: state.mediaTitle || '',
+      duration: Math.round(state.duration || 0),
+      isStandby: Boolean(state.isStandby),
+      activeHub: state.activeHub || 'cinecast',
+      activeServerIndex: state.activeServerIndex ?? 0,
+      activeServerName: state.activeServerName || '',
+      subtitlesEnabled: Boolean(state.subtitlesEnabled),
+      seekUnsupported: Boolean(state.seekUnsupported),
+      estimated: Boolean(state.estimated),
+      marathon: Boolean(state.marathon),
+      areYouStillThere: Boolean(state.areYouStillThere),
+      resumeStatus: state.resume?.status || null,
+      resumeTarget: state.resume?.targetSeconds || 0,
+      vol: state.audioSettings?.volume ?? 100,
+      muted: Boolean(state.audioSettings?.isMuted),
+      preset: state.audioSettings?.preset || 'standard',
+      sleepEndsAt: state.sleepTimer?.endsAt || null,
+      spotifyTrack: state.spotifyState?.trackName || null,
+      spotifyPlaying: state.spotifyState?.isPlaying ?? null,
+    });
 
-    // Si cambió el estado general (play/pause/media/standby) o pasaron >= 1000ms
-    if (isDiscreteChange || now - this.lastStateBroadcastTime >= 1000) {
-      if (this.pendingBroadcastTimer) {
-        clearTimeout(this.pendingBroadcastTimer);
-        this.pendingBroadcastTimer = null;
+    const curTime = Number(state.currentTime || 0);
+    const timeDiff = Math.abs(curTime - this.lastBroadcastedCurrentTime);
+    const isSeekJump = this.lastBroadcastedCurrentTime >= 0 && timeDiff >= 2.5;
+    const isDiscreteChange = summary !== this.lastBroadcastedStateSummary || isSeekJump;
+
+    if (!isDiscreteChange) {
+      // Si no cambió nada y no está reproduciendo, no reenviar estado repetido
+      if (!state.isPlaying) {
+        return;
       }
-      this.lastStateBroadcastTime = now;
-      this.lastBroadcastedStateSummary = summary;
-      this.sendBroadcastStatePayload(state);
-      return;
+      // Si está reproduciendo, solo enviar si pasó >= 1 s (980 ms) desde el último envío
+      if (now - this.lastStateBroadcastTime < 980) {
+        return;
+      }
     }
 
-    // Debounce de 100ms para actualizaciones continuas de tiempo
     if (this.pendingBroadcastTimer) {
       clearTimeout(this.pendingBroadcastTimer);
-    }
-    this.pendingBroadcastTimer = setTimeout(() => {
       this.pendingBroadcastTimer = null;
-      this.lastStateBroadcastTime = Date.now();
-      this.lastBroadcastedStateSummary = summary;
-      this.sendBroadcastStatePayload(state);
-    }, 100);
+    }
+    this.lastStateBroadcastTime = now;
+    this.lastBroadcastedStateSummary = summary;
+    this.lastBroadcastedCurrentTime = curTime;
+    this.sendBroadcastStatePayload(state);
   }
 
   public onCommand(handler: CommandHandler) {

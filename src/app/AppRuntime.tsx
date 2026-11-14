@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioSettings,
   DeviceInfo,
@@ -855,7 +855,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'togglePlay': {
-        window.electronAPI?.controlActiveMedia?.({ action: 'togglePlay' });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'togglePlay' });
+        }
         if (activeHub === 'spotify') {
           setIsSpotifyPlaying((p) => !p);
         } else if (activeHub === 'youtube') {
@@ -867,7 +869,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'play': {
-        window.electronAPI?.controlActiveMedia?.({ action: 'play' });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'play' });
+        }
         if (activeHub === 'spotify') setIsSpotifyPlaying(true);
         else if (activeHub === 'youtube') setIsYouTubePlaying(true);
         else setIsPlayingLocally(true);
@@ -875,7 +879,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'pause': {
-        window.electronAPI?.controlActiveMedia?.({ action: 'pause' });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'pause' });
+        }
         if (activeHub === 'spotify') setIsSpotifyPlaying(false);
         else if (activeHub === 'youtube') setIsYouTubePlaying(false);
         triggerNotification(`📱 Comando: Pausa ⏸`);
@@ -883,32 +889,42 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       case 'seek': {
         const time = typeof cmd.payload === 'number' ? cmd.payload : 0;
-        window.electronAPI?.controlActiveMedia?.({ action: 'seek', value: time });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'seek', value: time });
+        }
         triggerNotification(`📱 Saltando a tiempo seleccionado`);
         break;
       }
       case 'seekRelative': {
         const delta = cmd.payload || 10;
-        window.electronAPI?.controlActiveMedia?.({ action: 'seekRelative', value: delta });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'seekRelative', value: delta });
+        }
         triggerNotification(`📱 Salto de ${delta > 0 ? `+${delta}s` : `${delta}s`}`);
         break;
       }
       case 'toggleSubtitles': {
-        window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: cmd.payload });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: cmd.payload });
+        }
         triggerNotification(`📱 Subtítulos alterados`);
         break;
       }
       case 'setVolume': {
         const newVol = typeof cmd.payload === 'number' ? Math.max(0, Math.min(100, cmd.payload)) : 85;
         setAudioSettings((prev) => ({ ...prev, volume: newVol, isMuted: false }));
-        window.electronAPI?.setMasterVolume?.({ volume: newVol, isMuted: false });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          window.electronAPI?.setMasterVolume?.({ volume: newVol, isMuted: false });
+        }
         triggerNotification(`📱 Volumen PC: ${newVol}%`);
         break;
       }
       case 'toggleMute': {
         setAudioSettings((prev) => {
           const nextMuted = !prev.isMuted;
-          window.electronAPI?.setMasterVolume?.({ volume: prev.volume, isMuted: nextMuted });
+          if (!(isPlayingLocally && activeHub === 'cinecast')) {
+            window.electronAPI?.setMasterVolume?.({ volume: prev.volume, isMuted: nextMuted });
+          }
           return { ...prev, isMuted: nextMuted };
         });
         triggerNotification(`📱 Silencio alterado`);
@@ -1591,19 +1607,39 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [deviceRole, isScreenInStandby, isPlayingLocally, isSpotifyPlaying, isYouTubePlaying, activeHub, activeMedia?.id, activeEpisode?.id, audioSettings, handleBroadcastPlayerState]);
 
-  // Polling universal de estado real de reproducción en Electron cada 1s para sincronizar YouTube, Spotify o Embeds con el celular
+  // PARTE 3 (Paso 9b): Consultar get-real-media-state cada 1 s si hay celular conectado, Maratón o ResumeController activo; cada 5 s si nada lo necesita
+  const hasConnectedRemote = useMemo(
+    () => devices.some((d) => d.type === 'remote' && d.connected !== false),
+    [devices]
+  );
+  const needsFastMediaPoll = Boolean(
+    hasConnectedRemote ||
+      remotePlaybackState.marathon ||
+      (typeof window !== 'undefined' && (window as any).__cinecastResumeActive)
+  );
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__cinecastNeedsFastMediaPoll = needsFastMediaPoll;
+      (window as any).electronAPI?.setFastMediaPoll?.(needsFastMediaPoll);
+    }
+  }, [needsFastMediaPoll]);
+
   useEffect(() => {
     if (deviceRole === 'remote') return;
+    const pollMs = needsFastMediaPoll ? 1000 : 5000;
     const interval = setInterval(async () => {
       const realState = await window.electronAPI?.getRealMediaState?.();
       if (realState && realState.found) {
-        const title = realState.title || (activeHub === 'spotify' ? activeSpotifyTrack?.title : activeHub === 'youtube' ? activeYouTubeVideo?.title : activeMedia?.title) || 'Reproduciendo en PC';
-        handleBroadcastPlayerState({
-          currentTime: realState.currentTime,
-          duration: realState.duration > 0 ? realState.duration : 0,
-          isPlaying: realState.isPlaying,
-          mediaTitle: title,
-        });
+        if (!(isPlayingLocally && activeHub === 'cinecast')) {
+          const title = realState.title || (activeHub === 'spotify' ? activeSpotifyTrack?.title : activeHub === 'youtube' ? activeYouTubeVideo?.title : activeMedia?.title) || 'Reproduciendo en PC';
+          handleBroadcastPlayerState({
+            currentTime: realState.currentTime,
+            duration: realState.duration > 0 ? realState.duration : 0,
+            isPlaying: realState.isPlaying,
+            mediaTitle: title,
+          });
+        }
 
         const curT = realState.currentTime || 0;
         const dur = realState.duration || 0;
@@ -1708,9 +1744,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
         }
       }
-    }, 1000);
+    }, pollMs);
     return () => clearInterval(interval);
-  }, [deviceRole, activeHub, activeSpotifyTrack, activeYouTubeVideo, activeMedia, activeEpisode, handleBroadcastPlayerState, remotePlaybackState.marathon, remotePlaybackState.seasonNumber, remotePlaybackState.episodeNumber, triggerAreYouStillThere, handlePlayNextEpisode]);
+  }, [deviceRole, needsFastMediaPoll, isPlayingLocally, activeHub, activeSpotifyTrack, activeYouTubeVideo, activeMedia, activeEpisode, handleBroadcastPlayerState, remotePlaybackState.marathon, remotePlaybackState.seasonNumber, remotePlaybackState.episodeNumber, triggerAreYouStillThere, handlePlayNextEpisode]);
 
   const value: AppRuntimeContextValue = {
     deviceRole,

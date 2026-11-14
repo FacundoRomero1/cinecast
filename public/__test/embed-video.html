@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Embed Real Video 720p30</title>
+</head>
+<body style="margin:0; background:#000; color:#eee; font-family:sans-serif; overflow:hidden;">
+  <canvas id="src-canvas" width="1280" height="720" style="display:none;"></canvas>
+  <video id="test-video" autoplay playsinline controls style="width:100vw; height:100vh; background:#000;"></video>
+  <script>
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const noEmbedAudio = params.get('noaudio') === '1';
+      const lazyAudio = params.get('lazyaudio') === '1';
+      const canvas = document.getElementById('src-canvas');
+      const ctx = canvas.getContext('2d');
+      const video = document.getElementById('test-video');
+      window.__embedAudioCalls = 0;
+
+      let frame = 0;
+      setInterval(() => {
+        frame++;
+        const hue = (frame * 2) % 360;
+        ctx.fillStyle = 'hsl(' + hue + ', 50%, 20%)';
+        ctx.fillRect(0, 0, 1280, 720);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 48px sans-serif';
+        ctx.fillText('CineCast 1280x720 @ 30fps - Frame ' + frame, 80, 360);
+        const x = (frame * 12) % 1180;
+        ctx.fillStyle = '#10b981';
+        ctx.fillRect(x, 440, 100, 60);
+      }, 1000 / 30);
+
+      const stream = canvas.captureStream(30);
+
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const genCtx = new AudioCtx();
+        const osc = genCtx.createOscillator();
+        const gain = genCtx.createGain();
+        const dest = genCtx.createMediaStreamDestination();
+        osc.frequency.value = 440;
+        gain.gain.value = 0.02;
+        osc.connect(gain);
+        gain.connect(dest);
+        osc.start();
+        const audioTrack = dest.stream.getAudioTracks()[0];
+        if (audioTrack) stream.addTrack(audioTrack);
+      } catch (_) {}
+
+      video.srcObject = stream;
+      video.play().catch(() => {});
+
+      let audioChainCtx = null;
+      function attachEmbedAudioChain() {
+        if (audioChainCtx || noEmbedAudio) return;
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          audioChainCtx = new AudioCtx();
+          const bass = audioChainCtx.createBiquadFilter();
+          bass.type = 'lowshelf';
+          bass.frequency.value = 250;
+          const mid = audioChainCtx.createBiquadFilter();
+          mid.type = 'peaking';
+          mid.frequency.value = 2000;
+          const treble = audioChainCtx.createBiquadFilter();
+          treble.type = 'highshelf';
+          treble.frequency.value = 4000;
+          const comp = audioChainCtx.createDynamicsCompressor();
+          const analyser = audioChainCtx.createAnalyser();
+          analyser.fftSize = 256;
+          const oscChain = audioChainCtx.createOscillator();
+          const silentGain = audioChainCtx.createGain();
+          silentGain.gain.value = 0.001;
+          oscChain.connect(bass);
+          bass.connect(mid);
+          mid.connect(treble);
+          treble.connect(comp);
+          comp.connect(silentGain);
+          silentGain.connect(analyser);
+          analyser.connect(audioChainCtx.destination);
+          oscChain.start();
+          window.__embedAudioCalls = (window.__embedAudioCalls || 0) + 1;
+          setInterval(() => {
+            if (!audioChainCtx) return;
+            const buf = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(buf);
+            window.__embedAudioCalls = (window.__embedAudioCalls || 0) + 1;
+          }, 1000);
+        } catch (_) {}
+      }
+
+      if (!noEmbedAudio && !lazyAudio) {
+        attachEmbedAudioChain();
+      }
+      window.__attachEmbedAudioChain = attachEmbedAudioChain;
+      window.__testVideo = video;
+    })();
+  </script>
+</body>
+</html>
+

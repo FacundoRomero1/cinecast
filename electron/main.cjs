@@ -24,6 +24,15 @@ app.userAgentFallback = REAL_UA;
 let isDiagnosticMode = false;
 let isNoCorsFix = false;
 
+// Instrumentación de rendimiento (PARTE 3 - Paso 7)
+const perfCounters = {
+  getRealMediaState: 0,
+  controlActiveMedia: 0,
+  embedAudioScript: 0,
+};
+let perfDisableEmbedAudio = process.env.CINECAST_DISABLE_EMBED_AUDIO === '1';
+let perfDisableTimePoll = process.env.CINECAST_DISABLE_TIME_POLL === '1';
+
 function printDiagLog() {
   console.log(`[DIAG] adblock=${isDiagnosticMode ? 'OFF' : 'ON'} popups=${isDiagnosticMode ? 'ALLOW' : 'BLOCK'} shields=${isDiagnosticMode ? 'OFF' : 'ON'} ua=${isDiagnosticMode ? 'OFF' : 'ON'} corsFix=${isNoCorsFix ? 'OFF' : 'ON'}`);
 }
@@ -1242,13 +1251,32 @@ function getAllFrames() {
 }
 
 // Control de volumen maestro en Electron (incluso en iframes, YouTube y Spotify)
+let hasNonDefaultEmbedAudioChange = false;
 ipcMain.handle('set-master-volume', async (_event, payload) => {
-  const { volume, isMuted } = payload || {};
+  const { volume, isMuted, preset, bassGain, midGain, trebleGain, compressorEnabled } = payload || {};
   const muted = Boolean(isMuted || (typeof volume === 'number' && volume <= 0));
   const vol01 = Math.max(0, Math.min(1, Number(volume ?? 100) / 100));
 
+  const isNeutral =
+    !muted &&
+    Number(volume ?? 100) === 100 &&
+    (!preset || preset === 'standard' || preset === 'estandar' || preset === 'normal') &&
+    !bassGain &&
+    !midGain &&
+    !trebleGain &&
+    !compressorEnabled;
+
+  if (!isNeutral) {
+    hasNonDefaultEmbedAudioChange = true;
+  }
+
   let webContentsCount = 0;
   let elementsCount = 0;
+
+  // PARTE 3 (Paso 9a): No inyectar audio embebido mientras el preset sea Normal con volumen 100% y sin efectos
+  if (isNeutral && !hasNonDefaultEmbedAudioChange) {
+    return { ok: true, webContentsCount: 0, elementsCount: 0, volume: vol01, muted, skippedNeutral: true };
+  }
 
   // 1. Aplicar setAudioMuted a la ventana principal y a todos los webContents (incluyendo webviews)
   const allWcs = webContents.getAllWebContents().filter((wc) => !wc.isDestroyed());
@@ -1260,24 +1288,28 @@ ipcMain.handle('set-master-volume', async (_event, payload) => {
   }
 
   // 2. Inyectar volumen y muted en todos los <video> y <audio> de todos los frames
-  const frames = getAllFrames();
-  for (const frame of frames) {
-    try {
-      const count = await frame.executeJavaScript(`
-        (() => {
-          let c = 0;
-          document.querySelectorAll('video, audio').forEach(el => {
-            try {
-              el.volume = ${vol01};
-              el.muted = ${muted};
-              c++;
-            } catch (_) {}
-          });
-          return c;
-        })()
-      `);
-      if (typeof count === 'number') elementsCount += count;
-    } catch (_) {}
+  if (!perfDisableEmbedAudio) {
+    const frames = getAllFrames();
+    for (const frame of frames) {
+      if (mainWindow && !mainWindow.isDestroyed() && frame === mainWindow.webContents.mainFrame) continue;
+      try {
+        perfCounters.embedAudioScript++;
+        const count = await frame.executeJavaScript(`
+          (() => {
+            let c = 0;
+            document.querySelectorAll('video, audio').forEach(el => {
+              try {
+                el.volume = ${vol01};
+                el.muted = ${muted};
+                c++;
+              } catch (_) {}
+            });
+            return c;
+          })()
+        `);
+        if (typeof count === 'number') elementsCount += count;
+      } catch (_) {}
+    }
   }
 
   return { ok: true, webContentsCount, elementsCount, volume: vol01, muted };
@@ -1306,6 +1338,10 @@ ipcMain.handle('system-volume', async (_event, action) => {
 
 // Lector universal de estado y tiempo REAL de reproducción
 ipcMain.handle('get-real-media-state', async () => {
+  if (perfDisableTimePoll) {
+    return null;
+  }
+  perfCounters.getRealMediaState++;
   const frames = getAllFrames();
   let best = null;
   for (const frame of frames) {
@@ -1347,6 +1383,7 @@ ipcMain.handle('get-real-media-state', async () => {
 // Control universal de reproducción (+10s/-10s, seek, play/pause, subtítulos)
 let subtitlesEnabled = true;
 ipcMain.handle('control-active-media', async (_event, { action, value }) => {
+  perfCounters.controlActiveMedia++;
   const frames = getAllFrames();
   let handledByMediaEl = false;
   let anyFrameHadMedia = false;
@@ -1759,6 +1796,91 @@ ipcMain.handle('set-no-cors-fix', (_event, enabled) => {
 
 ipcMain.handle('get-no-cors-fix', () => {
   return isNoCorsFix;
+});
+
+// PARTE 3 (Paso 7): Instrumentación de rendimiento (app.getAppMetrics + videoPlaybackQuality + contadores IPC)
+ipcMain.handle('set-perf-config', (_event, cfg) => {
+  if (cfg && typeof cfg === 'object') {
+    if (typeof cfg.disableEmbedAudio === 'boolean') perfDisableEmbedAudio = cfg.disableEmbedAudio;
+    if (typeof cfg.disableTimePoll === 'boolean') perfDisableTimePoll = cfg.disableTimePoll;
+    if (cfg.resetCounters) {
+      perfCounters.getRealMediaState = 0;
+      perfCounters.controlActiveMedia = 0;
+      perfCounters.embedAudioScript = 0;
+    }
+  }
+  return {
+    disableEmbedAudio: perfDisableEmbedAudio,
+    disableTimePoll: perfDisableTimePoll,
+    counters: { ...perfCounters },
+  };
+});
+
+ipcMain.handle('record-embed-audio-call', () => {
+  perfCounters.embedAudioScript++;
+  return perfCounters.embedAudioScript;
+});
+
+ipcMain.handle('get-perf-snapshot', async () => {
+  const metrics = app.getAppMetrics();
+  const byType = {
+    Browser: { cpuPercent: 0, memoryMB: 0, count: 0 },
+    Tab: { cpuPercent: 0, memoryMB: 0, count: 0 },
+    GPU: { cpuPercent: 0, memoryMB: 0, count: 0 },
+    Utility: { cpuPercent: 0, memoryMB: 0, count: 0 },
+  };
+  for (const m of metrics) {
+    const t = byType[m.type] ? m.type : 'Utility';
+    byType[t].cpuPercent = Number((byType[t].cpuPercent + (m.cpu?.percentCPUUsage || 0)).toFixed(2));
+    byType[t].memoryMB = Number((byType[t].memoryMB + ((m.memory?.workingSetSize || 0) / 1024)).toFixed(1));
+    byType[t].count += 1;
+  }
+
+  let videoQuality = null;
+  let extraEmbedAudioTicks = 0;
+  const frames = getAllFrames();
+  for (const frame of frames) {
+    if (mainWindow && !mainWindow.isDestroyed() && frame === mainWindow.webContents.mainFrame) continue;
+    try {
+      const q = await frame.executeJavaScript(`(() => {
+        const v = document.querySelector('video');
+        if (!v) return null;
+        const qual = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null;
+        let buf = 0;
+        try {
+          if (v.buffered && v.buffered.length > 0) {
+            buf = Number((v.buffered.end(v.buffered.length - 1) - v.buffered.start(0)).toFixed(2));
+          }
+        } catch (_) {}
+        const audioCalls = Number(window.__embedAudioCalls || 0);
+        window.__embedAudioCalls = 0;
+        return {
+          totalVideoFrames: qual ? qual.totalVideoFrames : (v.webkitDecodedFrameCount || 0),
+          droppedVideoFrames: qual ? qual.droppedVideoFrames : (v.webkitDroppedFrameCount || 0),
+          paused: Boolean(v.paused),
+          readyState: Number(v.readyState || 0),
+          buffered: buf,
+          currentTime: Number((v.currentTime || 0).toFixed(2)),
+          audioCalls,
+        };
+      })()`, false);
+      if (q) {
+        extraEmbedAudioTicks += q.audioCalls || 0;
+        if (!videoQuality || !q.paused || q.totalVideoFrames > (videoQuality.totalVideoFrames || 0)) {
+          videoQuality = q;
+        }
+      }
+    } catch (_) {}
+  }
+  perfCounters.embedAudioScript += extraEmbedAudioTicks;
+
+  return {
+    timestamp: Date.now(),
+    processes: byType,
+    videoQuality,
+    counters: { ...perfCounters },
+    debugPerfEnv: process.env.CINECAST_DEBUG_PERF === '1',
+  };
 });
 
 // Endurecimiento de permisos por sesión (denegar por defecto salvo lista blanca explícita)

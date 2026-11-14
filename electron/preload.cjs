@@ -1,5 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+let lastRealMediaFetchAt = 0;
+let lastRealMediaCached = null;
+let realMediaInFlight = null;
+let fastMediaPollFlag = false;
+let resumeActiveFlag = false;
+
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
   getLocalIp: () => ipcRenderer.invoke('get-local-ip'),
@@ -11,7 +17,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   focusWindow: () => ipcRenderer.invoke('focus-window'),
   setStreamHeaders: (payload) => ipcRenderer.invoke('set-stream-headers', payload),
   setMasterVolume: (payload) => ipcRenderer.invoke('set-master-volume', payload),
-  getRealMediaState: () => ipcRenderer.invoke('get-real-media-state'),
+  setFastMediaPoll: (val) => {
+    fastMediaPollFlag = Boolean(val);
+  },
+  setResumeActive: (val) => {
+    resumeActiveFlag = Boolean(val);
+  },
+  getRealMediaState: (opts) => {
+    const force = Boolean(opts && opts.force);
+    const fast = force || fastMediaPollFlag || resumeActiveFlag;
+    const minInterval = force ? 0 : fast ? 900 : 4800;
+    const now = Date.now();
+    if (!force && now - lastRealMediaFetchAt < minInterval) {
+      return Promise.resolve(lastRealMediaCached);
+    }
+    if (realMediaInFlight) {
+      return realMediaInFlight;
+    }
+    lastRealMediaFetchAt = now;
+    realMediaInFlight = ipcRenderer
+      .invoke('get-real-media-state')
+      .then((res) => {
+        lastRealMediaCached = res;
+        realMediaInFlight = null;
+        return res;
+      })
+      .catch(() => {
+        realMediaInFlight = null;
+        return lastRealMediaCached;
+      });
+    return realMediaInFlight;
+  },
   controlActiveMedia: (payload) => ipcRenderer.invoke('control-active-media', payload),
   probeStreams: (urls) => ipcRenderer.invoke('probe-streams', urls),
   checkEmbedProviders: () => ipcRenderer.invoke('check-embed-providers'),
@@ -57,4 +93,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('no-cors-fix-changed', listener);
     return () => ipcRenderer.removeListener('no-cors-fix-changed', listener);
   },
+  getPerfSnapshot: () => ipcRenderer.invoke('get-perf-snapshot'),
+  setPerfConfig: (cfg) => ipcRenderer.invoke('set-perf-config', cfg),
+  recordEmbedAudioCall: () => ipcRenderer.invoke('record-embed-audio-call'),
+  isDebugPerf: () => process.env.CINECAST_DEBUG_PERF === '1',
 });
