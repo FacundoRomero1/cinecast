@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Pause, ChevronRight, Tv, Radio } from 'lucide-react';
 import type { MediaItem, PlaybackState } from '../types';
-import { deviceSync } from '../services/deviceSync';
+import { deviceSync, type ConnectionStatusInfo } from '../services/deviceSync';
 
 export interface MiniRemoteProps {
   connectedScreenName?: string;
@@ -27,7 +27,7 @@ export const MiniRemote: React.FC<MiniRemoteProps> = ({
     connectedScreenName !== 'Ninguna'
   );
 
-  const [connState, setConnState] = useState<'connected' | 'reconnecting' | 'disconnected'>(
+  const [connState, setConnState] = useState<ConnectionStatusInfo['state']>(
     isConnected ? 'connected' : 'disconnected'
   );
 
@@ -95,7 +95,7 @@ export const MiniRemote: React.FC<MiniRemoteProps> = ({
           className={`w-2.5 h-2.5 rounded-full shrink-0 ${
             !isConnected || connState === 'disconnected'
               ? 'bg-rose-500'
-              : connState === 'reconnecting'
+              : connState === 'reconnecting' || connState === 'otra-pestana'
               ? 'bg-amber-500 animate-pulse'
               : 'bg-emerald-500 animate-pulse'
           }`}

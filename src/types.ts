@@ -214,8 +214,15 @@ export interface PlaybackState {
   seekUnsupported?: boolean;
   estimated?: boolean;
   resume?: {
-    status: 'esperando' | 'reanudando' | 'ok' | 'fallo';
+    status: 'idle' | 'esperando' | 'reanudando' | 'ok' | 'fallo';
     objetivo: number;
+    targetSeconds?: number;
+  } | null;
+  spotifyState?: {
+    trackName?: string | null;
+    isPlaying?: boolean | null;
+    artistName?: string | null;
+    trackUri?: string | null;
   } | null;
   subtitlesEnabled?: boolean;
   playbackMeta?: {
