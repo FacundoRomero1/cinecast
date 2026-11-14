@@ -24,6 +24,7 @@ export interface AppShellProps {
   bottomSlot?: React.ReactNode;
   extraBottomPadding?: boolean | undefined;
   hasMiniRemote?: boolean | undefined;
+  hasConnectedRemote?: boolean | undefined;
   onOpenControl?: (() => void) | undefined;
   isControlOpen?: boolean | undefined;
 }
@@ -58,6 +59,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   bottomSlot,
   extraBottomPadding = false,
   hasMiniRemote = false,
+  hasConnectedRemote = false,
   onOpenControl,
   isControlOpen = false,
 }) => {
@@ -107,6 +109,14 @@ export const AppShell: React.FC<AppShellProps> = ({
             <Film className="w-4 h-4 text-white" />
           </div>
           <span className="font-display text-2xl tracking-wider text-white">CINECAST</span>
+          {hasConnectedRemote && (
+            <span
+              data-testid="pc-remote-dot"
+              title="Celular conectado"
+              aria-label="Celular conectado"
+              className="ml-auto w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.75)]"
+            />
+          )}
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">

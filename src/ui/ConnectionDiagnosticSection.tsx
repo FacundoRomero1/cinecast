@@ -10,7 +10,7 @@ import {
   getLastReceivedCommand,
   ConnectionTestStep,
 } from '../app/syncDiagnostic';
-import { deviceSync } from '../services/deviceSync';
+import { deviceSync, type ConnectionEventEntry } from '../services/deviceSync';
 import { useAppRuntime } from '../app/AppRuntime';
 import { Server, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Cpu } from 'lucide-react';
 
@@ -29,6 +29,9 @@ export const ConnectionDiagnosticSection: React.FC = () => {
   const [perfReportText, setPerfReportText] = useState<string>('');
   const [isRecordingLoad, setIsRecordingLoad] = useState<boolean>(false);
   const [loadTraces, setLoadTraces] = useState<any[]>([]);
+  const [connectionEvents, setConnectionEvents] = useState<ConnectionEventEntry[]>(() =>
+    deviceSync.getConnectionEvents()
+  );
 
   const deviceId = deviceSync.getDeviceId();
   const deviceName = deviceSync.getDeviceName();
@@ -95,10 +98,17 @@ export const ConnectionDiagnosticSection: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    const unsubEvents = deviceSync.onConnectionEvents((evts) => {
+      setConnectionEvents(evts);
+    });
     const interval = setInterval(() => {
       setWsStatus(getWebSocketStatus());
+      setConnectionEvents(deviceSync.getConnectionEvents());
     }, 2500);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      unsubEvents();
+    };
   }, []);
 
   const handleTestConnection = async () => {
@@ -298,6 +308,7 @@ export const ConnectionDiagnosticSection: React.FC = () => {
                 role: deviceRole,
                 telemetry: summary,
                 commands: history,
+                connectionEvents: deviceSync.getConnectionEvents(),
               };
               try {
                 await navigator.clipboard.writeText(JSON.stringify(fullReport, null, 2));
@@ -331,6 +342,52 @@ export const ConnectionDiagnosticSection: React.FC = () => {
                     <span className="text-red-400 font-bold">⚠ Falló</span>
                   )}
                 </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Historial de eventos de conexión (últimos 30) */}
+      <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[11px] text-zinc-300 font-bold uppercase tracking-wider">
+            Eventos de conexión (últimos {connectionEvents.length}/30)
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const payload = JSON.stringify(connectionEvents, null, 2);
+              try {
+                await navigator.clipboard.writeText(payload);
+                alert('Eventos de conexión copiados al portapapeles');
+              } catch (_) {
+                prompt('Copia los eventos:', payload);
+              }
+            }}
+            className="min-h-[36px] px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-200 border border-zinc-700 transition"
+          >
+            Copiar eventos
+          </button>
+        </div>
+
+        <div className="max-h-44 overflow-y-auto space-y-1 pr-1 font-mono text-[11px] divide-y divide-zinc-900">
+          {connectionEvents.length === 0 ? (
+            <div className="text-zinc-500 italic py-1">No hay eventos de conexión registrados aún</div>
+          ) : (
+            [...connectionEvents].reverse().map((ev) => (
+              <div key={ev.id} className="py-1 flex items-center justify-between gap-2">
+                <span className="text-zinc-300 truncate">
+                  <span className="text-zinc-500">{new Date(ev.timestamp).toLocaleTimeString()}</span>{' '}
+                  <strong className="text-white uppercase">{ev.event}</strong>{' '}
+                  <span className="text-zinc-400">[{ev.transport}]</span>{' '}
+                  <span className="text-zinc-400">{ev.reason}</span>
+                </span>
+                {typeof ev.code === 'number' && (
+                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-amber-300">
+                    {ev.code}
+                  </span>
+                )}
               </div>
             ))
           )}

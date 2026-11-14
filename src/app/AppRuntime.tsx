@@ -29,6 +29,7 @@ export interface AppRuntimeContextValue {
   roomId: string;
   setRoomId: React.Dispatch<React.SetStateAction<string>>;
   devices: DeviceInfo[];
+  hasConnectedRemote: boolean;
   selectedScreenId: string | null;
   setSelectedScreenId: (id: string | null) => void;
   homeRoomId: string | null;
@@ -369,12 +370,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const unsubDevices = deviceSync.onDevicesUpdate((devs) => {
       setDevices(devs);
 
-      // If we are in standby on a screen and a remote device connects, auto-dismiss standby!
+      // If we are in standby on a screen and a remote device connects, auto-dismiss standby silently
       if (isScreenInStandby && deviceRole === 'screen') {
-        const hasRemoteJoined = devs.some((d) => d.type === 'remote' && !d.isCurrent);
+        const hasRemoteJoined = devs.some((d) => d.type === 'remote' && d.connected !== false && !d.isCurrent);
         if (hasRemoteJoined) {
           setIsScreenInStandby(false);
-          triggerNotification('📱 ¡Control conectado! Listo para reproducir.');
         }
       }
 
@@ -2093,6 +2093,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     roomId,
     setRoomId,
     devices,
+    hasConnectedRemote,
     selectedScreenId,
     setSelectedScreenId,
     homeRoomId,

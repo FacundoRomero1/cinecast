@@ -21,6 +21,9 @@ import {
   recordAndBroadcastState,
   incrementCommandSeq,
   setLatestRemoteJoin,
+  recordRoomPresence,
+  shouldNotifyRemoteJoin,
+  debugSyncLog,
   type CommandCseq,
   type ConnectedClient,
   type PlaybackCommandPayload,
@@ -93,6 +96,11 @@ export function createSyncRouter(): Router {
       return;
     }
 
+    const now = Date.now();
+    const isNewJoin =
+      deviceType === 'remote' ? shouldNotifyRemoteJoin(roomId, deviceId, false, now) : false;
+    recordRoomPresence(roomId, deviceId, now);
+
     const room = getOrCreateRoom(roomId);
     const existing = globalDevices.get(deviceId);
     const client: ConnectedClient = {
@@ -101,23 +109,34 @@ export function createSyncRouter(): Router {
       deviceId,
       deviceName: deviceName || existing?.deviceName || 'Dispositivo',
       deviceType: deviceType || existing?.deviceType || 'hybrid',
-      lastSeen: Date.now(),
+      lastSeen: now,
     };
     room.set(deviceId, client);
     globalDevices.set(deviceId, client);
+    debugSyncLog('http_join', {
+      roomId,
+      deviceId,
+      deviceName: client.deviceName,
+      deviceType: client.deviceType,
+      isNewJoin,
+    });
 
     if (deviceType === 'remote') {
-      const seq = incrementCommandSeq();
-      setLatestRemoteJoin({
-        seq,
-        deviceId,
-        deviceName: client.deviceName,
-        timestamp: Date.now(),
-      });
+      if (isNewJoin) {
+        const seq = incrementCommandSeq();
+        setLatestRemoteJoin({
+          seq,
+          deviceId,
+          deviceName: client.deviceName,
+          timestamp: now,
+          isNewJoin: true,
+        });
+      }
       const joinAlert = JSON.stringify({
         type: 'remote_connected',
         fromDevice: deviceId,
         deviceName: client.deviceName,
+        isNewJoin,
       });
       globalDevices.forEach((c) => {
         if (c.deviceId !== deviceId && c.ws && c.ws.readyState === WebSocket.OPEN) {
@@ -209,6 +228,9 @@ export function createSyncRouter(): Router {
     }
 
     const now = Date.now();
+    if (deviceId) {
+      recordRoomPresence(roomId, deviceId, now);
+    }
     const baseline = deviceId
       ? (lastDeliveredSeqByDevice.has(deviceId)
           ? Math.max(sinceSeq, lastDeliveredSeqByDevice.get(deviceId) || 0)

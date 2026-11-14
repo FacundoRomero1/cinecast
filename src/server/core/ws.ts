@@ -18,6 +18,9 @@ import {
   serverSessionEpochByDevice,
   setLatestRemoteJoin,
   startPruneTimer,
+  recordRoomPresence,
+  shouldNotifyRemoteJoin,
+  debugSyncLog,
   type CommandCseq,
   type ConnectedClient,
   type PlaybackCommandPayload,
@@ -123,6 +126,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
       if (clientInfo) {
         clientInfo.isAlive = true;
         clientInfo.lastSeen = Date.now();
+        recordRoomPresence(clientInfo.roomId, clientInfo.deviceId, clientInfo.lastSeen);
       }
     });
 
@@ -136,7 +140,8 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
 
             // Si existía un socket previo para este deviceId, avisar 'replaced' y cerrar con 4001 (sin terminate abrupto)
             const existingClient = globalDevices.get(deviceId);
-            if (existingClient && existingClient.ws && existingClient.ws !== ws) {
+            const replaced = Boolean(existingClient && existingClient.ws && existingClient.ws !== ws);
+            if (replaced && existingClient && existingClient.ws) {
               const oldWs = existingClient.ws;
               existingClient.ws = undefined;
               try {
@@ -147,6 +152,13 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               } catch (_) {}
             }
 
+            const now = Date.now();
+            const isNewJoin =
+              deviceType === 'remote'
+                ? shouldNotifyRemoteJoin(roomId, deviceId, Boolean(msg.isReconnect), now)
+                : false;
+            recordRoomPresence(roomId, deviceId, now);
+
             const room = getOrCreateRoom(roomId);
             clientInfo = {
               ws,
@@ -154,28 +166,41 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               deviceId,
               deviceName: deviceName || 'Dispositivo',
               deviceType: deviceType || 'hybrid',
-              lastSeen: Date.now(),
+              lastSeen: now,
               isAlive: true,
-              lastPingSent: Date.now(),
+              lastPingSent: now,
               connected: true,
               disconnectedAt: undefined,
             };
             room.set(deviceId, clientInfo);
             globalDevices.set(deviceId, clientInfo);
+            debugSyncLog('ws_join', {
+              roomId,
+              deviceId,
+              deviceName: clientInfo.deviceName,
+              deviceType: clientInfo.deviceType,
+              isReconnect: Boolean(msg.isReconnect),
+              isNewJoin,
+              replaced,
+            });
             broadcastRoomDevices(roomId);
 
             if (deviceType === 'remote') {
-              const seq = incrementCommandSeq();
-              setLatestRemoteJoin({
-                seq,
-                deviceId,
-                deviceName: deviceName || 'Celular',
-                timestamp: Date.now(),
-              });
+              if (isNewJoin) {
+                const seq = incrementCommandSeq();
+                setLatestRemoteJoin({
+                  seq,
+                  deviceId,
+                  deviceName: deviceName || 'Celular',
+                  timestamp: now,
+                  isNewJoin: true,
+                });
+              }
               const joinAlert = JSON.stringify({
                 type: 'remote_connected',
                 fromDevice: deviceId,
                 deviceName: deviceName || 'Celular',
+                isNewJoin,
               });
               globalDevices.forEach((c) => {
                 if (c.deviceId !== deviceId && c.ws && c.ws.readyState === WebSocket.OPEN) {
@@ -284,6 +309,7 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
             if (clientInfo) {
               clientInfo.lastSeen = Date.now();
               clientInfo.isAlive = true;
+              recordRoomPresence(clientInfo.roomId, clientInfo.deviceId, clientInfo.lastSeen);
               if (typeof msg.lastSeq === 'number') {
                 const prev = lastDeliveredSeqByDevice.get(clientInfo.deviceId) ?? 0;
                 if (msg.lastSeq > prev) {
@@ -302,11 +328,26 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reasonBuf) => {
       if (clientInfo) {
+        const closedNow = Date.now();
+        recordRoomPresence(clientInfo.roomId, clientInfo.deviceId, closedNow);
         const currentInGlobal = globalDevices.get(clientInfo.deviceId);
-        if (currentInGlobal === clientInfo) {
-          clientInfo.disconnectedAt = Date.now();
+        const wasCurrentSocket = currentInGlobal === clientInfo;
+        let reasonStr = '';
+        try {
+          reasonStr = reasonBuf ? reasonBuf.toString('utf8') : '';
+        } catch (_) {}
+        debugSyncLog('ws_close', {
+          roomId: clientInfo.roomId,
+          deviceId: clientInfo.deviceId,
+          deviceType: clientInfo.deviceType,
+          code,
+          reason: reasonStr,
+          wasCurrentSocket,
+        });
+        if (wasCurrentSocket) {
+          clientInfo.disconnectedAt = closedNow;
           clientInfo.connected = false;
           broadcastRoomDevices(clientInfo.roomId);
           const closedId = clientInfo.deviceId;

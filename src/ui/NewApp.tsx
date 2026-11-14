@@ -1993,6 +1993,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     setSelectedScreenId,
     isPermanentHomeLinked,
     handleTogglePermanentHome,
+    hasConnectedRemote,
     connectedScreenName,
     isScreenReconnecting,
     activeHub,
@@ -2117,6 +2118,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
         <AppShell
           extraBottomPadding={deviceRole === 'remote'}
           hasMiniRemote={deviceRole === 'remote' && location.pathname !== '/control'}
+          hasConnectedRemote={deviceRole !== 'remote' && hasConnectedRemote}
           onOpenControl={() => setIsRemoteSheetOpen((p) => !p)}
           isControlOpen={isRemoteSheetOpen}
           bottomSlot={

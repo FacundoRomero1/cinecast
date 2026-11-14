@@ -34,6 +34,7 @@ export interface RemoteJoinEvent {
   deviceId: string;
   deviceName: string;
   timestamp: number;
+  isNewJoin?: boolean;
 }
 
 export interface ActiveDeviceSummary {
@@ -337,4 +338,32 @@ export function setLatestRemoteJoin(event: RemoteJoinEvent | null): void {
 export function incrementCommandSeq(): number {
   commandSeqCounter += 1;
   return commandSeqCounter;
+}
+
+const lastRoomPresenceByKey = new Map<string, number>();
+
+export function recordRoomPresence(roomId: string, deviceId: string, now = Date.now()): void {
+  if (!roomId || !deviceId) return;
+  lastRoomPresenceByKey.set(`${roomId}:${deviceId}`, now);
+}
+
+export function shouldNotifyRemoteJoin(
+  roomId: string,
+  deviceId: string,
+  isReconnect = false,
+  now = Date.now()
+): boolean {
+  if (isReconnect) return false;
+  const lastSeen = lastRoomPresenceByKey.get(`${roomId}:${deviceId}`);
+  if (typeof lastSeen === 'number' && now - lastSeen <= 60000) {
+    return false;
+  }
+  return true;
+}
+
+export function debugSyncLog(event: string, data: Record<string, unknown>): void {
+  if (process.env.CINECAST_DEBUG_SYNC !== '1') return;
+  try {
+    console.log(JSON.stringify({ tag: 'CINECAST_DEBUG_SYNC', ts: Date.now(), event, ...data }));
+  } catch (_) {}
 }

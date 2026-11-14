@@ -37,6 +37,15 @@ export interface ConnectionStatusInfo {
   reason?: string;
 }
 
+export interface ConnectionEventEntry {
+  id: string;
+  timestamp: number;
+  event: 'join' | 'close' | 'reconnect' | 'disconnect' | 'reconnecting' | 'connected' | 'replaced';
+  transport: 'ws' | 'http' | 'none';
+  reason: string;
+  code?: number;
+}
+
 export class DeviceSyncService {
   private ws: WebSocket | null = null;
   private roomId: string = 'cine-home-1';
@@ -77,6 +86,15 @@ export class DeviceSyncService {
   private remoteConnectedListeners: Set<(deviceName: string) => void> = new Set();
   private watchHistoryListeners: Set<(items: any[]) => void> = new Set();
   private connectionStatusListeners: Set<(info: ConnectionStatusInfo) => void> = new Set();
+  private connectionEventListeners: Set<(events: ConnectionEventEntry[]) => void> = new Set();
+  private connectionEvents: ConnectionEventEntry[] = [];
+  private connectionEventCounter: number = 0;
+  private lastConnectAttemptAt: number = 0;
+  private frozenOrHiddenAt: number = 0;
+  private lastHeartbeatTickAt: number = 0;
+  private lastInboundWsAt: number = 0;
+  private lastPresenceSeenByDevice: Map<string, number> = new Map();
+  private lastRemoteToastAtByDevice: Map<string, number> = new Map();
   private commandStatusListeners: Set<(info: { id: string; status: 'confirmed' | 'retrying' | 'failed'; rttMs?: number; reason?: string }) => void> = new Set();
   private tabReplacedListeners: Set<(isReplaced: boolean, reason?: string) => void> = new Set();
 
@@ -392,6 +410,7 @@ export class DeviceSyncService {
       } catch (_) {}
     }
     this.notifyConnectionStatus('otra-pestana', 'none');
+    this.recordConnectionEvent('replaced', 'none', reason, 4001);
     this.tabReplacedListeners.forEach((fn) => {
       try {
         fn(true, reason);
@@ -449,27 +468,102 @@ export class DeviceSyncService {
       } catch (_) {}
     });
 
-    const triggerImmediateReconnect = () => {
+    const triggerImmediateReconnect = (triggerReason = 'lifecycle-resume') => {
       if (this.isOtherTabActive) return;
-      this.reconnectDelay = 500;
-      if (this.ws) {
-        try {
-          this.ws.close();
-        } catch (_) {}
-        this.ws = null;
+      const now = Date.now();
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING && now - this.lastConnectAttemptAt < 1000) {
+        return;
       }
+      const gapMs = Math.max(
+        this.frozenOrHiddenAt ? now - this.frozenOrHiddenAt : 0,
+        this.lastInboundWsAt ? now - this.lastInboundWsAt : 0
+      );
+      const shouldForceReplace =
+        !this.ws ||
+        this.ws.readyState !== WebSocket.OPEN ||
+        triggerReason === 'lifecycle-resume' ||
+        triggerReason === 'timer-freeze-resume' ||
+        triggerReason === 'network-online' ||
+        gapMs >= 4000;
+      if (!shouldForceReplace) return;
+
+      this.reconnectDelay = 500;
+      this.frozenOrHiddenAt = 0;
+      if (this.ws) {
+        const prev = this.ws;
+        this.ws = null;
+        try {
+          prev.onclose = null;
+          prev.onerror = null;
+          prev.close();
+        } catch (_) {}
+      }
+      this.isConnected = false;
+      this.recordConnectionEvent('reconnecting', 'none', triggerReason);
       this.scheduleReconnect(true);
     };
 
+    document.addEventListener('freeze', () => {
+      this.frozenOrHiddenAt = Date.now();
+      this.recordConnectionEvent('disconnect', 'none', 'lifecycle-freeze');
+    });
+
+    document.addEventListener('resume', () => {
+      triggerImmediateReconnect('lifecycle-resume');
+    });
+
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        triggerImmediateReconnect();
+      if (document.visibilityState === 'hidden') {
+        this.frozenOrHiddenAt = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        triggerImmediateReconnect('visibility-visible');
       }
     });
 
-    window.addEventListener('online', triggerImmediateReconnect);
-    window.addEventListener('pageshow', triggerImmediateReconnect);
-    window.addEventListener('focus', triggerImmediateReconnect);
+    window.addEventListener('online', () => triggerImmediateReconnect('network-online'));
+    window.addEventListener('pageshow', () => triggerImmediateReconnect('window-pageshow'));
+    window.addEventListener('focus', () => triggerImmediateReconnect('window-focus'));
+  }
+
+  private recordConnectionEvent(
+    event: ConnectionEventEntry['event'],
+    transport: ConnectionEventEntry['transport'],
+    reason: string,
+    code?: number
+  ) {
+    this.connectionEventCounter += 1;
+    const entry: ConnectionEventEntry = {
+      id: `cev_${this.connectionEventCounter}_${Date.now()}`,
+      timestamp: Date.now(),
+      event,
+      transport,
+      reason,
+      ...(typeof code === 'number' ? { code } : {}),
+    };
+    this.connectionEvents.push(entry);
+    if (this.connectionEvents.length > 30) {
+      this.connectionEvents.splice(0, this.connectionEvents.length - 30);
+    }
+    const snapshot = [...this.connectionEvents];
+    this.connectionEventListeners.forEach((fn) => {
+      try {
+        fn(snapshot);
+      } catch (_) {}
+    });
+  }
+
+  public getConnectionEvents(): ConnectionEventEntry[] {
+    return [...this.connectionEvents];
+  }
+
+  public onConnectionEvents(handler: (events: ConnectionEventEntry[]) => void) {
+    this.connectionEventListeners.add(handler);
+    try {
+      handler([...this.connectionEvents]);
+    } catch (_) {}
+    return () => {
+      this.connectionEventListeners.delete(handler);
+    };
   }
 
   public async requestWakeLock() {
@@ -568,6 +662,7 @@ export class DeviceSyncService {
       host = `${ip}:${this.lanPort || 3000}`;
     }
     const wsUrl = `${protocol}//${host}/ws`;
+    this.lastConnectAttemptAt = Date.now();
 
     try {
       this.ws = new WebSocket(wsUrl);
@@ -577,9 +672,12 @@ export class DeviceSyncService {
           try { this.ws?.close(); } catch (_) {}
           return;
         }
+        const wasReconnect = this.hasJoinedOnce;
         this.isConnected = true;
         this.hasEverConnected = true;
         this.disconnectedSince = 0;
+        this.frozenOrHiddenAt = 0;
+        this.lastInboundWsAt = Date.now();
         if (this.amberDelayTimer) {
           clearTimeout(this.amberDelayTimer);
           this.amberDelayTimer = null;
@@ -599,9 +697,11 @@ export class DeviceSyncService {
         this.startHeartbeat();
         this.flushOfflineCommandQueue(); // Reenviar cola offline
         this.notifyConnectionStatus('connected', 'ws');
+        this.recordConnectionEvent(wasReconnect ? 'reconnect' : 'connected', 'ws', wasReconnect ? 'ws-open-reconnect' : 'ws-open-initial');
       };
 
       this.ws.onmessage = (event) => {
+        this.lastInboundWsAt = Date.now();
         try {
           const msg = JSON.parse(event.data);
           this.handleIncomingRawMessage(msg);
@@ -615,6 +715,12 @@ export class DeviceSyncService {
         this.stopHeartbeat();
         this.lastCloseCode = typeof event?.code === 'number' ? event.code : 1006;
         this.lastCloseWasClean = Boolean(event?.wasClean);
+        this.recordConnectionEvent(
+          'close',
+          'ws',
+          (event?.reason && String(event.reason)) || (this.lastCloseWasClean ? 'clean-close' : `close-${this.lastCloseCode}`),
+          this.lastCloseCode
+        );
 
         if (this.lastCloseCode === 4001 || this.isOtherTabActive) {
           this.enterOtherTabState('otra-conexion');
@@ -675,6 +781,7 @@ export class DeviceSyncService {
     }
     this.isConnected = false;
     this.notifyConnectionStatus('disconnected', 'none');
+    this.recordConnectionEvent('disconnect', 'none', 'manual-disconnect');
   }
 
   private scheduleReconnect(immediate = false) {
@@ -722,6 +829,7 @@ export class DeviceSyncService {
   }
 
   private sendHttpJoin() {
+    this.recordConnectionEvent('join', 'http', 'http-join');
     fetch(`${this.getApiBase()}/api/sync/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -780,6 +888,7 @@ export class DeviceSyncService {
             type: 'remote_connected',
             fromDevice: data.remoteJoined.deviceId,
             deviceName: data.remoteJoined.deviceName,
+            isNewJoin: data.remoteJoined.isNewJoin,
           });
         }
 
@@ -824,12 +933,34 @@ export class DeviceSyncService {
 
   private startHeartbeat() {
     this.stopHeartbeat();
+    this.lastHeartbeatTickAt = Date.now();
     this.pingTimer = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.lastPingSentAt = Date.now();
-        this.ws.send(JSON.stringify({ type: 'ping', timestamp: this.lastPingSentAt, lastSeq: this.lastSeq }));
+      const now = Date.now();
+      const gap = this.lastHeartbeatTickAt > 0 ? now - this.lastHeartbeatTickAt : 0;
+      this.lastHeartbeatTickAt = now;
+      if (gap > 5000 && !this.isOtherTabActive) {
+        if (this.ws) {
+          const prev = this.ws;
+          this.ws = null;
+          try {
+            prev.onclose = null;
+            prev.onerror = null;
+            prev.close();
+          } catch (_) {}
+        }
+        this.isConnected = false;
+        this.reconnectDelay = 500;
+        this.recordConnectionEvent('reconnecting', 'none', 'timer-freeze-resume');
+        this.scheduleReconnect(true);
+        return;
       }
-    }, 10000);
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (!this.lastPingSentAt || now - this.lastPingSentAt >= 10000) {
+          this.lastPingSentAt = now;
+          this.ws.send(JSON.stringify({ type: 'ping', timestamp: this.lastPingSentAt, lastSeq: this.lastSeq }));
+        }
+      }
+    }, 2000);
   }
 
   private stopHeartbeat() {
@@ -843,6 +974,7 @@ export class DeviceSyncService {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       const isReconnect = this.hasJoinedOnce;
       this.hasJoinedOnce = true;
+      this.recordConnectionEvent('join', 'ws', isReconnect ? 'ws-join-reconnect' : 'ws-join-initial');
       this.ws.send(
         JSON.stringify({
           type: 'join',
@@ -1141,17 +1273,32 @@ export class DeviceSyncService {
       }
     } else if (msg.type === 'device_list' && Array.isArray(msg.devices)) {
       this.knownDevices.clear();
+      const seenNow = Date.now();
       msg.devices.forEach((d: DeviceInfo) => {
         this.knownDevices.set(d.id, {
           ...d,
           isCurrent: d.id === this.deviceId,
         });
+        if (d.type === 'remote' && d.connected !== false && this.lastPresenceSeenByDevice.has(d.id)) {
+          this.lastPresenceSeenByDevice.set(d.id, seenNow);
+        }
       });
       this.broadcastLocalPresence();
       this.notifyDevicesListeners();
     } else if (msg.type === 'remote_connected') {
-      if (msg.fromDevice !== this.deviceId) {
-        this.remoteConnectedListeners.forEach((fn) => fn(msg.deviceName || 'Celular'));
+      const fromId = typeof msg.fromDevice === 'string' ? msg.fromDevice : '';
+      if (fromId && fromId !== this.deviceId) {
+        const now = Date.now();
+        const prevPresence = this.lastPresenceSeenByDevice.get(fromId);
+        const prevToast = this.lastRemoteToastAtByDevice.get(fromId);
+        const recentlyInRoom =
+          (typeof prevPresence === 'number' && now - prevPresence <= 60000) ||
+          (typeof prevToast === 'number' && now - prevToast <= 60000);
+        this.lastPresenceSeenByDevice.set(fromId, now);
+        if (msg.isNewJoin !== false && !recentlyInRoom) {
+          this.lastRemoteToastAtByDevice.set(fromId, now);
+          this.remoteConnectedListeners.forEach((fn) => fn(msg.deviceName || 'Celular'));
+        }
       }
     } else if (msg.type === 'command' && msg.command) {
       if (msg.fromDevice !== this.deviceId) {
