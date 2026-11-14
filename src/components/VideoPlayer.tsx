@@ -561,6 +561,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const selectedSeasonRef = useRef(selectedSeason);
   const selectedEpisodeRef = useRef(selectedEpisode);
 
+  useEffect(() => {
+    (window as any).electronAPI?.setPlayerServers?.(
+      availableServers.map((s) => ({
+        name: s.name,
+        url: s.url,
+        type: s.type,
+        language: s.language,
+      }))
+    );
+  }, [availableServers]);
+
+  useEffect(() => {
+    return () => {
+      (window as any).electronAPI?.endLoadTrace?.();
+    };
+  }, []);
+
   useEffect(() => { subtitlesEnabledRef.current = subtitlesEnabled; }, [subtitlesEnabled]);
   useEffect(() => { availableServersRef.current = availableServers; }, [availableServers]);
   useEffect(() => { activeServerIndexRef.current = activeServerIndex; }, [activeServerIndex]);

@@ -334,6 +334,37 @@ export interface ElectronAPI {
   onNoCorsFixChanged?: (callback: (enabled: boolean) => void) => () => void;
   onTracksDetected?: (callback: (tracks: { url: string; audio: string[]; subs: string[] }) => void) => () => void;
   onAuthUpdated?: (callback: (payload: { provider: string }) => void) => () => void;
+  getLoadRecording?: () => Promise<{ ok?: boolean; enabled: boolean } | boolean>;
+  setLoadRecording?: (enabled: boolean) => Promise<{ ok?: boolean; enabled: boolean } | boolean>;
+  startLoadTrace?: (payload: { title?: string; firstServerName?: string; firstServerUrl?: string }) => Promise<{ ok: boolean; id?: string }>;
+  recordLoadTraceEvent?: (payload: Record<string, any>) => Promise<{ ok: boolean }>;
+  endLoadTrace?: () => Promise<{ ok: boolean }>;
+  getLoadTraces?: () => Promise<{ recording?: boolean; traces: any[] }>;
+  clearLoadTraces?: () => Promise<{ ok: boolean }>;
+  setPlayerServers?: (servers: Array<{ name: string; url: string; type?: string; language?: string }>) => Promise<{ ok: boolean; count: number }>;
+  getPlayerServers?: () => Promise<{ ok: boolean; servers: Array<{ name: string; url: string; type?: string; language?: string }> }>;
+  measureServers?: (payload?: { servers?: Array<{ name: string; url: string; type?: string; language?: string }> }) => Promise<{
+    ok: boolean;
+    error?: string;
+    serialized?: boolean;
+    timeoutMs?: number;
+    results: Array<{
+      index: number;
+      name: string;
+      language?: string;
+      url: string;
+      host: string;
+      dnsMs: number;
+      connectMs: number;
+      tlsMs: number;
+      ttfbMs: number;
+      totalMs: number;
+      statusCode: number;
+      ok: boolean;
+      error: string | null;
+      timedOut?: boolean;
+    }>;
+  }>;
 }
 
 declare global {

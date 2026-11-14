@@ -108,6 +108,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setLoadRecording: (enabled) => ipcRenderer.invoke('set-load-recording', enabled),
   startLoadTrace: (payload) => ipcRenderer.invoke('start-load-trace', payload),
   recordLoadTraceEvent: (payload) => ipcRenderer.invoke('record-load-trace-event', payload),
+  endLoadTrace: () => ipcRenderer.invoke('end-load-trace'),
   getLoadTraces: () => ipcRenderer.invoke('get-load-traces'),
   clearLoadTraces: () => ipcRenderer.invoke('clear-load-traces'),
+  setPlayerServers: (servers) => ipcRenderer.invoke('set-player-servers', servers),
+  getPlayerServers: () => ipcRenderer.invoke('get-player-servers'),
+  measureServers: (payload) => ipcRenderer.invoke('measure-servers', payload),
 });

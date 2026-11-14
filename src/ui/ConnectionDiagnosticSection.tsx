@@ -29,6 +29,10 @@ export const ConnectionDiagnosticSection: React.FC = () => {
   const [perfReportText, setPerfReportText] = useState<string>('');
   const [isRecordingLoad, setIsRecordingLoad] = useState<boolean>(false);
   const [loadTraces, setLoadTraces] = useState<any[]>([]);
+  const [isMeasuringServers, setIsMeasuringServers] = useState<boolean>(false);
+  const [serverMeasureResults, setServerMeasureResults] = useState<any[]>([]);
+  const [serverMeasureError, setServerMeasureError] = useState<string>('');
+  const [copiedLatencyTable, setCopiedLatencyTable] = useState<boolean>(false);
   const [connectionEvents, setConnectionEvents] = useState<ConnectionEventEntry[]>(() =>
     deviceSync.getConnectionEvents()
   );
@@ -51,7 +55,8 @@ export const ConnectionDiagnosticSection: React.FC = () => {
       const api = (window as any).electronAPI;
       if (api?.getLoadRecording) {
         const rec = await api.getLoadRecording();
-        if (typeof rec?.enabled === 'boolean') setIsRecordingLoad(rec.enabled);
+        if (typeof rec === 'boolean') setIsRecordingLoad(rec);
+        else if (typeof rec?.enabled === 'boolean') setIsRecordingLoad(rec.enabled);
       }
       if (api?.getLoadTraces) {
         const res = await api.getLoadTraces();
@@ -66,10 +71,86 @@ export const ConnectionDiagnosticSection: React.FC = () => {
     try {
       const api = (window as any).electronAPI;
       const res = await api?.setLoadRecording?.(next);
-      if (typeof res?.enabled === 'boolean') setIsRecordingLoad(res.enabled);
+      if (typeof res === 'boolean') setIsRecordingLoad(res);
+      else if (typeof res?.enabled === 'boolean') setIsRecordingLoad(res.enabled);
       const tr = await api?.getLoadTraces?.();
       if (Array.isArray(tr?.traces)) setLoadTraces(tr.traces);
     } catch (_) {}
+  };
+
+  const formatGroupedNetworkEvents = (rawItems: any): { totalCount: number; summary: string } => {
+    if (typeof rawItems === 'number') {
+      return { totalCount: rawItems, summary: '' };
+    }
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return { totalCount: 0, summary: '' };
+    }
+    const grouped = new Map<string, { host: string; code: string; count: number }>();
+    let totalCount = 0;
+    for (const item of rawItems) {
+      if (item === null || item === undefined) continue;
+      if (typeof item === 'string' || typeof item === 'number') {
+        const key = `unknown|${String(item)}`;
+        const prev = grouped.get(key);
+        if (prev) prev.count += 1;
+        else grouped.set(key, { host: 'unknown', code: String(item), count: 1 });
+        totalCount += 1;
+        continue;
+      }
+      const host = String(item.host || 'unknown');
+      const code = String(item.code || item.error || item.statusOrCode || (item.status ? `HTTP_${item.status}` : 'ERR'));
+      const count = Math.max(1, Number(item.count || 1));
+      const key = `${host}|${code}`;
+      const prev = grouped.get(key);
+      if (prev) prev.count += count;
+      else grouped.set(key, { host, code, count });
+      totalCount += count;
+    }
+    const parts = Array.from(grouped.values()).map((g) => `${g.host}:${g.code} x${g.count}`);
+    return {
+      totalCount,
+      summary: parts.length > 0 ? ` [${parts.join(', ')}]` : '',
+    };
+  };
+
+  const formatServerLatencyTable = (results: any[]): string => {
+    const lines: string[] = [
+      '# | Servidor | Host | Estado | DNS (ms) | Connect (ms) | TLS (ms) | TTFB (ms) | Total (ms)',
+      '--|----------|------|--------|----------|--------------|----------|-----------|-----------',
+    ];
+    for (const r of results) {
+      const statusText = r.ok ? `OK (${r.statusCode})` : (r.error || `HTTP_${r.statusCode || 0}`);
+      lines.push(
+        `${(r.index ?? 0) + 1} | ${r.name || '-'} | ${r.host || '-'} | ${statusText} | ${r.dnsMs ?? '-'} | ${r.connectMs ?? r.tcpMs ?? '-'} | ${r.tlsMs ?? '-'} | ${r.ttfbMs ?? '-'} | ${r.totalMs ?? '-'}`
+      );
+    }
+    return lines.join('\n');
+  };
+
+  const handleMeasureServers = async () => {
+    const api = (window as any).electronAPI;
+    if (!api?.measureServers) {
+      setServerMeasureError('Medir servidores solo está disponible en la app de escritorio (Electron).');
+      return;
+    }
+    setIsMeasuringServers(true);
+    setServerMeasureError('');
+    setCopiedLatencyTable(false);
+    try {
+      const res = await api.measureServers();
+      if (Array.isArray(res?.results)) {
+        setServerMeasureResults(res.results);
+      } else {
+        setServerMeasureResults([]);
+      }
+      if (!res?.ok && res?.error) {
+        setServerMeasureError(res.error);
+      }
+    } catch (err: any) {
+      setServerMeasureError(err?.message || 'Error al medir servidores');
+    } finally {
+      setIsMeasuringServers(false);
+    }
   };
 
   const formatLoadTracesTable = (traces: any[]): string => {
@@ -80,17 +161,24 @@ export const ConnectionDiagnosticSection: React.FC = () => {
     for (const t of traces) {
       const hosts = (t.serversTried || []).map((s: any) => s.host || s.name).join(' -> ') || '-';
       const ts = t.timestamps || {};
-      const tsStr = `${ts.webviewCreatedMs ?? '-'} / ${ts.didStartLoadingMs ?? '-'} / ${ts.domReadyMs ?? '-'} / ${ts.didFinishLoadMs ?? '-'} / ${ts.firstVideoMs ?? '-'} / ${ts.readyState3Ms ?? '-'} / ${ts.firstFrameMs ?? '-'}`;
+      const videoCols =
+        ts.firstVideoMs === null && t.videoStatus === 'no accesible'
+          ? 'no accesible / no accesible / no accesible'
+          : `${ts.firstVideoMs ?? (t.videoStatus === 'no accesible' ? 'no accesible' : '-')} / ${ts.readyState3Ms ?? '-'} / ${ts.firstFrameMs ?? (t.videoStatus === 'no accesible' ? 'no accesible' : '-')}`;
+      const tsStr = `${ts.webviewCreatedMs ?? '-'} / ${ts.didStartLoadingMs ?? '-'} / ${ts.domReadyMs ?? '-'} / ${ts.didFinishLoadMs ?? '-'} / ${videoCols}`;
       const nw = t.network || {};
-      const failDetails = Array.isArray(nw.failedDetails) && nw.failedDetails.length > 0
-        ? ` [${nw.failedDetails.map((f: any) => f.statusOrCode).join(',')}]`
-        : '';
-      const reqStr = `${nw.totalRequests ?? 0}/${nw.failedRequests ?? 0}${failDetails}/${nw.adBlockedRequests ?? 0}/${nw.certErrors ?? 0}`;
+      const failFmt = formatGroupedNetworkEvents(nw.failedRequests);
+      const legacyFailDetails =
+        Array.isArray(nw.failedDetails) && nw.failedDetails.length > 0 && !failFmt.summary
+          ? ` [${nw.failedDetails.map((f: any) => String(f?.statusOrCode || f?.code || f)).join(', ')}]`
+          : '';
+      const certFmt = formatGroupedNetworkEvents(nw.certErrors);
+      const reqStr = `${nw.totalRequests ?? 0}/${failFmt.totalCount}${failFmt.summary || legacyFailDetails}/${nw.adBlockedRequests ?? 0}/${certFmt.totalCount}${certFmt.summary}`;
       const rotStr = (t.rotations || []).map((r: any) => `${r.method}(${r.reason}@${r.elapsedSec}s)`).join('; ') || '0';
       const cpu = t.cpuAt5s || {};
       const cpuStr = `${cpu.Browser ?? '-'}% / ${cpu.Tab ?? '-'}% / ${cpu.GPU ?? '-'}%`;
       const nr = t.firstServerNetProbe || {};
-      const nrStr = `${nr.dnsMs ?? '-'} / ${nr.connectMs ?? '-'} / ${nr.tlsMs ?? '-'} / ${nr.ttfbMs ?? '-'}`;
+      const nrStr = `${nr.dnsMs ?? '-'} / ${nr.connectMs ?? nr.tcpMs ?? '-'} / ${nr.tlsMs ?? '-'} / ${nr.ttfbMs ?? '-'}`;
       lines.push(`${t.id} | ${t.title || '-'} | ${hosts} | ${tsStr} | ${reqStr} | ${rotStr} | ${cpuStr} | ${nrStr}`);
     }
     return lines.join('\n');
@@ -476,6 +564,17 @@ export const ConnectionDiagnosticSection: React.FC = () => {
 
         <button
           type="button"
+          data-testid="btn-measure-servers"
+          onClick={handleMeasureServers}
+          disabled={isMeasuringServers}
+          className="min-h-[44px] px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
+        >
+          <Server className="w-4 h-4" />
+          <span>{isMeasuringServers ? 'Midiendo servidores...' : 'Medir servidores'}</span>
+        </button>
+
+        <button
+          type="button"
           onClick={handleClearCache}
           disabled={isClearing}
           className="min-h-[44px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs flex items-center justify-center gap-2 border border-zinc-700 transition disabled:opacity-50"
@@ -566,6 +665,87 @@ export const ConnectionDiagnosticSection: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* PARTE 4: Medición serializada de latencia de servidores del reproductor actual */}
+      {(serverMeasureResults.length > 0 || serverMeasureError || isMeasuringServers) && (
+        <div
+          data-testid="server-latency-section"
+          className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2.5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-bold text-sky-400">
+              Latencia de servidores (net.request en serie, timeout 8 s — sin reordenar reproductor)
+            </span>
+            {serverMeasureResults.length > 0 && (
+              <button
+                type="button"
+                data-testid="btn-copy-server-latency"
+                onClick={async () => {
+                  const tableStr = formatServerLatencyTable(serverMeasureResults);
+                  try {
+                    await navigator.clipboard.writeText(tableStr);
+                    setCopiedLatencyTable(true);
+                    setTimeout(() => setCopiedLatencyTable(false), 2000);
+                  } catch (_) {}
+                }}
+                className="min-h-[32px] px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-200 border border-zinc-700 transition"
+              >
+                {copiedLatencyTable ? 'Copiado' : 'Copiar tabla'}
+              </button>
+            )}
+          </div>
+          {serverMeasureError && (
+            <div className="text-xs text-amber-300" data-testid="server-latency-error">
+              {serverMeasureError}
+            </div>
+          )}
+          {serverMeasureResults.length > 0 && (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse font-mono text-[11px] text-zinc-300">
+                  <thead>
+                    <tr className="border-b border-zinc-800 text-zinc-400">
+                      <th className="py-1 pr-2">#</th>
+                      <th className="py-1 pr-2">Servidor</th>
+                      <th className="py-1 pr-2">Host</th>
+                      <th className="py-1 pr-2">Estado</th>
+                      <th className="py-1 pr-2">DNS</th>
+                      <th className="py-1 pr-2">Connect</th>
+                      <th className="py-1 pr-2">TLS</th>
+                      <th className="py-1 pr-2">TTFB</th>
+                      <th className="py-1">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60">
+                    {serverMeasureResults.map((r, i) => (
+                      <tr key={`${r.name}-${i}`}>
+                        <td className="py-1 pr-2 text-zinc-500">{(r.index ?? i) + 1}</td>
+                        <td className="py-1 pr-2 text-white">{r.name}</td>
+                        <td className="py-1 pr-2">{r.host}</td>
+                        <td className={`py-1 pr-2 ${r.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {r.ok ? `OK (${r.statusCode})` : (r.error || `HTTP_${r.statusCode || 0}`)}
+                        </td>
+                        <td className="py-1 pr-2">{r.dnsMs} ms</td>
+                        <td className="py-1 pr-2">{r.connectMs ?? r.tcpMs ?? '-'} ms</td>
+                        <td className="py-1 pr-2">{r.tlsMs} ms</td>
+                        <td className="py-1 pr-2">{r.ttfbMs} ms</td>
+                        <td className="py-1">{r.totalMs} ms</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <textarea
+                data-testid="server-latency-table"
+                readOnly
+                value={formatServerLatencyTable(serverMeasureResults)}
+                rows={Math.min(10, serverMeasureResults.length + 3)}
+                className="w-full rounded-lg bg-zinc-900 border border-zinc-800 p-2 font-mono text-[11px] text-zinc-300"
+              />
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
