@@ -16,8 +16,6 @@ import {
   Power,
   QrCode,
   Radio,
-  RotateCcw,
-  RotateCw,
   Server,
   SkipBack,
   SkipForward,
@@ -1071,36 +1069,32 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   <button
                     type="button"
                     aria-label="Salto rápido -60s"
-                    disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: -60 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
                   >
                     -60s
                   </button>
                   <button
                     type="button"
                     aria-label="Salto rápido -10s"
-                    disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: -10 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
                   >
                     -10s
                   </button>
                   <button
                     type="button"
                     aria-label="Salto rápido +10s"
-                    disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: 10 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
                   >
                     +10s
                   </button>
                   <button
                     type="button"
                     aria-label="Salto rápido +60s"
-                    disabled={!isDurationValid}
                     onClick={() => onSendCommand({ action: 'seekRelative', payload: 60 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
                   >
                     +60s
                   </button>
@@ -1109,7 +1103,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             )}
           </div>
 
-          {/* Fila de controles principales (Cap Ant, -10s, play/pause, +10s, Cap Sig) */}
+          {/* Fila de controles principales (Cap Ant, play/pause, Cap Sig) */}
           <div className="flex items-center justify-center gap-2 sm:gap-3 pt-1">
             {isEpisodic && (
               <button
@@ -1130,15 +1124,6 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
             <button
               type="button"
-              aria-label="Retroceder 10 segundos"
-              onClick={() => onSendCommand({ action: 'seekRelative', payload: -10 })}
-              className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 flex items-center justify-center transition active:scale-95 shadow cursor-pointer"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </button>
-
-            <button
-              type="button"
               aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
               onClick={() => onSendCommand({ action: isPlaying ? 'pause' : 'play' })}
               className="min-w-[58px] min-h-[58px] rounded-2xl bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition active:scale-95 shadow-lg shadow-red-950/50 cursor-pointer"
@@ -1148,15 +1133,6 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               ) : (
                 <Play className="w-6 h-6 fill-current ml-0.5" />
               )}
-            </button>
-
-            <button
-              type="button"
-              aria-label="Adelantar 10 segundos"
-              onClick={() => onSendCommand({ action: 'seekRelative', payload: 10 })}
-              className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 flex items-center justify-center transition active:scale-95 shadow cursor-pointer"
-            >
-              <RotateCw className="w-5 h-5" />
             </button>
 
             {isEpisodic && (

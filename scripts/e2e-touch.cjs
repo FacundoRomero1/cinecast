@@ -1455,13 +1455,13 @@ app.whenReady().then(async () => {
 
     // Celular entra a #/control
     await winB.webContents.executeJavaScript(`window.location.hash = '#/control';`);
-    await waitForCondition(winB, `Boolean(document.querySelector('button[aria-label="Retroceder 10 segundos"]'))`, 10000);
+    await waitForCondition(winB, `Boolean(document.querySelector('button[aria-label="Salto rápido -10s"]') || document.querySelector('button[aria-label="Retroceder 10 segundos"]'))`, 10000);
 
     const seqBeforeSeek = (await pollServerCommands(baseUrl, roomId, 0)).length;
 
     const touchMinus10 = await checkAndTouch(
       winB,
-      `() => document.querySelector('button[aria-label="Retroceder 10 segundos"]')`,
+      `() => document.querySelector('button[aria-label="Salto rápido -10s"]') || document.querySelector('button[aria-label="Retroceder 10 segundos"]')`,
       'botón -10s en control remoto'
     );
 
