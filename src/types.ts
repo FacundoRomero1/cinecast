@@ -151,6 +151,8 @@ export interface DeviceInfo {
   type: DeviceType;
   lastSeen?: number;
   isCurrent?: boolean;
+  connected?: boolean;
+  disconnectedAt?: number;
 }
 
 export type AudioPreset =

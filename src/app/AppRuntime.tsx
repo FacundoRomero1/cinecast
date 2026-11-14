@@ -1194,31 +1194,69 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     deviceSync.sendCommand(command, selectedScreenId || undefined);
   };
 
-  // COPIA de App.tsx L1098-1110; borrar al eliminar la UI clásica
-  // Target connected screen friendly name and reconnection status
+  // Target connected screen friendly name and reconnection status (3s ámbar, 8s perdido)
   const myDeviceId = deviceSync.getDeviceId();
   const validScreens = devices.filter(
     (d) => (d.type === 'screen' || d.type === 'hybrid') && !d.isCurrent && d.id !== myDeviceId
   );
   const connectedScreen = validScreens.find((d) => d.id === selectedScreenId);
-  const isScreenReconnecting = Boolean(selectedScreenId && !connectedScreen);
+  const isScreenOnline = Boolean(connectedScreen && connectedScreen.connected !== false);
+
+  const [screenDisconnectStage, setScreenDisconnectStage] = useState<'online' | 'grace' | 'amber' | 'lost'>('online');
+  const screenDisconnectStartRef = useRef<number>(0);
 
   useEffect(() => {
-    if (connectedScreen) {
+    if (isScreenOnline && connectedScreen) {
+      screenDisconnectStartRef.current = 0;
+      setScreenDisconnectStage('online');
       setLastKnownScreenName(connectedScreen.name);
       try {
         localStorage.setItem('cinecast_selected_screen_name', connectedScreen.name);
       } catch (_) {}
+      return;
     }
-  }, [connectedScreen]);
+
+    if (!selectedScreenId) {
+      screenDisconnectStartRef.current = 0;
+      setScreenDisconnectStage('online');
+      return;
+    }
+
+    const discAt = connectedScreen?.disconnectedAt || screenDisconnectStartRef.current || Date.now();
+    if (!screenDisconnectStartRef.current) {
+      screenDisconnectStartRef.current = discAt;
+    }
+
+    const updateStage = () => {
+      const elapsed = Date.now() - screenDisconnectStartRef.current;
+      if (elapsed >= 8000) {
+        setScreenDisconnectStage('lost');
+      } else if (elapsed >= 3000) {
+        setScreenDisconnectStage('amber');
+      } else {
+        setScreenDisconnectStage('grace');
+      }
+    };
+
+    updateStage();
+    const t1 = setTimeout(updateStage, 3050);
+    const t2 = setTimeout(updateStage, 8050);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [isScreenOnline, connectedScreen, selectedScreenId]);
+
+  const isScreenReconnecting = Boolean(selectedScreenId && !isScreenOnline && screenDisconnectStage === 'amber');
 
   const connectedScreenName =
-    connectedScreen?.name ||
-    (selectedScreenId
-      ? lastKnownScreenName
-      : validScreens.length === 1
+    isScreenOnline && connectedScreen
+      ? connectedScreen.name
+      : selectedScreenId && screenDisconnectStage !== 'lost'
+      ? connectedScreen?.name || lastKnownScreenName
+      : !selectedScreenId && validScreens.length === 1 && validScreens[0].connected !== false
       ? validScreens[0].name
-      : 'Sin pantalla');
+      : 'Sin pantalla';
 
   if (typeof window !== 'undefined') {
     (window as any).__cinecastRuntime = {

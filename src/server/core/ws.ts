@@ -3,10 +3,13 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
   broadcastRoomDevices,
   commandHistory,
+  commandSeqCounter,
+  firstJoinSeqByDevice,
   getOrCreateRoom,
   globalDevices,
   globalLatestPlaybackState,
   incrementCommandSeq,
+  lastDeliveredSeqByDevice,
   recordAndBroadcastCommand,
   recordAndBroadcastState,
   roomPlaybackStates,
@@ -29,6 +32,7 @@ interface IncomingWsMessage {
   id?: string;
   cseq?: number;
   lastSeq?: number;
+  isReconnect?: boolean;
   command?: PlaybackCommandPayload;
   state?: PlaybackStatePayload;
 }
@@ -45,13 +49,12 @@ function startServerHeartbeat(): void {
       if (!client.ws) return;
       if (client.ws.readyState === WebSocket.OPEN) {
         if (client.isAlive === false && now - (client.lastPingSent || 0) >= 25000) {
-          // No hubo pong en 25 s -> terminate()
+          // No hubo pong en 25 s -> marcar desconectado y cerrar
           try {
             client.ws.terminate();
           } catch (_) { }
-          globalDevices.delete(id);
-          const r = rooms.get(client.roomId);
-          r?.delete(id);
+          client.disconnectedAt = now;
+          client.connected = false;
           broadcastRoomDevices(client.roomId);
           return;
         }
@@ -61,10 +64,16 @@ function startServerHeartbeat(): void {
           client.ws.ping();
         } catch (_) { }
       } else if (client.ws.readyState === WebSocket.CLOSED || client.ws.readyState === WebSocket.CLOSING) {
-        globalDevices.delete(id);
-        const r = rooms.get(client.roomId);
-        r?.delete(id);
-        broadcastRoomDevices(client.roomId);
+        if (!client.disconnectedAt) {
+          client.disconnectedAt = now;
+          client.connected = false;
+          broadcastRoomDevices(client.roomId);
+        } else if (now - client.disconnectedAt > 8000) {
+          globalDevices.delete(id);
+          const r = rooms.get(client.roomId);
+          r?.delete(id);
+          broadcastRoomDevices(client.roomId);
+        }
       }
     });
   }, 10000);
@@ -145,6 +154,8 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
               lastSeen: Date.now(),
               isAlive: true,
               lastPingSent: Date.now(),
+              connected: true,
+              disconnectedAt: undefined,
             };
             room.set(deviceId, clientInfo);
             globalDevices.set(deviceId, clientInfo);
@@ -180,25 +191,43 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
             }
 
             if (deviceType === 'screen' || deviceType === 'hybrid') {
-              const clientLastSeq = typeof msg.lastSeq === 'number' ? msg.lastSeq : 0;
-              const now = Date.now();
-              const missed = commandHistory.filter(
-                (q) => q.roomId === roomId && q.seq > clientLastSeq && now - q.timestamp < 15000
-              );
-              missed.forEach((q) => {
-                try {
-                  ws.send(
-                    JSON.stringify({
-                      type: 'command',
-                      id: q.id,
-                      seq: q.seq,
-                      cseq: q.cseq,
-                      fromDevice: q.fromDevice,
-                      command: q.command,
-                    })
-                  );
-                } catch (_) {}
-              });
+              const hadPriorRecord = lastDeliveredSeqByDevice.has(deviceId);
+              const isReconnectJoin = Boolean(msg.isReconnect) && hadPriorRecord;
+
+              if (!isReconnectJoin) {
+                // Una pantalla que se une de cero (recién abierta o recargada) NO recibe replay ni reintentos previos
+                firstJoinSeqByDevice.set(deviceId, commandSeqCounter);
+                lastDeliveredSeqByDevice.set(deviceId, commandSeqCounter);
+              } else {
+                const lastDelivered = lastDeliveredSeqByDevice.get(deviceId) ?? 0;
+                const clientLastSeq = typeof msg.lastSeq === 'number' ? msg.lastSeq : 0;
+                const baselineSeq = Math.max(lastDelivered, clientLastSeq);
+                const now = Date.now();
+                const missed = commandHistory.filter(
+                  (q) =>
+                    q.roomId === roomId &&
+                    q.seq > baselineSeq &&
+                    now - q.timestamp < 8000 &&
+                    (!q.targetDeviceId || q.targetDeviceId === deviceId)
+                );
+                let maxDelivered = baselineSeq;
+                missed.forEach((q) => {
+                  try {
+                    ws.send(
+                      JSON.stringify({
+                        type: 'command',
+                        id: q.id,
+                        seq: q.seq,
+                        cseq: q.cseq,
+                        fromDevice: q.fromDevice,
+                        command: q.command,
+                      })
+                    );
+                    if (q.seq > maxDelivered) maxDelivered = q.seq;
+                  } catch (_) {}
+                });
+                lastDeliveredSeqByDevice.set(deviceId, Math.max(maxDelivered, commandSeqCounter));
+              }
             }
             break;
           }
@@ -257,10 +286,21 @@ export function attachWebSocket(server: HttpServer): WebSocketServer {
       if (clientInfo) {
         const currentInGlobal = globalDevices.get(clientInfo.deviceId);
         if (currentInGlobal === clientInfo) {
-          const room = rooms.get(clientInfo.roomId);
-          if (room) room.delete(clientInfo.deviceId);
-          globalDevices.delete(clientInfo.deviceId);
+          clientInfo.disconnectedAt = Date.now();
+          clientInfo.connected = false;
           broadcastRoomDevices(clientInfo.roomId);
+          const closedId = clientInfo.deviceId;
+          const closedRoom = clientInfo.roomId;
+          const closedRef = clientInfo;
+          const expireTimer = setTimeout(() => {
+            const cur = globalDevices.get(closedId);
+            if (cur === closedRef && cur.disconnectedAt && Date.now() - cur.disconnectedAt >= 8000) {
+              globalDevices.delete(closedId);
+              rooms.get(closedRoom)?.delete(closedId);
+              broadcastRoomDevices(closedRoom);
+            }
+          }, 8050);
+          if (typeof expireTimer.unref === 'function') expireTimer.unref();
         }
       }
     });

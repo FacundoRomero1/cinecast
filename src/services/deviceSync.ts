@@ -51,6 +51,7 @@ export class DeviceSyncService {
   private pingTimer: any = null;
   private httpPollTimer: any = null;
   private lastSeq: number = 0;
+  private hasJoinedOnce: boolean = false;
   private executedCommandIds: Set<string> = new Set();
   private clientCommandSeq: number = 0;
   private lastAppliedCseqBySender: Map<string, number> = new Map();
@@ -804,6 +805,8 @@ export class DeviceSyncService {
 
   private sendJoin() {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const isReconnect = this.hasJoinedOnce;
+      this.hasJoinedOnce = true;
       this.ws.send(
         JSON.stringify({
           type: 'join',
@@ -812,6 +815,7 @@ export class DeviceSyncService {
           deviceName: this.deviceName,
           deviceType: this.deviceType,
           lastSeq: this.lastSeq,
+          isReconnect,
         })
       );
     }

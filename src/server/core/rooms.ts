@@ -9,6 +9,8 @@ export interface ConnectedClient {
   lastSeen: number;
   isAlive?: boolean | undefined;
   lastPingSent?: number | undefined;
+  connected?: boolean | undefined;
+  disconnectedAt?: number | undefined;
 }
 
 export type PlaybackCommandPayload = Record<string, unknown>;
@@ -38,6 +40,8 @@ export interface ActiveDeviceSummary {
   type: string;
   lastSeen: number;
   roomId: string;
+  connected: boolean;
+  disconnectedAt?: number | undefined;
 }
 
 // Map of roomId -> Map<deviceId, ConnectedClient>
@@ -45,6 +49,11 @@ export const rooms = new Map<string, Map<string, ConnectedClient>>();
 
 // Also keep a global registry of all active devices on this server so phone & PC always find each other
 export const globalDevices = new Map<string, ConnectedClient>();
+
+// Seguimiento por dispositivo del último seq entregado y del seq al unirse de cero
+export const lastDeliveredSeqByDevice = new Map<string, number>();
+export const firstJoinSeqByDevice = new Map<string, number>();
+export const commandSeqById = new Map<string, number>();
 
 // Store latest playback state per room + global latest state
 export const roomPlaybackStates = new Map<string, PlaybackStatePayload>();
@@ -70,48 +79,83 @@ export function getOrCreateRoom(roomId: string): Map<string, ConnectedClient> {
 
 export function getAllActiveDevicesList(): ActiveDeviceSummary[] {
   const now = Date.now();
-  const active: ActiveDeviceSummary[] = [];
+  const byId = new Map<string, ActiveDeviceSummary>();
   globalDevices.forEach((client) => {
-    // Si el cliente está usando WebSocket, SOLO está activo si ws.readyState === WebSocket.OPEN
-    // Si no tiene WS (polling HTTP), expira si pasaron > 10s desde su último ping/lastSeen
+    let isConnected = false;
+    let discAt: number | undefined = client.disconnectedAt;
+
     if (client.ws) {
-      if (client.ws.readyState !== WebSocket.OPEN) {
+      if (client.ws.readyState === WebSocket.OPEN && !client.disconnectedAt) {
+        isConnected = true;
+      } else {
+        discAt = client.disconnectedAt || client.lastSeen || now;
+        if (now - discAt > 8000) {
+          return;
+        }
+        isConnected = false;
+      }
+    } else if (client.disconnectedAt) {
+      if (now - client.disconnectedAt > 8000) {
         return;
       }
+      isConnected = false;
     } else {
-      if (now - client.lastSeen > 10000) {
+      if (now - client.lastSeen > 8000) {
         return;
       }
+      isConnected = true;
     }
-    active.push({
+
+    byId.set(client.deviceId, {
       id: client.deviceId,
       name: client.deviceName,
       type: client.deviceType,
       lastSeen: client.lastSeen,
       roomId: client.roomId,
+      connected: isConnected,
+      disconnectedAt: isConnected ? undefined : discAt,
     });
   });
-  return active;
+  return Array.from(byId.values());
 }
 
 export function prune(): void {
   const now = Date.now();
+  const roomsToBroadcast = new Set<string>();
   globalDevices.forEach((client, id) => {
-    const wsDead = client.ws && (client.ws.readyState === WebSocket.CLOSED || client.ws.readyState === WebSocket.CLOSING);
-    const httpExpired = !client.ws && now - client.lastSeen > 10000;
-    if (wsDead || httpExpired) {
+    const wsClosed =
+      Boolean(client.disconnectedAt) ||
+      Boolean(client.ws && (client.ws.readyState === WebSocket.CLOSED || client.ws.readyState === WebSocket.CLOSING));
+    if (wsClosed) {
+      if (!client.disconnectedAt) {
+        client.disconnectedAt = client.lastSeen || now;
+        client.connected = false;
+      }
+      if (now - client.disconnectedAt > 8000) {
+        globalDevices.delete(id);
+        const r = rooms.get(client.roomId);
+        r?.delete(id);
+        roomsToBroadcast.add(client.roomId);
+      }
+      return;
+    }
+
+    const httpExpired = !client.ws && now - client.lastSeen > 8000;
+    if (httpExpired) {
       globalDevices.delete(id);
       const r = rooms.get(client.roomId);
       r?.delete(id);
+      roomsToBroadcast.add(client.roomId);
     }
   });
+  roomsToBroadcast.forEach((roomId) => broadcastRoomDevices(roomId));
 }
 
 let activePruneTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startPruneTimer(): () => void {
   if (!activePruneTimer) {
-    activePruneTimer = setInterval(prune, 30_000);
+    activePruneTimer = setInterval(prune, 1000);
     if (typeof activePruneTimer.unref === 'function') {
       activePruneTimer.unref();
     }
@@ -156,10 +200,14 @@ export function recordAndBroadcastCommand(
     seenCommandIds.add(uniqueId);
     if (seenCommandIds.size > 500) {
       const first = seenCommandIds.values().next().value;
-      if (first) seenCommandIds.delete(first);
+      if (first) {
+        seenCommandIds.delete(first);
+        commandSeqById.delete(first);
+      }
     }
 
     commandSeqCounter += 1;
+    commandSeqById.set(uniqueId, commandSeqCounter);
     const queued: QueuedCommand = {
       seq: commandSeqCounter,
       cseq: resolvedCseq,
@@ -174,10 +222,12 @@ export function recordAndBroadcastCommand(
     if (commandHistory.length > 100) commandHistory.shift();
   }
 
+  const cmdSeq = commandSeqById.get(uniqueId) ?? commandSeqCounter;
+
   const forwardPayload = JSON.stringify({
     type: 'command',
     id: uniqueId,
-    seq: commandSeqCounter,
+    seq: cmdSeq,
     cseq: resolvedCseq,
     fromDevice,
     command,
@@ -187,9 +237,21 @@ export function recordAndBroadcastCommand(
   globalDevices.forEach((client) => {
     const isScreen = client.deviceType === 'screen' || client.deviceType === 'hybrid';
     const matchesTarget = targetDeviceId ? client.deviceId === targetDeviceId : isScreen;
-    if (client.deviceId !== fromDevice && matchesTarget && client.ws && client.ws.readyState === WebSocket.OPEN) {
+    const minAllowedSeq = firstJoinSeqByDevice.get(client.deviceId) ?? 0;
+    if (
+      client.deviceId !== fromDevice &&
+      matchesTarget &&
+      cmdSeq > minAllowedSeq &&
+      client.ws &&
+      client.ws.readyState === WebSocket.OPEN &&
+      !client.disconnectedAt
+    ) {
       try {
         client.ws.send(forwardPayload);
+        lastDeliveredSeqByDevice.set(
+          client.deviceId,
+          Math.max(lastDeliveredSeqByDevice.get(client.deviceId) || 0, cmdSeq)
+        );
         screensReached++;
       } catch (_) {}
     }

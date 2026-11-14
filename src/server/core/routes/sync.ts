@@ -6,6 +6,7 @@ import { WebSocket } from 'ws';
 import {
   rooms,
   globalDevices,
+  lastDeliveredSeqByDevice,
   roomPlaybackStates,
   globalLatestPlaybackState,
   globalStateSeq,
@@ -182,6 +183,8 @@ export function createSyncRouter(): Router {
       const existing = globalDevices.get(deviceId);
       if (existing) {
         existing.lastSeen = Date.now();
+        existing.connected = true;
+        existing.disconnectedAt = undefined;
         if (deviceName) existing.deviceName = deviceName;
         if (rawType) existing.deviceType = deviceType;
       } else {
@@ -192,15 +195,26 @@ export function createSyncRouter(): Router {
           deviceName: deviceName || 'Dispositivo',
           deviceType,
           lastSeen: Date.now(),
+          connected: true,
         };
         room.set(deviceId, client);
         globalDevices.set(deviceId, client);
+        lastDeliveredSeqByDevice.set(deviceId, commandSeqCounter);
       }
     }
 
+    const now = Date.now();
+    const baseline = deviceId && lastDeliveredSeqByDevice.has(deviceId)
+      ? Math.max(sinceSeq, lastDeliveredSeqByDevice.get(deviceId) || 0)
+      : commandSeqCounter;
+
     const newCommands = commandHistory.filter(
-      (c) => c.seq > sinceSeq && c.fromDevice !== deviceId
+      (c) => c.seq > baseline && c.fromDevice !== deviceId && now - c.timestamp < 8000
     );
+    if (deviceId && newCommands.length > 0) {
+      const maxSeq = Math.max(...newCommands.map((c) => c.seq));
+      lastDeliveredSeqByDevice.set(deviceId, Math.max(baseline, maxSeq));
+    }
 
     const remoteJoined =
       latestRemoteJoinEvent &&
