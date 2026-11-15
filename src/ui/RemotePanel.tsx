@@ -1046,14 +1046,24 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
           {/* Control táctil deslizable (role="slider") con pista de 8px y área táctil de 44px */}
           <div className="space-y-1.5 pt-1">
+            {playbackState?.resume?.status === 'cargando' && (
+              <div className="p-2 rounded-xl bg-blue-950/80 border border-blue-600/60 text-center text-xs text-blue-200 font-semibold animate-pulse">
+                Cargando el reproductor…
+              </div>
+            )}
             {playbackState?.resume && (playbackState.resume.status === 'esperando' || playbackState.resume.status === 'reanudando') && (
               <div className="p-2 rounded-xl bg-blue-950/80 border border-blue-600/60 text-center text-xs text-blue-200 font-semibold animate-pulse">
                 Reanudando en {formatTime(playbackState.resume.objetivo)}…
               </div>
             )}
-            {(playbackState?.resume?.status === 'fallo' || playbackState?.seekUnsupported) && (
+            {(playbackState?.serverTimeout || (playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason?.includes('tardó demasiado'))) && (
+              <div className="p-2 rounded-xl bg-red-950/80 border border-red-600/60 text-center text-xs text-red-200 font-semibold">
+                El servidor tardó demasiado. Probá otro servidor
+              </div>
+            )}
+            {!playbackState?.serverTimeout && !(playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason?.includes('tardó demasiado')) && (playbackState?.seekUnsupported || (playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason === 'seek-unsupported')) && (
               <div className="p-2 rounded-xl bg-amber-950/80 border border-amber-600/60 text-center text-xs text-amber-200 font-semibold">
-                Este reproductor no permite saltar · No se pudo reanudar, usá la barra
+                Este servidor no permite saltar en el video · No se pudo reanudar, usá la barra
               </div>
             )}
             {!playbackState?.seekUnsupported && (

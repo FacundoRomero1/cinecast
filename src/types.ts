@@ -212,11 +212,13 @@ export interface PlaybackState {
   servers?: { name: string; language?: string; quality?: string; url?: string }[];
   serversExhausted?: boolean;
   seekUnsupported?: boolean;
+  serverTimeout?: boolean;
   estimated?: boolean;
   resume?: {
-    status: 'idle' | 'esperando' | 'reanudando' | 'ok' | 'fallo';
+    status: 'idle' | 'cargando' | 'esperando' | 'reanudando' | 'ok' | 'fallo';
     objetivo: number;
     targetSeconds?: number;
+    errorReason?: string;
   } | null;
   spotifyState?: {
     trackName?: string | null;

@@ -197,8 +197,7 @@ export function createApp(options: CreateAppOptions): Express {
       }
       const candidates = [
         path.resolve(process.cwd(), 'public/__test/provider.html'),
-        path.resolve(__dirname, '../../../public/__test/provider.html'),
-        path.resolve(__dirname, '../../public/__test/provider.html'),
+        path.resolve(baseDir, 'public/__test/provider.html'),
       ];
       for (const p of candidates) {
         if (fs.existsSync(p)) {

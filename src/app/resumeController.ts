@@ -13,11 +13,12 @@
  * 8. Instrumentación bajo CINECAST_DEBUG_PERF=1 o 'Grabar carga'.
  */
 
-export type ResumeStatus = 'idle' | 'esperando' | 'reanudando' | 'ok' | 'fallo';
+export type ResumeStatus = 'idle' | 'cargando' | 'esperando' | 'reanudando' | 'ok' | 'fallo';
 
 export interface ResumeState {
   status: ResumeStatus;
   objetivo: number;
+  errorReason?: string;
 }
 
 export interface ResumePerfLog {
@@ -134,10 +135,11 @@ export class ResumeController {
 
     const targetSeconds = initialTime;
     this.setActiveFlag(true);
-    this.updateState('esperando', targetSeconds);
+    // Estado inicial: cargando (sin cuenta regresiva en celular)
+    this.updateState('cargando', targetSeconds);
 
     const startTime = Date.now();
-    const maxTimeoutMs = 25000;
+    const maxTimeoutMs = 90000; // Hasta 90 s en total sin rendirse a los 25 s
 
     const checkReadyInterval = setInterval(async () => {
       if (this.isDestroyed) {
@@ -151,17 +153,20 @@ export class ResumeController {
       if (elapsed > maxTimeoutMs) {
         this.isPollingInFlight = false;
         clearInterval(checkReadyInterval);
-        console.warn(`[ResumeController] Timeout de 25s esperando metadatos listos para ${targetSeconds}s`);
-        this.updateState('fallo', targetSeconds);
+        console.warn(`[ResumeController] Timeout de 90s esperando datos listos para ${targetSeconds}s`);
+        this.updateState('fallo', targetSeconds, 'El servidor tardó demasiado. Probá otro servidor');
         return;
       }
 
       const realState = await getRealMediaStateSafe();
       const hasVideo = Boolean(realState && realState.found);
-      const isReady = hasVideo && (
-        (typeof realState.readyState === 'number' && realState.readyState >= 2) ||
-        (typeof realState.duration === 'number' && realState.duration > 60)
-      );
+      // El video REALMENTE tiene datos cuando readyState >= 3 y duración > 60 s
+      const isReady =
+        hasVideo &&
+        typeof realState.readyState === 'number' &&
+        realState.readyState >= 3 &&
+        typeof realState.duration === 'number' &&
+        realState.duration > 60;
 
       if (isReady) {
         clearInterval(checkReadyInterval);
@@ -324,14 +329,14 @@ export class ResumeController {
           retryReason: `fallo definitivo tras 2 intentos (realAt4s=${realAt4s}s)`,
         });
         console.warn(`[ResumeController] Falló verificación tras ${maxAttempts} intentos. Reproductor incompatible con seek.`);
-        this.updateState('fallo', targetSeconds);
+        this.updateState('fallo', targetSeconds, 'seek-unsupported');
         return;
       }
     }
   }
 
-  private updateState(status: ResumeStatus, objetivo: number) {
-    this.state = { status, objetivo };
+  private updateState(status: ResumeStatus, objetivo: number, errorReason?: string) {
+    this.state = { status, objetivo, ...(errorReason ? { errorReason } : {}) };
     if (status === 'ok' || status === 'fallo' || status === 'idle') {
       if (this.activeTimer) {
         clearInterval(this.activeTimer);

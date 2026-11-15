@@ -458,11 +458,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   });
   const [seekUnsupported, setSeekUnsupported] = useState<boolean>(false);
+  const seekUnsupportedRef = useRef<boolean>(false);
   const [resumeState, setResumeState] = useState<ResumeState | null>(null);
-  const resumeControllerRef = useRef<ResumeController | null>(null);
+  const resumeStateRef = useRef<ResumeState | null>(null);
   const [isEstimatedTime, setIsEstimatedTime] = useState<boolean>(false);
   const isEstimatedTimeRef = useRef<boolean>(false);
+  const resumeControllerRef = useRef<ResumeController | null>(null);
+  const normalAdvanceStreakRef = useRef<number>(0);
+  const lastRealTimeRef = useRef<number>(0);
   useEffect(() => { isEstimatedTimeRef.current = isEstimatedTime; }, [isEstimatedTime]);
+  useEffect(() => { seekUnsupportedRef.current = seekUnsupported; }, [seekUnsupported]);
+  useEffect(() => { resumeStateRef.current = resumeState; }, [resumeState]);
 
   const [signalToast, setSignalToast] = useState<string | null>(null);
   const signalToastTimerRef = useRef<any>(null);
@@ -599,7 +605,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const url = activeServer.url;
     if (url.includes('autoplay=')) return url;
     return `${url}${url.includes('?') ? '&' : '?'}autoplay=1`;
-  }, [activeServer, tmdbIdToUse, currentTitle]);
+  }, [activeServer, tmdbIdToUse]);
 
   // Tarea A: Log diagnóstico obligatorio antes de inyectar iframe src
   useEffect(() => {
@@ -780,6 +786,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const isLat = srv.language?.toLowerCase().includes('latino') || srv.name.toLowerCase().includes('latino');
     audioPrefs.setForMedia(mediaKey, srv.name, isLat ? 'latino' : 'sub', selectedSeason, selectedEpisode);
     setIframeReloadKey((k) => k + 1);
+    setSeekUnsupported(false);
+    setResumeState(null);
+    normalAdvanceStreakRef.current = 0;
     setCfWarning(false);
     setUnavailableWarning(false);
     if (skipTimeoutRef.current) {
@@ -1227,9 +1236,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       currentTime: time,
       duration: dur,
       isPlaying: playing,
-      seekUnsupported: extraOverrides?.seekUnsupported ?? (isIframeMode ? seekUnsupported : false),
-      estimated: extraOverrides?.estimated ?? (isIframeMode ? (seekUnsupported || isEstimatedTimeRef.current) : false),
-      resume: extraOverrides?.resume ?? resumeState,
+      seekUnsupported: extraOverrides?.seekUnsupported ?? (isIframeMode ? seekUnsupportedRef.current : false),
+      serverTimeout: extraOverrides?.serverTimeout ?? (resumeStateRef.current?.errorReason?.includes('tardó demasiado') || false),
+      estimated: extraOverrides?.estimated ?? (isIframeMode ? (seekUnsupportedRef.current || isEstimatedTimeRef.current) : false),
+      resume: extraOverrides?.resume !== undefined ? extraOverrides.resume : resumeStateRef.current,
       marathon: marathonMode,
       hasIntroTimings: introStart !== undefined && introEnd !== undefined,
       isIntroActive: introStart !== undefined && introEnd !== undefined && time >= introStart && time <= introEnd,
@@ -1365,8 +1375,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const next = Math.max(0, Math.min(maxDur, simulatedTimeRef.current + seconds));
       simulatedTimeRef.current = next;
       setCurrentTime(next);
-      setSeekUnsupported(true);
-      broadcastImmediate(undefined, { seekUnsupported: true });
+      const realState = await window.electronAPI?.getRealMediaState?.();
+      const hasReadyVideo = Boolean(realState && realState.found && (realState as any).readyState >= 2);
+      if (hasReadyVideo) {
+        setSeekUnsupported(true);
+        broadcastImmediate(undefined, { seekUnsupported: true });
+      }
       return;
     }
     if (!videoRef.current) return;
@@ -1393,8 +1407,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const next = Math.max(0, time);
       simulatedTimeRef.current = next;
       setCurrentTime(next);
-      setSeekUnsupported(true);
-      broadcastImmediate(undefined, { seekUnsupported: true });
+      const realState = await window.electronAPI?.getRealMediaState?.();
+      const hasReadyVideo = Boolean(realState && realState.found && (realState as any).readyState >= 2);
+      if (hasReadyVideo) {
+        setSeekUnsupported(true);
+        broadcastImmediate(undefined, { seekUnsupported: true });
+      }
       return;
     }
     if (!videoRef.current) return;
@@ -1583,6 +1601,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           setDuration(realState.duration);
         }
         setIsPlaying(realState.isPlaying);
+
+        // Si el video está en play y avanza, descartar el cartel pegajoso de "Reanudando en..."
+        if (realState.isPlaying && realState.currentTime > (lastRealTimeRef.current || 0) + 0.05) {
+          normalAdvanceStreakRef.current = (normalAdvanceStreakRef.current || 0) + 1;
+          if (normalAdvanceStreakRef.current >= 2) {
+            if (resumeState && (resumeState.status === 'ok' || resumeState.status === 'reanudando' || resumeState.status === 'esperando' || resumeState.status === 'cargando')) {
+              setResumeState(null);
+              broadcastImmediate(realState.isPlaying, { resume: null });
+            }
+          }
+        } else {
+          normalAdvanceStreakRef.current = 0;
+        }
+        lastRealTimeRef.current = realState.currentTime;
+
         broadcastImmediate(realState.isPlaying);
 
         if (!seekUnsupported && realState.currentTime > 15 && Math.round(realState.currentTime) % 4 === 0) {
@@ -1612,15 +1645,49 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const controller = new ResumeController();
     resumeControllerRef.current = controller;
     const unsub = controller.start(initialTime, (res) => {
+      (window as any).__cinecastResumeState = res;
+      resumeStateRef.current = res;
       setResumeState(res);
       if (res.status === 'fallo') {
-        setSeekUnsupported(true);
-        setIsEstimatedTime(true);
-        broadcastImmediate(undefined, { resume: res, seekUnsupported: true, estimated: true });
+        const isTimeout = res.errorReason?.includes('tardó demasiado');
+        if (isTimeout) {
+          seekUnsupportedRef.current = false;
+          setSeekUnsupported(false);
+          broadcastImmediate(undefined, {
+            resume: res,
+            seekUnsupported: false,
+            serverTimeout: true,
+            estimated: false,
+          });
+        } else {
+          seekUnsupportedRef.current = true;
+          setSeekUnsupported(true);
+          setIsEstimatedTime(true);
+          broadcastImmediate(undefined, {
+            resume: res,
+            seekUnsupported: true,
+            serverTimeout: false,
+            estimated: true,
+          });
+        }
       } else if (res.status === 'ok') {
+        seekUnsupportedRef.current = false;
         setSeekUnsupported(false);
         setIsEstimatedTime(false);
-        broadcastImmediate(undefined, { resume: res, seekUnsupported: false, estimated: false });
+        broadcastImmediate(undefined, {
+          resume: res,
+          seekUnsupported: false,
+          serverTimeout: false,
+          estimated: false,
+        });
+      } else if (res.status === 'cargando' || res.status === 'reanudando') {
+        seekUnsupportedRef.current = false;
+        setSeekUnsupported(false);
+        broadcastImmediate(undefined, {
+          resume: res,
+          seekUnsupported: false,
+          serverTimeout: false,
+        });
       } else {
         broadcastImmediate(undefined, { resume: res });
       }
@@ -1630,6 +1697,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       resumeControllerRef.current = null;
     };
   }, [isIframeMode, initialTime, activeServerIndex, activeEmbedUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setSeekUnsupported(false);
+    setResumeState(null);
+    normalAdvanceStreakRef.current = 0;
+  }, [selectedSeason, selectedEpisode, media?.id]);
 
   useEffect(() => () => {
     const finalTime = isIframeMode
