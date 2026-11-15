@@ -1,5 +1,6 @@
 import compression from 'compression';
 import express, { type Express, type Request } from 'express';
+import fs from 'fs';
 import path from 'path';
 import { createAccountsRouter, type AccountsOptions } from './routes/accounts.js';
 import { createArchiveRouter } from './routes/archive.js';
@@ -186,6 +187,31 @@ export function createApp(options: CreateAppOptions): Express {
   app.use('/', createDownloadsRouter(downloadsOpts));
 
   if (process.env.CINECAST_TEST === '1') {
+    const handleProvider = async (req: express.Request, res: express.Response) => {
+      const ttfb = Number(req.query.ttfb) || 0;
+      if (ttfb > 0) {
+        await new Promise((r) => setTimeout(r, ttfb));
+      }
+      if (req.query.redir === 'nx') {
+        return res.redirect('http://no-resuelve.invalid');
+      }
+      const candidates = [
+        path.resolve(process.cwd(), 'public/__test/provider.html'),
+        path.resolve(__dirname, '../../../public/__test/provider.html'),
+        path.resolve(__dirname, '../../public/__test/provider.html'),
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          return res.sendFile(p);
+        }
+      }
+      res.status(404).send('provider.html not found');
+    };
+
+    app.get('/__test/provider/tv/:id/:season/:episode', handleProvider);
+    app.get('/__test/provider.html', handleProvider);
+
     app.get('/__test/embed.html', (req, res) => {
       const durParam = Number(req.query.dur) || 400;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Cinecast Provider Test</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      user-select: none;
+    }
+    #meta-display {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #38bdf8;
+      margin-bottom: 0.5rem;
+    }
+    #time-display {
+      font-size: 1.8rem;
+      margin-bottom: 0.5rem;
+    }
+    #status-display {
+      font-size: 1rem;
+      color: #aaa;
+    }
+    canvas {
+      width: 480px;
+      height: 270px;
+      background: #111;
+      border: 1px solid #444;
+      border-radius: 8px;
+      margin-top: 10px;
+    }
+    #video-container video {
+      position: absolute;
+      top: -9999px;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="meta-display">Cargando proveedor...</div>
+  <div id="time-display">0:00 / 0:00</div>
+  <div id="status-display">Iniciando...</div>
+  <canvas id="canvas" width="480" height="270"></canvas>
+  <div id="video-container"></div>
+
+  <script>
+    (function() {
+      const pageLoadTime = Date.now();
+      const params = new URLSearchParams(window.location.search);
+
+      // Extraer parámetros de ruta si vienen en pathname (/__test/provider/tv/:id/:season/:episode)
+      const pathParts = window.location.pathname.split('/').filter(Boolean);
+      let routeId = params.get('id') || '';
+      let routeSeason = params.get('season') || '1';
+      let routeEpisode = params.get('episode') || '1';
+      const tvIdx = pathParts.indexOf('tv');
+      if (tvIdx !== -1 && pathParts[tvIdx + 1]) {
+        routeId = pathParts[tvIdx + 1];
+        routeSeason = pathParts[tvIdx + 2] || '1';
+        routeEpisode = pathParts[tvIdx + 3] || '1';
+      }
+
+      const label = params.get('label') || 'Servidor Simulado';
+      const totalDur = parseFloat(params.get('dur') || '1420');
+      const vtagMs = parseFloat(params.get('vtag') || '0');
+      const firstframeMs = parseFloat(params.get('firstframe') || '0');
+      const noseek = params.get('noseek') === '1';
+      const ignoreep = params.get('ignoreep') === '1';
+      const subfail = params.get('subfail') === '1';
+
+      // 1. window.__req guarda { id, season, episode, label }
+      window.__req = {
+        id: routeId,
+        season: parseInt(routeSeason, 10) || 1,
+        episode: parseInt(routeEpisode, 10) || 1,
+        label: label
+      };
+
+      // Si ignoreep=1, en el video y título muestra episodio 1; si no, el pedido por la ruta
+      const displayedEp = ignoreep ? 1 : window.__req.episode;
+      document.title = label + ' - E' + displayedEp;
+
+      // 2. subfail=1: dos pedidos a hosts que fallan con ERR_FAILED
+      if (subfail) {
+        try { fetch('http://127.0.0.1:59991/fail-sub-1').catch(() => {}); } catch (_) {}
+        try { fetch('http://127.0.0.1:59992/fail-sub-2').catch(() => {}); } catch (_) {}
+      }
+
+      const metaEl = document.getElementById('meta-display');
+      const timeEl = document.getElementById('time-display');
+      const statusEl = document.getElementById('status-display');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const container = document.getElementById('video-container');
+
+      metaEl.textContent = label + ' (T' + window.__req.season + ':E' + displayedEp + ')';
+
+      let video = null;
+      let realTime = 0;
+      let isPaused = false;
+      let hasFirstFrame = false;
+      window.__seekCount = 0;
+
+      function format(s) {
+        s = Math.max(0, Math.floor(s));
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return m + ':' + (sec < 10 ? '0' : '') + sec;
+      }
+
+      function updateUI() {
+        const ready = hasFirstFrame;
+        const curDur = ready ? totalDur : 0;
+        timeEl.textContent = format(realTime) + ' / ' + (ready ? format(curDur) : '--:--');
+
+        let st = isPaused ? 'Pausado' : 'Reproduciendo';
+        if (!video) {
+          st = 'Esperando etiqueta <video> (vtag=' + vtagMs + 'ms)...';
+        } else if (!ready) {
+          const elapsed = Date.now() - pageLoadTime;
+          st = 'Cargando datos (primer cuadro a ' + (firstframeMs / 1000).toFixed(1) + 's, transcurrido ' + (elapsed / 1000).toFixed(1) + 's)...';
+        }
+        statusEl.textContent = st;
+
+        if (!ready) {
+          ctx.fillStyle = '#09090b';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#71717a';
+          ctx.font = '16px monospace';
+          ctx.fillText(label, 20, 40);
+          ctx.fillText(video ? 'Sin datos de video (readyState=0)...' : 'Sin etiqueta <video>...', 20, 70);
+          ctx.fillText('Transcurrido: ' + ((Date.now() - pageLoadTime) / 1000).toFixed(1) + 's', 20, 100);
+        } else {
+          ctx.fillStyle = '#18181b';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#10b981';
+          ctx.font = '18px monospace';
+          ctx.fillText(label + ' - T' + window.__req.season + ':E' + displayedEp, 20, 35);
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = '20px monospace';
+          ctx.fillText('Tiempo Real: ' + realTime.toFixed(1) + 's', 20, 70);
+          ctx.fillText('Duración: ' + totalDur + 's', 20, 105);
+          ctx.fillText('ReadyState: ' + (video ? video.readyState : 0), 20, 140);
+
+          ctx.fillStyle = '#e11d48';
+          const p = totalDur > 0 ? (realTime / totalDur) : 0;
+          ctx.fillRect(0, canvas.height - 10, canvas.width * p, 10);
+        }
+      }
+
+      function mountVideoElement() {
+        if (video) return;
+        video = document.createElement('video');
+        video.id = 'provider-video';
+        video.setAttribute('playsinline', '');
+        container.appendChild(video);
+
+        Object.defineProperty(video, 'currentTime', {
+          get: function() {
+            return realTime;
+          },
+          set: function(val) {
+            window.__seekCount = (window.__seekCount || 0) + 1;
+            if (noseek) {
+              console.log('[' + label + '] Salto ignorado (noseek=1): intento a ' + val);
+              return;
+            }
+            if (!hasFirstFrame) {
+              console.log('[' + label + '] Salto sin datos ignorado: intento a ' + val);
+              return;
+            }
+            const num = Number(val) || 0;
+            realTime = Math.max(0, Math.min(totalDur, num));
+            console.log('[' + label + '] Salto aceptado a ' + realTime);
+            updateUI();
+            video.dispatchEvent(new Event('seeked'));
+          },
+          configurable: true,
+        });
+
+        Object.defineProperty(video, 'duration', {
+          get: function() {
+            return hasFirstFrame ? totalDur : NaN;
+          },
+          configurable: true,
+        });
+
+        Object.defineProperty(video, 'readyState', {
+          get: function() {
+            return hasFirstFrame ? 4 : 0;
+          },
+          configurable: true,
+        });
+
+        Object.defineProperty(video, 'buffered', {
+          get: function() {
+            const end = hasFirstFrame ? Math.min(totalDur, realTime + 30) : 0;
+            return {
+              length: hasFirstFrame ? 1 : 0,
+              start: () => 0,
+              end: () => end,
+            };
+          },
+          configurable: true,
+        });
+
+        Object.defineProperty(video, 'paused', {
+          get: function() {
+            return isPaused;
+          },
+          configurable: true,
+        });
+
+        video.play = function() {
+          isPaused = false;
+          updateUI();
+          return Promise.resolve();
+        };
+
+        video.pause = function() {
+          isPaused = true;
+          updateUI();
+        };
+
+        window.__testVideo = video;
+        window.__v = video;
+        updateUI();
+      }
+
+      // Montar <video> según parámetro vtag
+      if (vtagMs > 0) {
+        setTimeout(mountVideoElement, vtagMs);
+      } else {
+        mountVideoElement();
+      }
+
+      // Activar primer cuadro de datos según firstframeMs
+      const scheduleFirstFrame = () => {
+        const remaining = Math.max(0, firstframeMs - (Date.now() - pageLoadTime));
+        setTimeout(() => {
+          if (!video) mountVideoElement();
+          hasFirstFrame = true;
+          console.log('[' + label + '] Primer cuadro disponible (firstframe=' + firstframeMs + 'ms). readyState=4, dur=' + totalDur);
+          if (video) {
+            video.dispatchEvent(new Event('loadedmetadata'));
+            video.dispatchEvent(new Event('canplay'));
+            video.dispatchEvent(new Event('playing'));
+          }
+          updateUI();
+        }, remaining);
+      };
+
+      scheduleFirstFrame();
+
+      // Ticker de avance cada 100ms
+      setInterval(function() {
+        if (hasFirstFrame && !isPaused) {
+          realTime = Math.min(totalDur, realTime + 0.1);
+        }
+        updateUI();
+        if (video) {
+          video.dispatchEvent(new Event('timeupdate'));
+        }
+      }, 100);
+
+      updateUI();
+    })();
+  </script>
+</body>
+</html>

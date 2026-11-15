@@ -97,6 +97,32 @@ function applyProviderRanking(servers: StreamServer[]): StreamServer[] {
  */
 export function generateServersForMedia(options: GenerateServersOptions): StreamServer[] {
   const { tmdbId, type = 'movie', season = 1, episode = 1, directMp4Url, customServers } = options;
+
+  // Hook para pruebas: con CINECAST_TEST=1 se puede reemplazar por window.__CINECAST_TEST_SERVERS
+  const isTest =
+    (typeof window !== 'undefined' && Boolean((window as any).__CINECAST_TEST)) ||
+    (typeof process !== 'undefined' && process.env?.CINECAST_TEST === '1');
+  if (
+    isTest &&
+    typeof window !== 'undefined' &&
+    Array.isArray((window as any).__CINECAST_TEST_SERVERS)
+  ) {
+    const templates = (window as any).__CINECAST_TEST_SERVERS as Array<{
+      name: string;
+      urlTemplate: string;
+      language?: string;
+    }>;
+    return templates.map((t) => ({
+      name: t.name,
+      url: t.urlTemplate
+        .replace('{id}', String(tmdbId || ''))
+        .replace('{season}', String(season || 1))
+        .replace('{episode}', String(episode || 1)),
+      type: 'iframe',
+      language: t.language || 'Prueba',
+    }));
+  }
+
   const servers: StreamServer[] = [];
 
   // 1. Servidores personalizados (máxima prioridad)

@@ -9,6 +9,7 @@ const domains = [
   'multiembed.mov',
   'tukiplay.com',
   'player.videasy.net',
+  'player.videasy.to',
   'vidlink.pro',
   'image.tmdb.org',
   'api.themoviedb.org',
