@@ -229,10 +229,54 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // COPIA de App.tsx L174-202; borrar al eliminar la UI clásica
   // Current Playing Media on this Device (or controlled on Screen)
-  const [activeMedia, setActiveMedia] = useState<MediaItem | null>(null);
-  const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
-  const [isPlayingLocally, setIsPlayingLocally] = useState<boolean>(false);
-  const [playerInitialTime, setPlayerInitialTime] = useState<number>(0);
+  const [activeMedia, setActiveMedia] = useState<MediaItem | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const wasPlaying = sessionStorage.getItem('cinecast_screen_active_playing') === '1';
+        if (wasPlaying) {
+          const cached = deviceSync.getCachedPlaybackState();
+          if (cached?.mediaItem) return cached.mediaItem;
+        }
+      } catch (_) {}
+    }
+    return null;
+  });
+  const [activeEpisode, setActiveEpisode] = useState<Episode | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const wasPlaying = sessionStorage.getItem('cinecast_screen_active_playing') === '1';
+        if (wasPlaying) {
+          const cached = deviceSync.getCachedPlaybackState();
+          if (cached?.episodeItem) return cached.episodeItem;
+        }
+      } catch (_) {}
+    }
+    return null;
+  });
+  const [isPlayingLocally, setIsPlayingLocally] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const role = new URLSearchParams(window.location.search).get('role') || localStorage.getItem('cinecast_device_role');
+        const wasPlaying = sessionStorage.getItem('cinecast_screen_active_playing') === '1';
+        if (role !== 'remote' && wasPlaying) {
+          return true;
+        }
+      } catch (_) {}
+    }
+    return false;
+  });
+  const [playerInitialTime, setPlayerInitialTime] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const wasPlaying = sessionStorage.getItem('cinecast_screen_active_playing') === '1';
+        if (wasPlaying) {
+          const cached = deviceSync.getCachedPlaybackState();
+          if (cached?.currentTime && cached.currentTime > 0) return cached.currentTime;
+        }
+      } catch (_) {}
+    }
+    return 0;
+  });
   const [continueWatchingList, setContinueWatchingList] = useState<WatchProgressItem[]>(() => {
     return watchHistoryService.getContinueWatchingList();
   });
@@ -240,6 +284,17 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const refreshContinueWatching = useCallback(() => {
     setContinueWatchingList(watchHistoryService.getContinueWatchingList());
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (isPlayingLocally && deviceRole === 'screen') {
+        sessionStorage.setItem('cinecast_screen_active_playing', '1');
+      } else if (deviceRole === 'screen') {
+        sessionStorage.removeItem('cinecast_screen_active_playing');
+      }
+    } catch (_) {}
+  }, [isPlayingLocally, deviceRole]);
 
   // TAREA 5: Sincronización central de "Continuar Viendo" entre PC y Celular
   useEffect(() => {

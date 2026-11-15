@@ -146,6 +146,10 @@ export class DeviceSyncService {
   private stateWatchdogTimer: any = null;
   private stateSeq: number = 0;
   private lastSeenStateSeq: number = 0;
+  private screenSessionId: string = typeof window !== 'undefined'
+    ? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    : 'screen_init';
+  private lastSeenScreenSessionId: string = '';
   private requestFullStateListeners: Set<() => void> = new Set();
 
   public getLastStateReceivedTime(): number {
@@ -1389,6 +1393,14 @@ export class DeviceSyncService {
         }
       }
     } else if (msg.type === 'sync_state' && msg.state) {
+      const incomingSessionId = (msg.state as any)?.screenSessionId;
+      if (incomingSessionId && incomingSessionId !== this.lastSeenScreenSessionId) {
+        this.lastSeenScreenSessionId = incomingSessionId;
+        this.lastSeenStateSeq = 0;
+      } else if (typeof msg.state.stateSeq === 'number' && msg.state.stateSeq <= 3 && this.lastSeenStateSeq > 5) {
+        this.lastSeenStateSeq = 0;
+      }
+
       if (typeof msg.state.stateSeq === 'number') {
         if (msg.state.stateSeq < this.lastSeenStateSeq) {
           console.log(`[deviceSync] Descartando stateSeq obsoleto: ${msg.state.stateSeq} < ${this.lastSeenStateSeq}`);
@@ -1558,6 +1570,7 @@ export class DeviceSyncService {
 
   private sendBroadcastStatePayload(state: PlaybackState) {
     this.statesBroadcastCount++;
+    (state as any).screenSessionId = this.screenSessionId;
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('cinecast_last_playback_state_' + this.roomId, JSON.stringify(state));

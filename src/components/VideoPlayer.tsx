@@ -771,6 +771,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       isRotatingRef.current = false;
     }
+    activeServerIndexRef.current = index;
     setSelectedServerName(srv.name);
     setDetectedTracks(null);
     setTvSignalDown(false);
@@ -1247,8 +1248,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       servers: availableServersRef.current.map((s) => ({ name: s.name, language: s.language })),
       activeServerIndex: activeServerIndexRef.current,
       serversExhausted: fallbackActive,
-      activeServerName: activeServer?.name || '',
-      activeServerType: activeServer?.type || 'iframe',
+      activeServerName: availableServersRef.current[activeServerIndexRef.current]?.name || activeServer?.name || '',
+      activeServerType: availableServersRef.current[activeServerIndexRef.current]?.type || activeServer?.type || 'iframe',
       subtitlesEnabled: subtitlesEnabledRef.current,
       mediaTitle: currentTitle,
       mediaPoster: media.posterUrl || media.backdropUrl || '',
@@ -1575,9 +1576,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       case 'toggleFullscreen': toggleFullscreen(); break;
       case 'selectServer': {
-        const idx = typeof cmd.payload === 'number' ? cmd.payload : Number(cmd.payload?.index);
-        if (Number.isFinite(idx) && availableServersRef.current[idx]) {
-          handleSelectServer(idx);
+        const name = typeof cmd.payload === 'object' && cmd.payload ? (cmd.payload.name || '') : '';
+        const url = typeof cmd.payload === 'object' && cmd.payload ? (cmd.payload.url || '') : '';
+        let targetIdx = -1;
+        if (name) {
+          targetIdx = availableServersRef.current.findIndex(
+            (s) => s.name.toLowerCase() === String(name).toLowerCase()
+          );
+        }
+        if (targetIdx === -1 && url) {
+          targetIdx = availableServersRef.current.findIndex((s) => s.url === url);
+        }
+        if (targetIdx === -1) {
+          const idx = typeof cmd.payload === 'number' ? cmd.payload : Number(cmd.payload?.index);
+          if (Number.isFinite(idx) && availableServersRef.current[idx]) {
+            targetIdx = idx;
+          }
+        }
+        if (targetIdx >= 0 && availableServersRef.current[targetIdx]) {
+          handleSelectServer(targetIdx);
         }
         break;
       }

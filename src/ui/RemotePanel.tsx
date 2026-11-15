@@ -1338,13 +1338,18 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   <p className="text-xs text-zinc-500 p-2 text-center">No hay servidores listados</p>
                 ) : (
                   effectiveServersList.map((srv, idx) => {
-                    const isActive = idx === activeServerIdx;
+                    const isActive = playbackState?.activeServerName
+                      ? srv.name.toLowerCase() === playbackState.activeServerName.toLowerCase()
+                      : idx === activeServerIdx;
                     return (
                       <button
                         key={`${srv.name}-${idx}`}
                         type="button"
                         onClick={() =>
-                          onSendCommand({ action: 'selectServer', payload: { index: idx } })
+                          onSendCommand({
+                            action: 'selectServer',
+                            payload: { index: idx, name: srv.name, url: (srv as any).url },
+                          })
                         }
                         className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-bold transition flex items-center justify-between ${isActive
                           ? 'bg-red-600 text-white shadow'
