@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import Hls from 'hls.js';
 import { MediaItem, Episode, AudioSettings, PlaybackSettings, RemoteCommand, StreamServer } from '../types';
-import { generateServersForMedia } from '../services/embedService';
+import { generateServersForMedia, extractCleanRouteAndEp } from '../services/embedService';
 import { globalAudioEngine } from '../services/audioEngine';
 import { watchHistoryService } from '../services/watchHistoryService';
 import { audioPrefs } from '../services/audioPrefs';
@@ -268,15 +268,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const recapEnd = episode ? episode.recapEnd : media.recapEnd;
 
   const availableServers: StreamServer[] = useMemo(() => {
-    // 1. Servidores explícitos (IPTV, en vivo o provistos por el llamador)
+    // 1. Para series o anime con TMDB: regenerar siempre con la temporada y episodio seleccionados
+    // para evitar que los servidores cacheados del episodio inicial en media.servers congelen la URL en el episodio 1.
+    if (isSeriesOrAnime && tmdbIdToUse > 0) {
+      return generateServersForMedia({
+        tmdbId: tmdbIdToUse,
+        type: 'series',
+        season: selectedSeason,
+        episode: selectedEpisode,
+      });
+    }
+
+    // 2. Servidores explícitos (IPTV, en vivo o provistos por el llamador)
     if (episode?.servers?.length) return episode.servers;
     if (media.servers?.length) return media.servers;
 
-    // 2. Pelis Y series: generar los espejos por TMDB
+    // 3. Pelis por TMDB: generar los espejos
     if (tmdbIdToUse > 0) {
       return generateServersForMedia({
         tmdbId: tmdbIdToUse,
-        type: isSeriesOrAnime ? 'series' : 'movie',
+        type: 'movie',
         season: selectedSeason,
         episode: selectedEpisode,
       });
@@ -801,12 +812,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       corsRetryRef.current = 0;
       setVideoSrc(srv.url);
     }
+    const cleanRoute = extractCleanRouteAndEp(srv.url);
+    const isIgnoreEp = Boolean(srv.url && srv.url.includes('ignoreep=1'));
     onBroadcastState?.({
       activeServerIndex: index,
       activeServerName: srv.name,
       activeServerType: srv.type,
       servers: availableServers,
       detectedTracks: null,
+      loadedUrl: cleanRoute.hostAndPath || undefined,
+      loadedSeason: cleanRoute.season,
+      loadedEpisode: cleanRoute.episode,
+      providerEpisodeMismatchWarning: isIgnoreEp,
     });
   }, [availableServers, onBroadcastState, mediaKey, selectedSeason, selectedEpisode]);
 
@@ -1233,6 +1250,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       ? playingOverride
       : (!isIframeMode && videoRef.current ? !videoRef.current.paused : isPlaying);
 
+    const currentUrl = activeEmbedUrl || availableServersRef.current[activeServerIndexRef.current]?.url || '';
+    const cleanRoute = extractCleanRouteAndEp(currentUrl);
+    const isIgnoreEp = Boolean(currentUrl.includes('ignoreep=1') || extraOverrides?.providerEpisodeMismatchWarning);
+
     onBroadcastState({
       currentTime: time,
       duration: dur,
@@ -1255,6 +1276,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       mediaPoster: media.posterUrl || media.backdropUrl || '',
       seasonNumber: selectedSeasonRef.current,
       episodeNumber: selectedEpisodeRef.current,
+      loadedUrl: cleanRoute.hostAndPath || undefined,
+      loadedSeason: cleanRoute.season,
+      loadedEpisode: cleanRoute.episode,
+      providerEpisodeMismatchWarning: isIgnoreEp,
       playbackMeta: {
         title: currentTitle,
         currentSeason: selectedSeasonRef.current,

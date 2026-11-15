@@ -243,6 +243,10 @@ export interface PlaybackState {
   } | null;
   areYouStillThere?: boolean;
   areYouStillThereCause?: string | null;
+  loadedUrl?: string;
+  loadedSeason?: number;
+  loadedEpisode?: number;
+  providerEpisodeMismatchWarning?: boolean;
 }
 
 export type RemoteCommandAction =

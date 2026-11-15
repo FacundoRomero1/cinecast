@@ -1041,6 +1041,21 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   T{seasonNum}:E{episodeNum} {episodeTitle ? `· ${episodeTitle}` : ''}
                 </p>
               )}
+              {playbackState?.loadedUrl && (
+                <p className="text-[10px] font-mono text-zinc-400 truncate mt-0.5" data-testid="remote-loaded-url">
+                  {playbackState.loadedUrl}
+                  {playbackState.loadedSeason && playbackState.loadedEpisode ? (
+                    <span className="text-zinc-300 ml-1">
+                      (T{playbackState.loadedSeason}:E{playbackState.loadedEpisode})
+                    </span>
+                  ) : null}
+                </p>
+              )}
+              {playbackState?.providerEpisodeMismatchWarning && (
+                <p className="text-[10px] font-semibold text-amber-400 mt-0.5 flex items-center gap-1" data-testid="remote-provider-warning">
+                  <span>⚠️</span> El proveedor podría no respetar el episodio pedido
+                </p>
+              )}
             </div>
           </div>
 

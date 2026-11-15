@@ -91,6 +91,8 @@
 
       // Si ignoreep=1, en el video y título muestra episodio 1; si no, el pedido por la ruta
       const displayedEp = ignoreep ? 1 : window.__req.episode;
+      window.__ignoreep = ignoreep;
+      window.__providerReportedEpisode = displayedEp;
       document.title = label + ' - E' + displayedEp;
 
       // 2. subfail=1: dos pedidos a hosts que fallan con ERR_FAILED

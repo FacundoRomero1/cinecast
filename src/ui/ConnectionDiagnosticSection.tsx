@@ -13,6 +13,7 @@ import {
 import { deviceSync, type ConnectionEventEntry } from '../services/deviceSync';
 import { useAppRuntime } from '../app/AppRuntime';
 import { computeSyncAuditReport, type SyncSample, type SyncAuditReport } from '../app/syncAuditor';
+import { extractCleanRouteAndEp } from '../services/embedService';
 import { Server, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Cpu, Activity } from 'lucide-react';
 
 export const ConnectionDiagnosticSection: React.FC = () => {
@@ -164,7 +165,12 @@ export const ConnectionDiagnosticSection: React.FC = () => {
       '---|--------|----------------|-------------------------------------------------------|-------------------------|------------|------------------------|------------------------------------------',
     ];
     for (const t of traces) {
-      const hosts = (t.serversTried || []).map((s: any) => s.host || s.name).join(' -> ') || '-';
+      const hosts = (t.serversTried || []).map((s: any) => {
+        const clean = extractCleanRouteAndEp(s.url || s.host || '');
+        const epSuffix = clean.season && clean.episode ? ` (T${clean.season}:E${clean.episode})` : '';
+        const warnSuffix = (s.url && s.url.includes('ignoreep=1')) || t.providerEpisodeMismatch ? ' ⚠️' : '';
+        return `${clean.hostAndPath || s.host || s.name}${epSuffix}${warnSuffix}`;
+      }).join(' -> ') || '-';
       const ts = t.timestamps || {};
       const videoCols =
         ts.firstVideoMs === null && t.videoStatus === 'no accesible'
@@ -798,12 +804,22 @@ export const ConnectionDiagnosticSection: React.FC = () => {
           </div>
         </div>
         {loadTraces.length > 0 ? (
-          <textarea
-            readOnly
-            value={formatLoadTracesTable(loadTraces)}
-            rows={6}
-            className="w-full rounded-lg bg-zinc-900 border border-zinc-800 p-2 font-mono text-[11px] text-zinc-300"
-          />
+          <>
+            <textarea
+              readOnly
+              value={formatLoadTracesTable(loadTraces)}
+              rows={6}
+              className="w-full rounded-lg bg-zinc-900 border border-zinc-800 p-2 font-mono text-[11px] text-zinc-300"
+            />
+            {loadTraces.some((t: any) => t.providerEpisodeMismatch || t.serversTried?.some((s: any) => s.url?.includes('ignoreep=1'))) && (
+              <div
+                data-testid="load-trace-provider-warning"
+                className="p-2 rounded-lg bg-amber-950/80 border border-amber-600/60 text-[11px] text-amber-200 font-semibold flex items-center gap-1.5"
+              >
+                <span>⚠️</span> El proveedor cargado no respetó el episodio pedido (defecto del servidor externo).
+              </div>
+            )}
+          </>
         ) : (
           <div className="text-[11px] text-zinc-500 italic">
             Activá "Grabar carga" e iniciá una reproducción para registrar servidores, marcas de tiempo, red, rotaciones, CPU a los 5 s y net.request.

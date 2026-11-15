@@ -54,7 +54,7 @@ export async function refreshProviderHealth(): Promise<void> {
 /** TukiPlay primero; luego servidores vivos del más rápido al más lento; sin datos al medio; caídos al final. */
 function applyProviderRanking(servers: StreamServer[]): StreamServer[] {
   const health = readProviderHealth();
-  if (!health) return servers;
+  if (!health) return [...servers];
 
   const primaryWasFirst = servers[0]?.name === PRIMARY_PROVIDER;
   const slots: number[] = [];
@@ -65,7 +65,7 @@ function applyProviderRanking(servers: StreamServer[]): StreamServer[] {
       rankable.push({ s, i });
     }
   });
-  if (rankable.length < 2) return servers;
+  if (rankable.length < 2) return [...servers];
 
   const score = ({ s }: { s: StreamServer }) => {
     if (s.name === PRIMARY_PROVIDER) return 0;
@@ -239,8 +239,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
 
   // 6. Orden por salud diaria (TukiPlay primero, vivos más rápidos después, caídos al final)
   const ranked = applyProviderRanking(servers);
-  servers.length = 0;
-  servers.push(...ranked);
+  const ordered = [...ranked];
 
   // 7. Si el usuario tiene un servidor ganador/preferido en localStorage, ubicarlo al frente
   try {
@@ -251,12 +250,12 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
         window.localStorage.setItem('cinecast_preferred_server', preferred);
       }
       if (preferred) {
-        const prefIdx = servers.findIndex(
+        const prefIdx = ordered.findIndex(
           (s) => s.name.toLowerCase() === preferred.toLowerCase()
         );
         if (prefIdx > 0) {
-          const [fav] = servers.splice(prefIdx, 1);
-          servers.unshift(fav);
+          const [fav] = ordered.splice(prefIdx, 1);
+          ordered.unshift(fav);
         }
       }
     }
@@ -264,7 +263,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
 
   // 8. Sanitización estricta: ninguna URL con doble punto ni dominios muertos
   const DEAD_DOMAINS = ['vidsrc.pro', 'autoembed.cc', 'smashystream.com', 'embed.su'];
-  const sanitized = servers.filter((s) => {
+  const sanitized = ordered.filter((s) => {
     if (!s || typeof s.url !== 'string') return false;
     const u = s.url.trim();
     if (!u || u.includes('..')) return false;
@@ -272,7 +271,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
     return true;
   });
 
-  return sanitized.length > 0 ? sanitized : servers;
+  return sanitized.length > 0 ? sanitized : ordered;
 }
 
 /**
@@ -312,4 +311,76 @@ export function extractStreamUrl(input: string): { url: string; type: 'mp4' | 'i
     lower.includes('zencdn.net');
   const isHls = lower.includes('.m3u8');
   return { url: cleaned, type: isHls ? 'hls' : isMp4 ? 'mp4' : 'iframe' };
+}
+
+/**
+ * Extrae la dirección real (host y ruta, sin parámetros de consulta sensibles)
+ * y la temporada y episodio que se desprenden de la ruta si los incluye.
+ */
+export function extractCleanRouteAndEp(rawUrl?: string): {
+  hostAndPath: string;
+  season?: number;
+  episode?: number;
+} {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return { hostAndPath: '' };
+  }
+  let host = '';
+  let pathname = '';
+  try {
+    const u = new URL(rawUrl);
+    host = u.host;
+    pathname = u.pathname;
+  } catch (_) {
+    const parts = rawUrl.split('?')[0].replace(/^https?:\/\//, '');
+    const slashIdx = parts.indexOf('/');
+    if (slashIdx >= 0) {
+      host = parts.slice(0, slashIdx);
+      pathname = parts.slice(slashIdx);
+    } else {
+      host = parts;
+      pathname = '';
+    }
+  }
+
+  const hostAndPath = `${host}${pathname}`;
+  let season: number | undefined;
+  let episode: number | undefined;
+
+  // 1. /tv/:id/:season/:episode (e.g. /tv/258348/1/12 o /__test/provider/tv/258348/1/12)
+  const mTvSlash = pathname.match(/\/tv\/[^\/]+\/(\d+)\/(\d+)/i);
+  if (mTvSlash) {
+    season = parseInt(mTvSlash[1], 10);
+    episode = parseInt(mTvSlash[2], 10);
+  } else {
+    // 2. /tv/:id/:season-:episode (e.g. /embed/tv/258348/1-12)
+    const mTvDash = pathname.match(/\/tv\/[^\/]+\/(\d+)-(\d+)/i);
+    if (mTvDash) {
+      season = parseInt(mTvDash[1], 10);
+      episode = parseInt(mTvDash[2], 10);
+    } else {
+      // 3. /season/:s/episode/:e o /s/:s/e/:e
+      const mSeasonEp = pathname.match(/(?:season|s)[\/-]?(\d+)[\/-]?(?:episode|ep|e)[\/-]?(\d+)/i);
+      if (mSeasonEp) {
+        season = parseInt(mSeasonEp[1], 10);
+        episode = parseInt(mSeasonEp[2], 10);
+      } else {
+        // 4. /episodio-(\d+) o /episode-(\d+)
+        const mEpOnly = pathname.match(/(?:episodio|episode|ep)[-_]?(\d+)/i);
+        if (mEpOnly) {
+          season = 1;
+          episode = parseInt(mEpOnly[1], 10);
+        } else {
+          // 5. 1x12
+          const mCross = pathname.match(/(?:^|\/)(\d+)[xX](\d+)(?:$|\/)/);
+          if (mCross) {
+            season = parseInt(mCross[1], 10);
+            episode = parseInt(mCross[2], 10);
+          }
+        }
+      }
+    }
+  }
+
+  return { hostAndPath, season, episode };
 }

@@ -333,12 +333,20 @@ function createLoadDiagnosticsManager({ app, session, webContents, net, getMainW
           decoded > 0 ||
           (!v.paused && v.readyState >= 3 && v.currentTime > 0)
         );
+        const reqEp = (window.__req && typeof window.__req.episode === 'number') ? window.__req.episode : null;
+        const provEp = typeof window.__providerReportedEpisode === 'number'
+          ? window.__providerReportedEpisode
+          : reqEp;
+        const isIgnoreEp = Boolean(window.__ignoreep || (reqEp !== null && provEp !== null && reqEp !== provEp));
         return {
           access: true,
           hasVideo: true,
           readyState: Number(v.readyState || 0),
           firstFrameRendered,
           frameAt: entry && entry.frameAt ? entry.frameAt : null,
+          providerReportedEpisode: provEp,
+          requestedEpisode: reqEp,
+          providerEpisodeMismatch: isIgnoreEp,
         };
       })()`;
 
@@ -351,6 +359,11 @@ function createLoadDiagnosticsManager({ app, session, webContents, net, getMainW
             new Promise((_, rej) => setTimeout(() => rej(new Error('frame-eval-timeout')), 350)),
           ]);
           if (probe && probe.hasVideo) {
+            if (probe.providerEpisodeMismatch) {
+              trace.providerEpisodeMismatch = true;
+              trace.providerReportedEpisode = probe.providerReportedEpisode;
+              trace.requestedEpisode = probe.requestedEpisode;
+            }
             const nowMs = Date.now();
             if (trace.timestamps.firstVideoMs === null) {
               trace.timestamps.firstVideoMs = Math.max(0, nowMs - trace.t0);
@@ -574,6 +587,7 @@ function createLoadDiagnosticsManager({ app, session, webContents, net, getMainW
       rotations: [],
       cpuAt5s: null,
       firstServerNetProbe: null,
+      providerEpisodeMismatch: Boolean(firstUrl && firstUrl.includes('ignoreep=1')),
     };
 
     const meta = {
@@ -640,6 +654,9 @@ function createLoadDiagnosticsManager({ app, session, webContents, net, getMainW
       let host = payload.host || '';
       if (!host && payload.url) {
         try { host = new URL(payload.url).hostname; } catch (_) { host = payload.url; }
+      }
+      if (payload.url && payload.url.includes('ignoreep=1')) {
+        currentLoadTrace.providerEpisodeMismatch = true;
       }
       currentLoadTrace.serversTried.push({
         name: payload.name || '',
