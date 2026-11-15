@@ -1186,7 +1186,7 @@ const TitleDetailRouteView: React.FC = () => {
                 ) || 1,
             }
           : undefined;
-        handlePlayLocal(m, enrichedEp, 0, true);
+        handlePlayLocal(m, enrichedEp, 0);
       }}
       onCastToScreen={(m, ep) => {
         const enrichedEp = ep
@@ -2086,7 +2086,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             </button>
           </div>
         </div>
-      ) : isPlayingLocally && activeMedia && activeHub === 'cinecast' ? (
+      ) : isPlayingLocally && activeMedia && activeHub === 'cinecast' && deviceRole === 'screen' ? (
         /* 9. Reproductor a pantalla completa sobre todo con las props de App.tsx L1158-1188 */
         <div
           className="contents"

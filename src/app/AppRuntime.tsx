@@ -1698,6 +1698,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       isScreenReconnecting,
       devices,
       remotePlaybackState,
+      activeMedia,
+      activeEpisode,
+      isPlayingLocally,
     };
   }
 
@@ -1748,8 +1751,22 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       : null;
 
-    setActiveMedia(cleanMedia);
-    setActiveEpisode(targetEp);
+    if (deviceRole === 'remote') {
+      const targetScreen = selectedScreenId
+        ? validScreens.find((s) => s.id === selectedScreenId)
+        : validScreens.length === 1
+          ? validScreens[0]
+          : null;
+      if (!targetScreen) {
+        triggerNotification('Seleccioná una pantalla para reproducir');
+        return;
+      }
+    }
+
+    if (deviceRole === 'screen') {
+      setActiveMedia(cleanMedia);
+      setActiveEpisode(targetEp);
+    }
 
     const effectiveTmdbId =
       cleanMedia.tmdbId ||
@@ -1796,6 +1813,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       activeHub: 'cinecast',
     }));
 
+    const targetScreenIdToSend = selectedScreenId || (validScreens.length === 1 ? validScreens[0]?.id : undefined);
     deviceSync.sendCommand({
       action: 'playDiscoveredMovie',
       payload: {
@@ -1809,7 +1827,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         initialTime: initialTime || 0,
         currentTime: initialTime || 0,
       },
-    });
+    }, targetScreenIdToSend);
 
     triggerNotification(`📱 Reproduciendo ${cleanMedia.title} en ${connectedScreenName}...`);
   };
@@ -1819,9 +1837,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     media: MediaItem,
     episode?: Episode | null,
     initialTime?: number,
-    forceLocal: boolean = false
+    _forceLocal: boolean = false
   ) => {
-    if (deviceRole === 'remote' && !forceLocal) {
+    if (deviceRole === 'remote') {
       handleCastMediaToScreen(media, episode || undefined, initialTime);
       return;
     }
