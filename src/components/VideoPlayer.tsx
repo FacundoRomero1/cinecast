@@ -586,11 +586,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const activeEmbedUrl = useMemo(() => {
     if (!activeServer?.url) return '';
-    // PASO 1 (CENSURA): Validación estricta de ID limpio
-    const cleanId = String(tmdbIdToUse || '').replace(/[^0-9]/g, '');
-    if (!cleanId || isNaN(Number(cleanId)) || Number(cleanId) <= 0) {
-      console.error(`[VideoPlayer] ID inválido detectado para: "${currentTitle}" (cleanId=${cleanId})`);
-      return ''; // Detiene la carga si el ID está corrupto
+    // PASO 1 (CENSURA): Validación de ID limpio (salvo en servidores locales/mock o directos)
+    const isMockOrLocal = activeServer.url.includes('/api/') || activeServer.url.includes('localhost') || activeServer.url.includes('127.0.0.1') || activeServer.url.includes('192.168.');
+    if (!isMockOrLocal) {
+      const cleanId = String(tmdbIdToUse || '').replace(/[^0-9]/g, '');
+      if (!cleanId || isNaN(Number(cleanId)) || Number(cleanId) <= 0) {
+        console.error(`[VideoPlayer] ID inválido detectado para: "${currentTitle}" (cleanId=${cleanId})`);
+        return ''; // Detiene la carga si el ID está corrupto
+      }
     }
     const url = activeServer.url;
     if (url.includes('autoplay=')) return url;
@@ -2036,6 +2039,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onClick={onClose}
               className="p-1.5 sm:p-2 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white transition backdrop-blur-md border border-zinc-700/60 shrink-0"
               title="Volver atrás"
+              aria-label="Cerrar Reproductor"
+              data-testid="close-player"
             >
               <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>

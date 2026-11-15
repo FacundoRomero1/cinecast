@@ -342,6 +342,19 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     marathonConsecutiveCountRef.current = 0;
   }, []);
 
+  useEffect(() => {
+    if (deviceRole === 'remote') return;
+    const handleActivity = () => {
+      notifyUserActivity('window_interaction');
+    };
+    window.addEventListener('pointerdown', handleActivity, { passive: true });
+    window.addEventListener('keydown', handleActivity, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+    };
+  }, [deviceRole, notifyUserActivity]);
+
   // COPIA de App.tsx L212-234; borrar al eliminar la UI clásica
   // Last Command Received Trigger for VideoPlayer
   const [lastRemoteCommand, setLastRemoteCommand] = useState<{ cmd: RemoteCommand; timestamp: number } | null>(null);
@@ -598,11 +611,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Pass to video player trigger
     setLastRemoteCommand({ cmd, timestamp: Date.now() });
 
-    // Cuando VideoPlayer está abierto en Pelis/Series, él es el ÚNICO que debe ejecutar estas acciones
+    // Cuando VideoPlayer está abierto en Pelis/Series, él es el ÚNICO que debe ejecutar estas acciones de transporte/servidor
     if (isPlayingLocally && activeHub === 'cinecast') {
       const playerHandledActions = [
         'togglePlay', 'play', 'pause', 'seek', 'seekRelative',
-        'toggleSubtitles', 'changeServer', 'selectServer', 'nextEpisode', 'prevEpisode', 'jumpToEpisode'
+        'toggleSubtitles', 'changeServer', 'selectServer'
       ];
       if (playerHandledActions.includes(cmd.action)) {
         return;

@@ -364,10 +364,21 @@ async function startTestEnv(options = {}) {
       } catch (_) { }
     }
     const srcMediaCache = path.join(ROOT, 'public', 'data', 'media_cache');
+    const srcFixtures = path.join(ROOT, 'scripts', 'fixtures');
     const dstMediaCache = path.join(dataDir, 'media_cache');
-    if (fs.existsSync(srcMediaCache) && !fs.existsSync(dstMediaCache)) {
+    if (!fs.existsSync(dstMediaCache)) {
+      try {
+        fs.mkdirSync(dstMediaCache, { recursive: true });
+      } catch (_) { }
+    }
+    if (fs.existsSync(srcMediaCache)) {
       try {
         fs.cpSync(srcMediaCache, dstMediaCache, { recursive: true });
+      } catch (_) { }
+    }
+    if (fs.existsSync(srcFixtures)) {
+      try {
+        fs.cpSync(srcFixtures, dstMediaCache, { recursive: true });
       } catch (_) { }
     }
   }

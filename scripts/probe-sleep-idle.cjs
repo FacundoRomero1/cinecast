@@ -218,7 +218,7 @@ async function run() {
 
     // Cerrar reproductor en PC -> temporizador debe desarmarse solo
     await winScreen.webContents.executeJavaScript(
-      `document.querySelector('[title="Cerrar Reproductor"]')?.click()`
+      `document.querySelector('[title*="Cerrar"], [title*="atrás"], [aria-label*="Cerrar"], [data-testid="close-player"]')?.click()`
     );
     const statusAfterClose = await waitUntil(async () => {
       const t = await winRemote.webContents.executeJavaScript(
@@ -394,7 +394,7 @@ async function run() {
     mockRealMediaState = { found: true, currentTime: 5, duration: 100, isPlaying: true, paused: false, ended: false, hasVideo: true };
     // Interacción del usuario (click/pointerdown en PC player) -> debe resetear contador de 2 a 0
     await winScreen.webContents.executeJavaScript(
-      `document.querySelector('[title="Cerrar Reproductor"]')?.parentElement?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`
+      `(document.querySelector('[title*="Cerrar"], [title*="atrás"], [aria-label*="Cerrar"], [data-testid="close-player"]')?.parentElement || document.body).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`
     );
     await wait(2700);
     // Ep 3 -> Ep 4 NO debe disparar "¿Seguís ahí?", debe avanzar a Ep 4 porque count pasó a 1!

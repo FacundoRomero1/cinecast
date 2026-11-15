@@ -225,6 +225,7 @@ async function main() {
     const totalUserCommands = commandMessages.length + polledCommands.length;
     const allSuitesPassed = suiteRuns.every((r) => r.code === 0);
     const isolationPassed = totalUserCommands === 0 && hashesUnchanged;
+    const globalStatus = !isolationPassed ? 'FALLA' : (!allSuitesPassed ? 'PARCIAL' : 'PASA');
 
     console.log('\n================================================================================');
     console.log('RESULTADO PROBE-ISOLATION (PARTE 0 - Paso 3)');
@@ -246,9 +247,9 @@ async function main() {
       );
     }
     console.log('================================================================================');
-    console.log(`Resultado global probe-isolation: ${isolationPassed ? 'PASA' : 'FALLA'}\n`);
+    console.log(`Resultado global probe-isolation: ${globalStatus}\n`);
 
-    process.exitCode = isolationPassed ? 0 : 1;
+    process.exitCode = globalStatus === 'PASA' ? 0 : 1;
   } finally {
     if (wsClient) {
       try {

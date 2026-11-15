@@ -122,6 +122,9 @@ ipcMain.handle('open-external', () => true);
 ipcMain.handle('focus-window', () => true);
 ipcMain.handle('set-stream-headers', () => true);
 ipcMain.handle('send-native-trackpad-event', () => true);
+ipcMain.handle('set-player-servers', () => true);
+ipcMain.handle('start-load-trace', () => ({ ok: true }));
+ipcMain.handle('end-load-trace', () => true);
 
 const globalTimer = setTimeout(() => {
   console.error('[e2e-touch] Timeout global alcanzado');
@@ -507,6 +510,13 @@ app.whenReady().then(async () => {
   await wait(800);
 
   const results = [];
+  const _origPush = results.push.bind(results);
+  results.push = (...items) => {
+    for (const it of items) {
+      console.log(`[e2e-touch] Caso (${it.id}) ${it.name}: ${it.pass ? 'PASA' : 'FALLA'} - ${it.detail || ''}`);
+    }
+    return _origPush(...items);
+  };
 
   // =========================================================================
   // Caso (1): Tocar play de cada tarjeta de "Continuar viendo" desde Celular y PC
@@ -1061,6 +1071,25 @@ app.whenReady().then(async () => {
   // =========================================================================
   // Caso (10a): Black Clover T2:E10 - Castear a PC
   // =========================================================================
+  const expectedFixtures = [
+    'tv_73223_season_2.json',
+    'tv_73223_overview.json',
+    'tv_73223.json',
+    'tv_1396_season_1.json',
+    'tv_1396_overview.json',
+    'tv_1396.json',
+  ];
+  const missingFixtures = [];
+  for (const fix of expectedFixtures) {
+    const p1 = testEnv ? path.join(testEnv.dataDir, 'media_cache', fix) : null;
+    const p2 = path.join(__dirname, 'fixtures', fix);
+    if ((!p1 || !fs.existsSync(p1)) && !fs.existsSync(p2)) {
+      missingFixtures.push(fix);
+    }
+  }
+  if (missingFixtures.length > 0) {
+    console.warn(`[e2e-touch] ⚠️ AVISO: Faltan fixtures de episodios requeridos: ${missingFixtures.join(', ')}. Los casos 10a/10b/10c pueden fallar.`);
+  }
   try {
     await winB.webContents.executeJavaScript(`window.location.hash = '#/titulo/anime/tmdb-tv-73223';`);
     await waitForCondition(winB, `
@@ -1167,7 +1196,7 @@ app.whenReady().then(async () => {
         // Cerrar VideoPlayer en PC
         await winA.webContents.executeJavaScript(`
           (function() {
-            const btn = document.querySelector('button[title="Volver atrás"]');
+            const btn = document.querySelector('button[title*="atrás"], button[title*="Cerrar"], button[data-testid="close-player"]');
             if (btn) btn.click();
           })()
         `);
@@ -1286,7 +1315,7 @@ app.whenReady().then(async () => {
         // Cerrar VideoPlayer en Celular
         await winB.webContents.executeJavaScript(`
           (function() {
-            const btn = document.querySelector('button[title="Volver atrás"]');
+            const btn = document.querySelector('button[title*="atrás"], button[title*="Cerrar"], button[data-testid="close-player"]');
             if (btn) btn.click();
           })()
         `);
@@ -1369,7 +1398,7 @@ app.whenReady().then(async () => {
         // Cerrar VideoPlayer en PC
         await winA.webContents.executeJavaScript(`
           (function() {
-            const btn = document.querySelector('button[title="Volver atrás"]');
+            const btn = document.querySelector('button[title*="atrás"], button[title*="Cerrar"], button[data-testid="close-player"]');
             if (btn) btn.click();
           })()
         `);
@@ -1537,7 +1566,8 @@ app.whenReady().then(async () => {
           command: {
             action: 'playDiscoveredMovie',
             payload: {
-              id: 'breaking-bad',
+              id: 'tmdb-series-1396',
+              tmdbId: 1396,
               title: 'Breaking Bad',
               type: 'series',
               seasonNumber: 1,
