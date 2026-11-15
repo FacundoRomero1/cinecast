@@ -459,6 +459,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   });
   const [seekUnsupported, setSeekUnsupported] = useState<boolean>(false);
   const [resumeState, setResumeState] = useState<ResumeState | null>(null);
+  const resumeControllerRef = useRef<ResumeController | null>(null);
   const [isEstimatedTime, setIsEstimatedTime] = useState<boolean>(false);
   const isEstimatedTimeRef = useRef<boolean>(false);
   useEffect(() => { isEstimatedTimeRef.current = isEstimatedTime; }, [isEstimatedTime]);
@@ -1326,6 +1327,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [broadcastImmediate, isIframeMode, audioSettings]);
 
   const togglePlay = async () => {
+    if (isPlaying) {
+      resumeControllerRef.current?.cancel();
+    }
     if (isIframeMode) {
       const res = await window.electronAPI?.controlActiveMedia?.({ action: 'togglePlay' });
       const nextPlaying = typeof (res as any)?.isPlaying === 'boolean' ? (res as any).isPlaying : !isPlaying;
@@ -1343,6 +1347,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const seekRelative = async (seconds: number) => {
+    resumeControllerRef.current?.cancel();
     if (isIframeMode) {
       const res = await window.electronAPI?.controlActiveMedia?.({ action: 'seekRelative', value: seconds });
       if (res && (res.ok || res.hasMedia || res.acted)) {
@@ -1372,6 +1377,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleSeek = async (time: number) => {
+    resumeControllerRef.current?.cancel();
     if (isIframeMode) {
       const res = await window.electronAPI?.controlActiveMedia?.({ action: 'seek', value: time });
       if (res && (res.ok || res.hasMedia || res.acted)) {
@@ -1469,6 +1475,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         break;
       }
       case 'pause': {
+        resumeControllerRef.current?.cancel();
         if (isIframeMode) {
           window.electronAPI?.controlActiveMedia?.({ action: 'pause' });
           setIsPlaying(false);
@@ -1603,6 +1610,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     if (!isIframeMode || !initialTime || initialTime <= 0) return;
     const controller = new ResumeController();
+    resumeControllerRef.current = controller;
     const unsub = controller.start(initialTime, (res) => {
       setResumeState(res);
       if (res.status === 'fallo') {
@@ -1616,8 +1624,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       } else {
         broadcastImmediate(undefined, { resume: res });
       }
-    });
-    return () => unsub();
+    }, duration);
+    return () => {
+      unsub();
+      resumeControllerRef.current = null;
+    };
   }, [isIframeMode, initialTime, activeServerIndex, activeEmbedUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => {

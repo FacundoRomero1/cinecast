@@ -95,6 +95,63 @@
       }
       window.__attachEmbedAudioChain = attachEmbedAudioChain;
       window.__testVideo = video;
+
+      const snapSec = parseFloat(params.get('snap') || '0');
+      const stallMs = parseFloat(params.get('stall') || '0');
+      const jitter = params.get('jitter') === '1';
+      const lagSec = parseFloat(params.get('lag') || '0');
+
+      let simTime = 0;
+      let stallUntil = 0;
+      let jitterUntil = 0;
+      let lagUntil = 0;
+      let laggedTime = 0;
+      window.__seekCount = 0;
+
+      Object.defineProperty(video, 'currentTime', {
+        get: function() {
+          if (Date.now() < lagUntil) return laggedTime;
+          if (Date.now() < jitterUntil) {
+            const p = (1000 - (jitterUntil - Date.now())) / 1000;
+            const offset = Math.sin(p * Math.PI * 4) * 2;
+            return Math.max(0, simTime + offset);
+          }
+          return simTime;
+        },
+        set: function(val) {
+          window.__seekCount = (window.__seekCount || 0) + 1;
+          let num = Number(val) || 0;
+          if (snapSec > 0) num = Math.floor(num / snapSec) * snapSec;
+          if (lagSec > 0) {
+            laggedTime = simTime;
+            lagUntil = Date.now() + (lagSec * 1000);
+          }
+          if (jitter) jitterUntil = Date.now() + 1000;
+          simTime = num;
+          if (stallMs > 0) {
+            stallUntil = Date.now() + stallMs;
+            video.dispatchEvent(new Event('waiting'));
+            setTimeout(() => {
+              if (Date.now() >= stallUntil) video.dispatchEvent(new Event('playing'));
+            }, stallMs);
+          }
+        },
+        configurable: true,
+      });
+
+      Object.defineProperty(video, 'readyState', {
+        get: function() {
+          if (Date.now() < stallUntil) return 2;
+          return 4;
+        },
+        configurable: true,
+      });
+
+      setInterval(() => {
+        if (Date.now() >= stallUntil && !video.paused) {
+          simTime += 0.1;
+        }
+      }, 100);
     })();
   </script>
 </body>

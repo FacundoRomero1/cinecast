@@ -58,6 +58,10 @@
       const bufferMs = parseFloat(params.get('buffer') || '0');
       const noseek = params.get('noseek') === '1';
       const blackMs = params.get('black') === '1' ? 5000 : 0;
+      const snapSec = parseFloat(params.get('snap') || '0');
+      const stallMs = parseFloat(params.get('stall') || '0');
+      const jitter = params.get('jitter') === '1';
+      const lagSec = parseFloat(params.get('lag') || '0');
 
       const startTime = Date.now();
       let realTime = 0;
@@ -65,6 +69,11 @@
       let isBuffering = false;
       let bufferUntil = 0;
       let blackUntil = 0;
+      let stallUntil = 0;
+      let jitterUntil = 0;
+      let lagUntil = 0;
+      let laggedTime = 0;
+      window.__seekCount = 0;
 
       const video = document.getElementById('video-el');
       const timeEl = document.getElementById('time-display');
@@ -78,7 +87,7 @@
 
       function getEffectiveReadyState() {
         if (!isMetadataReady()) return 1; // HAVE_METADATA pendiente
-        if (isBuffering || Date.now() < bufferUntil) return 2; // HAVE_CURRENT_DATA / waiting
+        if (isBuffering || Date.now() < bufferUntil || Date.now() < stallUntil) return 2; // HAVE_CURRENT_DATA / waiting
         return 4; // HAVE_ENOUGH_DATA
       }
 
@@ -126,9 +135,18 @@
       // Interceptar propiedades nativas del <video>
       Object.defineProperty(video, 'currentTime', {
         get: function() {
+          if (Date.now() < lagUntil) {
+            return laggedTime;
+          }
+          if (Date.now() < jitterUntil) {
+            const p = (1000 - (jitterUntil - Date.now())) / 1000;
+            const offset = Math.sin(p * Math.PI * 4) * 2;
+            return Math.max(0, realTime + offset);
+          }
           return realTime;
         },
         set: function(val) {
+          window.__seekCount = (window.__seekCount || 0) + 1;
           if (noseek) {
             console.log('[embed-slow] Salto ignorado (noseek=1): intento', val);
             return;
@@ -139,7 +157,18 @@
             updateUI();
             return;
           }
-          const num = Number(val) || 0;
+          let num = Number(val) || 0;
+          if (snapSec > 0) {
+            num = Math.floor(num / snapSec) * snapSec;
+            console.log(`[embed-slow] Salto con snap=${snapSec}: ${val} -> ${num}`);
+          }
+          if (lagSec > 0) {
+            laggedTime = realTime;
+            lagUntil = Date.now() + (lagSec * 1000);
+          }
+          if (jitter) {
+            jitterUntil = Date.now() + 1000;
+          }
           realTime = Math.max(0, Math.min(totalDur, num));
           console.log('[embed-slow] Salto aceptado a:', realTime);
           if (bufferMs > 0) {
@@ -147,10 +176,31 @@
             bufferUntil = Date.now() + bufferMs;
             setTimeout(() => { isBuffering = false; }, bufferMs);
           }
+          if (stallMs > 0) {
+            stallUntil = Date.now() + stallMs;
+            video.dispatchEvent(new Event('waiting'));
+            setTimeout(() => {
+              if (Date.now() >= stallUntil) {
+                video.dispatchEvent(new Event('playing'));
+              }
+            }, stallMs);
+          }
           if (blackMs > 0) {
             blackUntil = Date.now() + blackMs;
           }
           updateUI();
+        },
+        configurable: true,
+      });
+
+      Object.defineProperty(video, 'buffered', {
+        get: function() {
+          const end = Math.min(totalDur, realTime + (Date.now() < bufferUntil || Date.now() < stallUntil ? 2 : 30));
+          return {
+            length: 1,
+            start: () => 0,
+            end: () => end,
+          };
         },
         configurable: true,
       });
@@ -190,11 +240,12 @@
       // Ticker de avance real cada 100 ms
       setInterval(function() {
         const ready = isMetadataReady();
-        const buffering = isBuffering || Date.now() < bufferUntil;
+        const buffering = isBuffering || Date.now() < bufferUntil || Date.now() < stallUntil;
         if (ready && !isPaused && !buffering) {
           realTime = Math.min(totalDur, realTime + 0.1);
         }
         updateUI();
+        video.dispatchEvent(new Event('timeupdate'));
       }, 100);
 
       // Exponer window.__v exigido por el requerimiento 6
