@@ -1,4 +1,12 @@
+import { Users } from 'lucide-react';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { MEDIA_CATALOG } from '../data/catalog';
+import { SPOTIFY_TRACKS, SpotifyTrack } from '../data/spotifyCatalog';
+import { YOUTUBE_VIDEOS, YouTubeVideo } from '../data/youtubeCatalog';
+import { authService } from '../services/authService';
+import { deviceSync } from '../services/deviceSync';
+import { generateServersForMedia, refreshProviderHealth } from '../services/embedService';
+import { watchHistoryService, WatchProgressItem } from '../services/watchHistoryService';
 import {
   AudioSettings,
   DeviceInfo,
@@ -9,16 +17,8 @@ import {
   PlaybackState,
   RemoteCommand,
 } from '../types';
-import { MEDIA_CATALOG } from '../data/catalog';
-import { SPOTIFY_TRACKS, SpotifyTrack } from '../data/spotifyCatalog';
-import { YOUTUBE_VIDEOS, YouTubeVideo } from '../data/youtubeCatalog';
-import { deviceSync } from '../services/deviceSync';
-import { recordSentCommand, recordReceivedCommand } from './syncDiagnostic';
-import { watchHistoryService, WatchProgressItem } from '../services/watchHistoryService';
-import { generateServersForMedia, refreshProviderHealth } from '../services/embedService';
-import { authService } from '../services/authService';
-import { Users } from 'lucide-react';
 import { hubFullscreen } from './hubFullscreen';
+import { recordReceivedCommand, recordSentCommand } from './syncDiagnostic';
 
 export type HubType = 'cinecast' | 'spotify' | 'youtube' | 'sports';
 
@@ -139,7 +139,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (typeof window !== 'undefined') {
       try {
         return localStorage.getItem('cinecast_selected_screen_id') || null;
-      } catch (_) {}
+      } catch (_) { }
     }
     return null;
   });
@@ -148,7 +148,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (typeof window !== 'undefined') {
       try {
         return localStorage.getItem('cinecast_selected_screen_name') || 'PC / Pantalla Principal';
-      } catch (_) {}
+      } catch (_) { }
     }
     return 'PC / Pantalla Principal';
   });
@@ -162,7 +162,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         } else {
           localStorage.removeItem('cinecast_selected_screen_id');
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   }, []);
 
@@ -185,7 +185,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const params = new URLSearchParams(window.location.search);
       const hub = params.get('hub');
       if (hub === 'spotify' || hub === 'youtube') return hub;
-    } catch (_) {}
+    } catch (_) { }
     return 'cinecast';
   });
 
@@ -277,7 +277,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   useEffect(() => {
     try {
       localStorage.removeItem('cinecast_sleep_timer_v1');
-    } catch (_) {}
+    } catch (_) { }
   }, []);
 
   const [areYouStillThere, setAreYouStillThere] = useState<boolean>(false);
@@ -310,8 +310,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const hasActivePlayback = Boolean(
     (isPlayingLocally && activeMedia && activeHub === 'cinecast') ||
-      isSpotifyPlaying ||
-      isYouTubePlaying
+    isSpotifyPlaying ||
+    isYouTubePlaying
   );
   const hasActivePlaybackRef = useRef<boolean>(hasActivePlayback);
   hasActivePlaybackRef.current = hasActivePlayback;
@@ -332,8 +332,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             ts: Date.now(),
           }),
           keepalive: true,
-        }).catch(() => {});
-      } catch (_) {}
+        }).catch(() => { });
+      } catch (_) { }
     },
     [deviceRole]
   );
@@ -450,7 +450,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             try {
               localStorage.setItem('cinecast_selected_screen_id', only.id);
               localStorage.setItem('cinecast_selected_screen_name', only.name);
-            } catch (_) {}
+            } catch (_) { }
             setLastKnownScreenName(only.name);
             return only.id;
           }
@@ -468,12 +468,17 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // COPIA de App.tsx L303-332; borrar al eliminar la UI clásica
   // Keep a ref to the latest command handler to avoid stale closures
-  const remoteCmdHandlerRef = useRef<(cmd: RemoteCommand, from?: string) => void>(() => {});
+  const remoteCmdHandlerRef = useRef<(cmd: RemoteCommand, from?: string) => void>(() => { });
+  const handleBroadcastPlayerStateRef = useRef<(stateUpdate: Partial<PlaybackState>) => void>(() => { });
 
   // Listen for remote commands (when acting as the Screen / PC / TV)
   useEffect(() => {
     const unsubCmd = deviceSync.onCommand((cmd: RemoteCommand, fromDevice) => {
       remoteCmdHandlerRef.current(cmd, fromDevice);
+    });
+
+    const unsubReqState = deviceSync.onRequestFullState(() => {
+      handleBroadcastPlayerStateRef.current({});
     });
 
     const unsubState = deviceSync.onStateSync((state: PlaybackState) => {
@@ -484,10 +489,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const incomingIsSeries = Boolean(
         state.mediaItem
           ? (state.mediaItem.type === 'series' ||
-              state.mediaItem.category === 'series' ||
-              state.mediaItem.category === 'anime') &&
-              state.mediaItem.type !== 'movie' &&
-              state.mediaItem.category !== 'live_tv'
+            state.mediaItem.category === 'series' ||
+            state.mediaItem.category === 'anime') &&
+          state.mediaItem.type !== 'movie' &&
+          state.mediaItem.category !== 'live_tv'
           : state.episodeItem || state.seasonNumber
       );
       if (incomingIsSeries && state.episodeItem) {
@@ -505,6 +510,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     return () => {
       unsubCmd();
+      unsubReqState();
       unsubState();
     };
   }, []);
@@ -546,7 +552,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + 0.4);
-    } catch (_) {}
+    } catch (_) { }
   };
 
   // COPIA de App.tsx L371-382; borrar al eliminar la UI clásica
@@ -639,12 +645,12 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const eNum = Number(episodeNumber ?? payload.episode?.episodeNumber) || 1;
           const episode = isSeries
             ? payload.episode ||
-              (seasonNumber && episodeNumber
-                ? media.episodes?.find((e) => (e.seasonNumber || 1) === sNum && e.episodeNumber === eNum)
-                : null) ||
-              media.episodes?.find((e) => e.id === episodeId) ||
-              media.episodes?.[0] ||
-              null
+            (seasonNumber && episodeNumber
+              ? media.episodes?.find((e) => (e.seasonNumber || 1) === sNum && e.episodeNumber === eNum)
+              : null) ||
+            media.episodes?.find((e) => e.id === episodeId) ||
+            media.episodes?.[0] ||
+            null
             : null;
           setActiveMedia(media);
           setActiveEpisode(episode);
@@ -710,12 +716,12 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const cleanMediaItem: MediaItem = isSeries
             ? mediaItem
             : {
-                ...mediaItem,
-                type: 'movie',
-                episodes: undefined,
-                seasons: undefined,
-                seasonsCount: undefined,
-              };
+              ...mediaItem,
+              type: 'movie',
+              episodes: undefined,
+              seasons: undefined,
+              seasonsCount: undefined,
+            };
 
           let ep: Episode | null = null;
           if (isSeries) {
@@ -1052,7 +1058,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const nextSub = typeof cmd.payload === 'boolean' ? cmd.payload : !curPref;
           try {
             localStorage.setItem('cinecast_subtitles_pref', nextSub ? '1' : '0');
-          } catch {}
+          } catch { }
           window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: nextSub });
           handleBroadcastPlayerState({ subtitlesEnabled: nextSub });
         }
@@ -1096,7 +1102,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const enabled = Boolean(cmd.payload?.enabled ?? cmd.payload?.value ?? cmd.payload);
         try {
           localStorage.setItem('cinecast_marathon_mode', String(enabled));
-        } catch {}
+        } catch { }
         window.dispatchEvent(new CustomEvent('cinecast:marathon', { detail: { enabled } }));
         setPlaybackSettings((prev) => ({ ...prev, autoPlayNext: enabled, autoSkipIntro: enabled }));
         setRemotePlaybackState((prev) => {
@@ -1154,8 +1160,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           Number.isFinite(rawMinutes) && rawMinutes > 0
             ? rawMinutes
             : secondsOverride !== null
-            ? Math.max(1, Math.ceil(secondsOverride / 60))
-            : 15;
+              ? Math.max(1, Math.ceil(secondsOverride / 60))
+              : 15;
 
         if (mode !== 'off') {
           try {
@@ -1163,13 +1169,13 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               'cinecast_sleep_timer_last_v1',
               JSON.stringify({ mode, minutes: mode === 'chapter' ? undefined : displayMinutes, updatedAt: Date.now() })
             );
-          } catch (_) {}
+          } catch (_) { }
         }
 
         if (mode === 'off') {
           try {
             localStorage.removeItem('cinecast_sleep_timer_v1');
-          } catch (_) {}
+          } catch (_) { }
           sleepTimerRef.current = null;
           setSleepTimerState(null);
           handleBroadcastPlayerState({ sleepTimer: null });
@@ -1181,7 +1187,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (!hasActivePlaybackRef.current) {
           try {
             localStorage.removeItem('cinecast_sleep_timer_v1');
-          } catch (_) {}
+          } catch (_) { }
           sleepTimerRef.current = null;
           setSleepTimerState(null);
           handleBroadcastPlayerState({ sleepTimer: null });
@@ -1211,7 +1217,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         };
         try {
           localStorage.setItem('cinecast_sleep_timer_v1', JSON.stringify(timerObj));
-        } catch (_) {}
+        } catch (_) { }
         sleepTimerRef.current = timerObj;
         setSleepTimerState(timerObj);
         handleBroadcastPlayerState({ sleepTimer: timerObj });
@@ -1346,10 +1352,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (item.category === 'live_tv') return false;
     return Boolean(
       item.type === 'series' ||
-        item.category === 'series' ||
-        item.category === 'anime' ||
-        (item.seasons && item.seasons.length > 0) ||
-        (item.episodes && item.episodes.length > 0)
+      item.category === 'series' ||
+      item.category === 'anime' ||
+      (item.seasons && item.seasons.length > 0) ||
+      (item.episodes && item.episodes.length > 0)
     );
   }, []);
 
@@ -1393,8 +1399,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       (typeof rawId === 'string' && /^\d+$/.test(rawId)
         ? Number(rawId)
         : typeof rawId === 'string' && rawId.includes('-')
-        ? Number(rawId.split('-').pop()) || 0
-        : 0);
+          ? Number(rawId.split('-').pop()) || 0
+          : 0);
 
     const advanceToSameSeriesEpisode = (
       targetSeason: number,
@@ -1495,7 +1501,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             currentMedia.episodes = [...otherEps, ...curSeasonEps];
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     const nextInSameSeason = curSeasonEps.find(
@@ -1511,10 +1517,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const explicitMaxSeason =
       currentMedia.seasons && currentMedia.seasons.length > 0
         ? Math.max(
-            ...currentMedia.seasons.map((s: any) =>
-              Number(s.seasonNumber ?? s.season_number ?? 0)
-            )
+          ...currentMedia.seasons.map((s: any) =>
+            Number(s.seasonNumber ?? s.season_number ?? 0)
           )
+        )
         : Number(currentMedia.seasonsCount || 0);
 
     const canHaveNextSeason =
@@ -1540,7 +1546,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               currentMedia.episodes = [...otherEps, ...nextSeasonEps];
             }
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       const firstInNextSeason =
@@ -1639,7 +1645,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setLastKnownScreenName(connectedScreen.name);
       try {
         localStorage.setItem('cinecast_selected_screen_name', connectedScreen.name);
-      } catch (_) {}
+      } catch (_) { }
       return;
     }
 
@@ -1680,10 +1686,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     isScreenOnline && connectedScreen
       ? connectedScreen.name
       : selectedScreenId && screenDisconnectStage !== 'lost'
-      ? connectedScreen?.name || lastKnownScreenName
-      : !selectedScreenId && validScreens.length === 1 && validScreens[0].connected !== false
-      ? validScreens[0].name
-      : 'Sin pantalla';
+        ? connectedScreen?.name || lastKnownScreenName
+        : !selectedScreenId && validScreens.length === 1 && validScreens[0].connected !== false
+          ? validScreens[0].name
+          : 'Sin pantalla';
 
   if (typeof window !== 'undefined') {
     (window as any).__cinecastRuntime = {
@@ -1702,8 +1708,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     activeMedia;
   const remoteEpisodeItem = isSeriesMediaItem(remoteMediaItem)
     ? remotePlaybackState.episodeItem ||
-      remoteMediaItem?.episodes?.find((e) => e.id === remotePlaybackState.episodeId) ||
-      activeEpisode
+    remoteMediaItem?.episodes?.find((e) => e.id === remotePlaybackState.episodeId) ||
+    activeEpisode
     : null;
 
   // COPIA de App.tsx L928-1064; borrar al eliminar la UI clásica
@@ -1713,33 +1719,33 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const cleanMedia: MediaItem = isSeries
       ? media
       : {
-          ...media,
-          type: 'movie',
-          episodes: undefined,
-          seasons: undefined,
-          seasonsCount: undefined,
-        };
+        ...media,
+        type: 'movie',
+        episodes: undefined,
+        seasons: undefined,
+        seasonsCount: undefined,
+      };
     const rawEp = isSeries ? (episode || cleanMedia.episodes?.[0] || null) : null;
     const targetEp: Episode | null = rawEp
       ? {
-          ...rawEp,
-          seasonNumber:
-            Number(
-              rawEp.seasonNumber ??
-                (rawEp as any).season ??
-                (rawEp as any).season_number ??
-                (cleanMedia as any).seasonNumber ??
-                1
-            ) || 1,
-          episodeNumber:
-            Number(
-              rawEp.episodeNumber ??
-                (rawEp as any).episode ??
-                (rawEp as any).episode_number ??
-                (cleanMedia as any).episodeNumber ??
-                1
-            ) || 1,
-        }
+        ...rawEp,
+        seasonNumber:
+          Number(
+            rawEp.seasonNumber ??
+            (rawEp as any).season ??
+            (rawEp as any).season_number ??
+            (cleanMedia as any).seasonNumber ??
+            1
+          ) || 1,
+        episodeNumber:
+          Number(
+            rawEp.episodeNumber ??
+            (rawEp as any).episode ??
+            (rawEp as any).episode_number ??
+            (cleanMedia as any).episodeNumber ??
+            1
+          ) || 1,
+      }
       : null;
 
     setActiveMedia(cleanMedia);
@@ -1750,23 +1756,23 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       (typeof cleanMedia.id === 'string' && /^\d+$/.test(cleanMedia.id)
         ? Number(cleanMedia.id)
         : typeof cleanMedia.id === 'string' && cleanMedia.id.includes('-')
-        ? Number(cleanMedia.id.split('-').pop()) || 0
-        : 0);
+          ? Number(cleanMedia.id.split('-').pop()) || 0
+          : 0);
 
     const srvs =
       cleanMedia.servers && cleanMedia.servers.length > 0
         ? cleanMedia.servers
         : generateServersForMedia({
-            tmdbId: effectiveTmdbId,
-            type:
-              cleanMedia.category === 'live_tv'
-                ? 'live_tv'
-                : isSeries
+          tmdbId: effectiveTmdbId,
+          type:
+            cleanMedia.category === 'live_tv'
+              ? 'live_tv'
+              : isSeries
                 ? 'series'
                 : 'movie',
-            season: targetEp?.seasonNumber || 1,
-            episode: targetEp?.episodeNumber || 1,
-          });
+          season: targetEp?.seasonNumber || 1,
+          episode: targetEp?.episodeNumber || 1,
+        });
 
     // Update optimistic state on the phone so remote control bar immediately reflects the cast media
     setRemotePlaybackState((prev) => ({
@@ -1823,34 +1829,34 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const cleanMedia: MediaItem = isSeries
       ? media
       : {
-          ...media,
-          type: 'movie',
-          episodes: undefined,
-          seasons: undefined,
-          seasonsCount: undefined,
-        };
+        ...media,
+        type: 'movie',
+        episodes: undefined,
+        seasons: undefined,
+        seasonsCount: undefined,
+      };
     setActiveMedia(cleanMedia);
     const rawEp = isSeries ? (episode || cleanMedia.episodes?.[0] || null) : null;
     const ep: Episode | null = rawEp
       ? {
-          ...rawEp,
-          seasonNumber:
-            Number(
-              rawEp.seasonNumber ??
-                (rawEp as any).season ??
-                (rawEp as any).season_number ??
-                (cleanMedia as any).seasonNumber ??
-                1
-            ) || 1,
-          episodeNumber:
-            Number(
-              rawEp.episodeNumber ??
-                (rawEp as any).episode ??
-                (rawEp as any).episode_number ??
-                (cleanMedia as any).episodeNumber ??
-                1
-            ) || 1,
-        }
+        ...rawEp,
+        seasonNumber:
+          Number(
+            rawEp.seasonNumber ??
+            (rawEp as any).season ??
+            (rawEp as any).season_number ??
+            (cleanMedia as any).seasonNumber ??
+            1
+          ) || 1,
+        episodeNumber:
+          Number(
+            rawEp.episodeNumber ??
+            (rawEp as any).episode ??
+            (rawEp as any).episode_number ??
+            (cleanMedia as any).episodeNumber ??
+            1
+          ) || 1,
+      }
       : null;
     setActiveEpisode(ep);
     setPlayerInitialTime(initialTime || 0);
@@ -1862,16 +1868,16 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       cleanMedia.servers && cleanMedia.servers.length > 0
         ? cleanMedia.servers
         : generateServersForMedia({
-            tmdbId: cleanMedia.tmdbId,
-            type:
-              cleanMedia.category === 'live_tv'
-                ? 'live_tv'
-                : isSeries
+          tmdbId: cleanMedia.tmdbId,
+          type:
+            cleanMedia.category === 'live_tv'
+              ? 'live_tv'
+              : isSeries
                 ? 'series'
                 : 'movie',
-            season: ep?.seasonNumber || 1,
-            episode: ep?.episodeNumber || 1,
-          });
+          season: ep?.seasonNumber || 1,
+          episode: ep?.episodeNumber || 1,
+        });
 
     const fullState: PlaybackState = {
       mediaId: cleanMedia.id,
@@ -1905,14 +1911,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   // Broadcast state to mobile remotes when player state changes
-  const handleBroadcastPlayerState = useCallback((stateUpdate: Partial<PlaybackState>) => {
+  const handleBroadcastPlayerState = useCallback((stateUpdate: Partial<PlaybackState>, options?: { forceImmediate?: boolean }) => {
     if (deviceRole === 'screen') {
       const effectivePlaying =
         activeHub === 'spotify'
           ? isSpotifyPlaying
           : activeHub === 'youtube'
-          ? isYouTubePlaying
-          : isPlayingLocally;
+            ? isYouTubePlaying
+            : isPlayingLocally;
 
       setRemotePlaybackState((prev) => {
         const hasTimings = Boolean(stateUpdate.hasIntroTimings ?? prev.hasIntroTimings ?? stateUpdate.isIntroActive);
@@ -1963,20 +1969,24 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           ...(isSeries
             ? {}
             : {
-                episodeId: null,
-                seasonNumber: undefined,
-                episodeNumber: undefined,
-                episodeTitle: '',
-                episodeItem: undefined,
-                playbackMeta: undefined,
-                mediaTitle: activeMedia?.title || stateUpdate.mediaTitle || prev.mediaTitle,
-              }),
+              episodeId: null,
+              seasonNumber: undefined,
+              episodeNumber: undefined,
+              episodeTitle: '',
+              episodeItem: undefined,
+              playbackMeta: undefined,
+              mediaTitle: activeMedia?.title || stateUpdate.mediaTitle || prev.mediaTitle,
+            }),
         };
-        deviceSync.broadcastPlaybackState(fullState);
+        deviceSync.broadcastPlaybackState(fullState, { force: options?.forceImmediate });
         return fullState;
       });
     }
   }, [activeMedia, activeEpisode, isPlayingLocally, isSpotifyPlaying, isYouTubePlaying, activeHub, isScreenInStandby, audioSettings, playbackSettings, deviceRole, isSeriesMediaItem]);
+
+  useEffect(() => {
+    handleBroadcastPlayerStateRef.current = handleBroadcastPlayerState;
+  }, [handleBroadcastPlayerState]);
 
   // Manejo de "¿Seguís ahí?" con cuenta regresiva (60s prod, 5s test) y causa explícita
   const triggerAreYouStillThere = useCallback(
@@ -1985,8 +1995,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         reason === 'marathon'
           ? 'Pasaron 3 capítulos seguidos sin tocar nada'
           : reason === 'chapter'
-          ? 'Temporizador de reposo (al terminar el capítulo)'
-          : `Temporizador de reposo de ${detail?.minutes ?? 15} min`;
+            ? 'Temporizador de reposo (al terminar el capítulo)'
+            : `Temporizador de reposo de ${detail?.minutes ?? 15} min`;
 
       areYouStillThereRef.current = true;
       areYouStillThereCauseRef.current = causeMsg;
@@ -2024,12 +2034,12 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           setIsPlayingLocally(false);
           try {
             window.electronAPI?.controlActiveMedia?.({ action: 'pause' });
-          } catch (_) {}
+          } catch (_) { }
           sleepTimerRef.current = null;
           setSleepTimerState(null);
           try {
             localStorage.removeItem('cinecast_sleep_timer_v1');
-          } catch (_) {}
+          } catch (_) { }
           handleBroadcastPlayerState({
             isPlaying: false,
             isStandby: true,
@@ -2072,7 +2082,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setSleepTimerState(null);
       try {
         localStorage.removeItem('cinecast_sleep_timer_v1');
-      } catch (_) {}
+      } catch (_) { }
       handleBroadcastPlayerState({ sleepTimer: null });
       logSleepTimerEvent('disarmed', {
         cause: 'cierre del reproductor o sin reproducción',
@@ -2093,7 +2103,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           setSleepTimerState(null);
           try {
             localStorage.removeItem('cinecast_sleep_timer_v1');
-          } catch (_) {}
+          } catch (_) { }
           logSleepTimerEvent('disarmed', {
             cause: 'disparo al terminar capítulo',
             mode: prevTimer?.mode || 'chapter',
@@ -2104,7 +2114,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       const isMarathonOn = Boolean(
         remotePlaybackState.marathon ||
-          (typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true')
+        (typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true')
       );
       if (isMarathonOn && activeMedia && isSeriesMediaItem(activeMedia)) {
         if (lastAutoAdvancedChapterRef.current !== chapterKey) {
@@ -2134,7 +2144,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setSleepTimerState(null);
         try {
           localStorage.removeItem('cinecast_sleep_timer_v1');
-        } catch (_) {}
+        } catch (_) { }
         handleBroadcastPlayerState({ sleepTimer: null });
         logSleepTimerEvent('disarmed', {
           cause: 'sin reproducción activa',
@@ -2148,13 +2158,13 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           typeof cur.minutes === 'number' && Number.isFinite(cur.minutes)
             ? cur.minutes
             : Number.isFinite(parseInt(cur.mode, 10))
-            ? parseInt(cur.mode, 10)
-            : 15;
+              ? parseInt(cur.mode, 10)
+              : 15;
         sleepTimerRef.current = null;
         setSleepTimerState(null);
         try {
           localStorage.removeItem('cinecast_sleep_timer_v1');
-        } catch (_) {}
+        } catch (_) { }
         handleBroadcastPlayerState({ sleepTimer: null });
         triggerAreYouStillThere('sleep_timer', { minutes: displayMins });
       }
@@ -2177,8 +2187,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
   const needsFastMediaPoll = Boolean(
     hasConnectedRemote ||
-      remotePlaybackState.marathon ||
-      (typeof window !== 'undefined' && (window as any).__cinecastResumeActive)
+    remotePlaybackState.marathon ||
+    (typeof window !== 'undefined' && (window as any).__cinecastResumeActive)
   );
 
   useEffect(() => {
@@ -2225,8 +2235,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             (typeof rawId === 'string' && /^\d+$/.test(rawId)
               ? Number(rawId)
               : typeof rawId === 'string' && rawId.includes('-')
-              ? Number(rawId.split('-').pop()) || 0
-              : 0);
+                ? Number(rawId.split('-').pop()) || 0
+                : 0);
           const sNum = activeEpisode?.seasonNumber || remotePlaybackState.seasonNumber || 1;
           const preloadKey = `${tmdbId}_s${sNum}`;
           if (tmdbId > 0 && preloadedSeasonKeyRef.current !== preloadKey) {
@@ -2245,7 +2255,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                   activeMedia.episodes = eps;
                 }
               })
-              .catch(() => {});
+              .catch(() => { });
           }
         }
 
@@ -2286,7 +2296,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               condition: isEnded ? 'ended' : isNearEnd ? 'near_end' : isStuckAtEnd ? 'stuck_end' : 'none',
               timestamp: Date.now(),
             }),
-          }).catch(() => {});
+          }).catch(() => { });
         }
 
         const canAutoAdvanceNow = Date.now() - lastAutoAdvanceTriggeredAtRef.current >= 2500;
@@ -2297,7 +2307,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           } else {
             const isMarathonOn = Boolean(
               remotePlaybackState.marathon ||
-                (typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true')
+              (typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true')
             );
             // PARTE 1 (5): Si es película, el fin de reproducción NO debe avanzar ni iniciar nada; solo avanza en series con Maratón activo
             if (isMarathonOn && activeMedia && isSeriesMediaItem(activeMedia)) {

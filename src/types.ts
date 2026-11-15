@@ -233,6 +233,7 @@ export interface PlaybackState {
     episodes: Array<{ season: number; episode: number; title: string; duration?: string }>;
   };
   introMarks?: { start: number; end: number } | null;
+  stateSeq?: number;
   sleepTimer?: {
     endsAt: number | null;
     mode: string;

@@ -144,6 +144,28 @@ export class DeviceSyncService {
   private lastStateReceivedTime: number = Date.now();
   private hasReceivedState: boolean = false;
   private stateWatchdogTimer: any = null;
+  private stateSeq: number = 0;
+  private lastSeenStateSeq: number = 0;
+  private requestFullStateListeners: Set<() => void> = new Set();
+
+  public getLastStateReceivedTime(): number {
+    return this.lastStateReceivedTime;
+  }
+
+  public getStateSeq(): number {
+    return this.stateSeq;
+  }
+
+  public getLastSeenStateSeq(): number {
+    return this.lastSeenStateSeq;
+  }
+
+  public onRequestFullState(listener: () => void): () => void {
+    this.requestFullStateListeners.add(listener);
+    return () => {
+      this.requestFullStateListeners.delete(listener);
+    };
+  }
 
   constructor() {
     this.initSenderEpoch();
@@ -1252,12 +1274,19 @@ export class DeviceSyncService {
       return;
     }
 
-    if (msg.type === 'joined' && typeof msg.senderEpoch === 'number' && msg.senderEpoch > this.clientEpoch) {
-      this.clientEpoch = msg.senderEpoch;
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('cinecast_sender_epoch', String(this.clientEpoch));
-        } catch (_) {}
+    if (msg.type === 'joined') {
+      if (typeof msg.senderEpoch === 'number' && msg.senderEpoch > this.clientEpoch) {
+        this.clientEpoch = msg.senderEpoch;
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('cinecast_sender_epoch', String(this.clientEpoch));
+          } catch (_) {}
+        }
+      }
+      if (this.deviceType === 'remote') {
+        this.requestState();
+      } else if (this.deviceType === 'screen' || this.deviceType === 'hybrid') {
+        this.requestFullStateListeners.forEach((fn) => fn());
       }
       return;
     }
@@ -1299,6 +1328,14 @@ export class DeviceSyncService {
           this.lastRemoteToastAtByDevice.set(fromId, now);
           this.remoteConnectedListeners.forEach((fn) => fn(msg.deviceName || 'Celular'));
         }
+        // REGLA (e): al recibir 'remote_connected' la PC emite de inmediato un estado completo
+        if (this.deviceType === 'screen' || this.deviceType === 'hybrid') {
+          this.requestFullStateListeners.forEach((fn) => fn());
+        }
+      }
+    } else if (msg.type === 'request_state') {
+      if (this.deviceType === 'screen' || this.deviceType === 'hybrid') {
+        this.requestFullStateListeners.forEach((fn) => fn());
       }
     } else if (msg.type === 'command' && msg.command) {
       if (msg.fromDevice !== this.deviceId) {
@@ -1352,6 +1389,13 @@ export class DeviceSyncService {
         }
       }
     } else if (msg.type === 'sync_state' && msg.state) {
+      if (typeof msg.state.stateSeq === 'number') {
+        if (msg.state.stateSeq < this.lastSeenStateSeq) {
+          console.log(`[deviceSync] Descartando stateSeq obsoleto: ${msg.state.stateSeq} < ${this.lastSeenStateSeq}`);
+          return;
+        }
+        this.lastSeenStateSeq = msg.state.stateSeq;
+      }
       this.lastStateReceivedTime = Date.now();
       this.hasReceivedState = true;
       if (typeof window !== 'undefined') {
@@ -1551,8 +1595,27 @@ export class DeviceSyncService {
     } catch (_) {}
   }
 
-  public broadcastPlaybackState(state: PlaybackState) {
+  public broadcastPlaybackState(state: PlaybackState, options?: { force?: boolean }) {
+    // REGLA (a): La PC es la única autoridad de verdad para tiempo, estado y capítulo
+    if (this.deviceType === 'remote') {
+      return;
+    }
     const now = Date.now();
+    // REGLA (b): Cada emisión de la PC lleva un stateSeq creciente (+1)
+    this.stateSeq += 1;
+    state.stateSeq = this.stateSeq;
+
+    if (options?.force) {
+      if (this.pendingBroadcastTimer) {
+        clearTimeout(this.pendingBroadcastTimer);
+        this.pendingBroadcastTimer = null;
+      }
+      this.lastStateBroadcastTime = now;
+      this.lastBroadcastedCurrentTime = Number(state.currentTime || 0);
+      this.sendBroadcastStatePayload(state);
+      return;
+    }
+
     // PARTE 3 (Paso 9c): Firma de todos los campos discretos (sin reenviar estados iguales salvo que haya cambiado algo o pasado 1 s reproduciendo)
     const summary = JSON.stringify({
       isPlaying: Boolean(state.isPlaying),
@@ -1604,6 +1667,25 @@ export class DeviceSyncService {
     this.lastBroadcastedStateSummary = summary;
     this.lastBroadcastedCurrentTime = curTime;
     this.sendBroadcastStatePayload(state);
+  }
+
+  public requestState(): void {
+    const payload = {
+      type: 'request_state',
+      roomId: this.roomId,
+      fromDevice: this.deviceId,
+    };
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify(payload));
+      } catch (_) {}
+    } else {
+      fetch(`${this.getApiBase()}/api/sync/state`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    }
   }
 
   public onCommand(handler: CommandHandler) {

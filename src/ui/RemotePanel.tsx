@@ -1,25 +1,22 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Cast,
   ChevronDown,
   ChevronUp,
+  Clock,
+  FastForward,
   Film,
   Gamepad2,
-  HelpCircle,
   ListVideo,
   Maximize2,
-  Moon,
   MousePointer,
   Music,
   Pause,
   Play,
-  Power,
   QrCode,
   Radio,
   Server,
   SkipBack,
   SkipForward,
-  FastForward,
   Sliders,
   Subtitles,
   Trophy,
@@ -27,15 +24,15 @@ import {
   Volume2,
   VolumeX,
   Wifi,
-  Youtube,
-  Clock,
+  Youtube
 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { deviceSync } from '../services/deviceSync';
+import { generateServersForMedia } from '../services/embedService';
 import type { Episode, MediaItem, PlaybackState, RemoteCommand } from '../types';
 import { createStyledPosterFallback } from '../utils/imageUtils';
-import { deviceSync } from '../services/deviceSync';
-import { Switch } from './Switch';
-import { generateServersForMedia } from '../services/embedService';
 import { PadSection } from './PadSection';
+import { Switch } from './Switch';
 
 export interface RemotePanelProps {
   playbackState?: PlaybackState | null;
@@ -111,10 +108,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     !playbackState?.sleepTimer || playbackState.sleepTimer.mode === 'off'
       ? 'Temporizador: apagado'
       : playbackState.sleepTimer.mode === 'chapter'
-      ? 'Al terminar el capítulo'
-      : playbackState.sleepTimer.endsAt
-      ? `${Math.max(1, Math.ceil((playbackState.sleepTimer.endsAt - sleepTimerNowMs) / 60000))} min restantes`
-      : `${playbackState.sleepTimer.minutes || playbackState.sleepTimer.mode} min restantes`;
+        ? 'Al terminar el capítulo'
+        : playbackState.sleepTimer.endsAt
+          ? `${Math.max(1, Math.ceil((playbackState.sleepTimer.endsAt - sleepTimerNowMs) / 60000))} min restantes`
+          : `${playbackState.sleepTimer.minutes || playbackState.sleepTimer.mode} min restantes`;
 
   const handleUpdateAudioOpts = (changes: Partial<typeof audioOpts>) => {
     const updated = { ...audioOpts, ...changes };
@@ -212,8 +209,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           info.status === 'failed'
             ? (info.reason || 'No llegó. Reintentá')
             : info.status === 'retrying'
-            ? 'Reconectando…'
-            : undefined,
+              ? 'Reconectando…'
+              : undefined,
       });
       if (info.status === 'confirmed') {
         const timer = setTimeout(() => {
@@ -231,7 +228,37 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
 
   const activeHub = (playbackState as any)?.activeHub || 'cinecast';
   const isStandby = Boolean(playbackState?.isStandby);
-  const isPlaying = Boolean(playbackState?.isPlaying);
+
+  // REGLA (c): El celular aplica acciones optimistas pero las reconcilia con el estado de la PC (2 s)
+  const [optimisticPlaying, setOptimisticPlaying] = useState<{ value: boolean; ts: number } | null>(null);
+  const isPlaying = useMemo(() => {
+    if (optimisticPlaying) {
+      if (Boolean(playbackState?.isPlaying) === optimisticPlaying.value) {
+        return optimisticPlaying.value;
+      }
+      if (Date.now() - optimisticPlaying.ts < 2000) {
+        return optimisticPlaying.value;
+      }
+    }
+    return Boolean(playbackState?.isPlaying);
+  }, [optimisticPlaying, playbackState?.isPlaying]);
+
+  // REGLA (f): Si pasan más de 3 s sin recibir estado de la PC mientras hay contenido activo, pasa a 'sin datos'
+  const [timeSinceLastState, setTimeSinceLastState] = useState<number>(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeSinceLastState(Date.now() - deviceSync.getLastStateReceivedTime());
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
+
+  const hasActiveContent = Boolean(
+    playbackState?.mediaTitle ||
+    playbackState?.mediaId ||
+    currentMedia?.title ||
+    (playbackState?.duration && playbackState.duration > 0)
+  );
+  const isWithoutData = hasActiveContent && timeSinceLastState > 3000;
 
   const isYouTube = activeHub === 'youtube';
   const isSpotify = activeHub === 'spotify';
@@ -265,6 +292,17 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   const [lastSeekTime, setLastSeekTime] = useState(0);
   const sliderTrackRef = useRef<HTMLDivElement>(null);
 
+  // REGLA (d): Estados de barra de volumen deslizable (congelada 1.2s tras soltar)
+  const [isDraggingVolume, setIsDraggingVolume] = useState(false);
+  const [dragVolume, setDragVolume] = useState<number>(100);
+  const [lastVolumeReleasedAt, setLastVolumeReleasedAt] = useState<number>(0);
+
+  const rawVolume = playbackState?.audioSettings?.volume ?? 100;
+  const isIgnoringVolumeUpdates = isDraggingVolume || (Date.now() - lastVolumeReleasedAt < 1200);
+  const currentVolume = isDraggingVolume
+    ? dragVolume
+    : (isIgnoringVolumeUpdates ? dragVolume : rawVolume);
+
   const rawDuration = playbackState?.duration ?? duration;
   const isDurationValid = typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration > 0;
   const effectiveDuration = isDurationValid ? rawDuration : 0;
@@ -291,7 +329,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     if (!isDurationValid || playbackState?.seekUnsupported) return;
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch (_) {}
+    } catch (_) { }
     setIsDraggingSlider(true);
     const t = getTimeFromPointer(e.clientX);
     setDragTime(t);
@@ -307,7 +345,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     if (!isDraggingSlider) return;
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch (_) {}
+    } catch (_) { }
     setIsDraggingSlider(false);
     const target = getTimeFromPointer(e.clientX);
     setLastSeekReleasedAt(Date.now());
@@ -330,7 +368,6 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     onSendCommand({ action: 'seek', payload: target });
   };
 
-  const currentVolume = playbackState?.audioSettings?.volume ?? 100;
   const isMuted = playbackState?.audioSettings?.isMuted ?? false;
   const subsEnabled = playbackState?.subtitlesEnabled ?? false;
 
@@ -346,8 +383,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     (typeof rawId === 'string' && /^\d+$/.test(rawId)
       ? Number(rawId)
       : typeof rawId === 'string' && rawId.includes('-')
-      ? Number(rawId.split('-').pop()) || 0
-      : 0);
+        ? Number(rawId.split('-').pop()) || 0
+        : 0);
 
   const fallbackServers = useMemo(() => {
     if (serversList.length > 0) return serversList;
@@ -356,9 +393,9 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         tmdbId,
         type:
           currentMedia?.type === 'series' ||
-          (currentMedia?.type as any) === 'anime' ||
-          currentMedia?.category === 'anime' ||
-          currentMedia?.category === 'series'
+            (currentMedia?.type as any) === 'anime' ||
+            currentMedia?.category === 'anime' ||
+            currentMedia?.category === 'series'
             ? 'series'
             : 'movie',
         season: seasonNum || 1,
@@ -444,7 +481,7 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             }))
           );
         }
-      } catch (_) {}
+      } catch (_) { }
     };
 
     loadSeasons();
@@ -604,42 +641,44 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
       >
         <div className="flex items-center gap-2.5 min-w-0">
           <span
-            className={`w-3 h-3 rounded-full shrink-0 ${
-              connStatus.state === 'otra-pestana'
+            className={`w-3 h-3 rounded-full shrink-0 ${connStatus.state === 'otra-pestana'
+              ? 'bg-amber-500'
+              : connStatus.isUnstable
                 ? 'bg-amber-500'
-                : connStatus.isUnstable
-                ? 'bg-amber-500'
-                : !isConnected || connStatus.state === 'disconnected'
-                ? 'bg-rose-500'
-                : connStatus.state === 'reconnecting' || isScreenReconnecting
+                : isWithoutData
                 ? 'bg-amber-500 animate-pulse'
-                : 'bg-emerald-500'
-            }`}
+                : !isConnected || connStatus.state === 'disconnected'
+                  ? 'bg-rose-500'
+                  : connStatus.state === 'reconnecting' || isScreenReconnecting
+                    ? 'bg-amber-500 animate-pulse'
+                    : 'bg-emerald-500'
+              }`}
           />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <p className="text-[11px] uppercase tracking-wider font-bold text-zinc-400">
+              <p className={`text-[11px] uppercase tracking-wider font-bold ${isWithoutData ? 'text-amber-400' : 'text-zinc-400'}`}>
                 {connStatus.state === 'otra-pestana'
                   ? 'La app está abierta en otra pestaña'
+                  : isWithoutData
+                  ? 'Sin datos'
                   : connStatus.isUnstable
-                  ? `Conexión inestable (code=${connStatus.closeCode ?? 1006}, wasClean=${String(Boolean(connStatus.wasClean))})`
-                  : !isConnected || connStatus.state === 'disconnected'
-                  ? 'Sin conexión'
-                  : connStatus.state === 'reconnecting' || isScreenReconnecting
-                  ? 'Reconectando...'
-                  : connStatus.latencyMs > 0
-                  ? `${connStatus.latencyMs} ms`
-                  : 'Conectado'}
+                    ? `Conexión inestable (code=${connStatus.closeCode ?? 1006}, wasClean=${String(Boolean(connStatus.wasClean))})`
+                    : !isConnected || connStatus.state === 'disconnected'
+                      ? 'Sin conexión'
+                      : connStatus.state === 'reconnecting' || isScreenReconnecting
+                        ? 'Reconectando...'
+                        : connStatus.latencyMs > 0
+                          ? `${connStatus.latencyMs} ms`
+                          : 'Conectado'}
               </p>
               {lastCommandFeedback && (
                 <span
-                  className={`text-xs font-bold transition flex items-center gap-1 ${
-                    lastCommandFeedback.status === 'confirmed'
-                      ? 'text-emerald-400'
-                      : lastCommandFeedback.status === 'retrying'
+                  className={`text-xs font-bold transition flex items-center gap-1 ${lastCommandFeedback.status === 'confirmed'
+                    ? 'text-emerald-400'
+                    : lastCommandFeedback.status === 'retrying'
                       ? 'text-amber-400 animate-pulse'
                       : 'text-rose-400'
-                  }`}
+                    }`}
                   title={lastCommandFeedback.message || ''}
                 >
                   <span>{lastCommandFeedback.status === 'confirmed' ? '✓' : '⚠'}</span>
@@ -673,11 +712,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <button
           type="button"
           onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'cinecast' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${
-            activeHub === 'cinecast' && !isStandby
-              ? 'bg-red-600 text-white shadow'
-              : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
-          }`}
+          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${activeHub === 'cinecast' && !isStandby
+            ? 'bg-red-600 text-white shadow'
+            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+            }`}
         >
           <Film className="w-4 h-4" />
           <span className="text-[11px]">Inicio</span>
@@ -686,11 +724,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <button
           type="button"
           onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'youtube' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${
-            isYouTube
-              ? 'bg-red-600 text-white shadow'
-              : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
-          }`}
+          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${isYouTube
+            ? 'bg-red-600 text-white shadow'
+            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+            }`}
         >
           <Youtube className="w-4 h-4 text-red-400" />
           <span className="text-[11px]">YouTube</span>
@@ -699,11 +736,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <button
           type="button"
           onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'spotify' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${
-            isSpotify
-              ? 'bg-emerald-600 text-white shadow'
-              : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
-          }`}
+          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${isSpotify
+            ? 'bg-emerald-600 text-white shadow'
+            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+            }`}
         >
           <Music className="w-4 h-4 text-emerald-400" />
           <span className="text-[11px]">Spotify</span>
@@ -712,11 +748,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <button
           type="button"
           onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'sports' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${
-            activeHub === 'sports'
-              ? 'bg-blue-600 text-white shadow'
-              : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
-          }`}
+          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${activeHub === 'sports'
+            ? 'bg-blue-600 text-white shadow'
+            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+            }`}
         >
           <Trophy className="w-4 h-4 text-amber-400" />
           <span className="text-[11px]">Partidos</span>
@@ -737,11 +772,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 setPadMode((prev) => (prev === 'touchpad' ? null : 'touchpad'));
               }
             }}
-            className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
-              padMode === 'touchpad'
-                ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
-                : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
-            }`}
+            className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${padMode === 'touchpad'
+              ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
+              : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+              }`}
           >
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow shrink-0">
@@ -769,11 +803,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 setPadMode((prev) => (prev === 'cruceta' ? null : 'cruceta'));
               }
             }}
-            className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${
-              padMode === 'cruceta'
-                ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
-                : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
-            }`}
+            className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${padMode === 'cruceta'
+              ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
+              : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+              }`}
           >
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow shrink-0">
@@ -855,9 +888,23 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 min={0}
                 max={100}
                 value={isMuted ? 0 : currentVolume}
-                onChange={(e) =>
-                  onSendCommand({ action: 'setVolume', payload: Number(e.target.value) })
-                }
+                onPointerDown={() => {
+                  setIsDraggingVolume(true);
+                  setDragVolume(currentVolume);
+                }}
+                onPointerUp={() => {
+                  setIsDraggingVolume(false);
+                  setLastVolumeReleasedAt(Date.now());
+                }}
+                onPointerCancel={() => {
+                  setIsDraggingVolume(false);
+                  setLastVolumeReleasedAt(Date.now());
+                }}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setDragVolume(val);
+                  onSendCommand({ action: 'setVolume', payload: val });
+                }}
                 aria-label="Control de volumen"
                 className="flex-1 accent-red-600 h-2 bg-zinc-700 rounded-lg cursor-pointer"
               />
@@ -1041,9 +1088,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   onPointerUp={handleSliderPointerUp}
                   onPointerCancel={handleSliderPointerCancel}
                   onClick={handleSliderClick}
-                  className={`w-full min-h-[44px] flex items-center relative select-none touch-none ${
-                    isDurationValid ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'
-                  }`}
+                  className={`w-full min-h-[44px] flex items-center relative select-none touch-none ${isDurationValid ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'
+                    }`}
                 >
                   {/* Pista visible de 8px */}
                   <div
@@ -1131,11 +1177,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 disabled={!hasPrevEpisode}
                 title={hasPrevEpisode ? 'Capítulo anterior' : 'Primer capítulo'}
                 onClick={() => onSendCommand({ action: 'prevEpisode' })}
-                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${
-                  hasPrevEpisode
-                    ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
-                    : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
-                }`}
+                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${hasPrevEpisode
+                  ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
+                  : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
+                  }`}
               >
                 <SkipBack className="w-5 h-5" />
               </button>
@@ -1144,7 +1189,11 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             <button
               type="button"
               aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
-              onClick={() => onSendCommand({ action: isPlaying ? 'pause' : 'play' })}
+              onClick={() => {
+                const next = !isPlaying;
+                setOptimisticPlaying({ value: next, ts: Date.now() });
+                onSendCommand({ action: next ? 'play' : 'pause' });
+              }}
               className="min-w-[58px] min-h-[58px] rounded-2xl bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition active:scale-95 shadow-lg shadow-red-950/50 cursor-pointer"
             >
               {isPlaying ? (
@@ -1161,11 +1210,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 disabled={!hasNextEpisode}
                 title={hasNextEpisode ? 'Capítulo siguiente' : 'Último capítulo'}
                 onClick={() => onSendCommand({ action: 'nextEpisode' })}
-                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${
-                  hasNextEpisode
-                    ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
-                    : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
-                }`}
+                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${hasNextEpisode
+                  ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
+                  : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
+                  }`}
               >
                 <SkipForward className="w-5 h-5" />
               </button>
@@ -1204,9 +1252,23 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 min={0}
                 max={100}
                 value={isMuted ? 0 : currentVolume}
-                onChange={(e) =>
-                  onSendCommand({ action: 'setVolume', payload: Number(e.target.value) })
-                }
+                onPointerDown={() => {
+                  setIsDraggingVolume(true);
+                  setDragVolume(currentVolume);
+                }}
+                onPointerUp={() => {
+                  setIsDraggingVolume(false);
+                  setLastVolumeReleasedAt(Date.now());
+                }}
+                onPointerCancel={() => {
+                  setIsDraggingVolume(false);
+                  setLastVolumeReleasedAt(Date.now());
+                }}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setDragVolume(val);
+                  onSendCommand({ action: 'setVolume', payload: val });
+                }}
                 aria-label="Control de volumen"
                 className="flex-1 accent-red-600 h-2 bg-zinc-700 rounded-lg cursor-pointer"
               />
@@ -1220,11 +1282,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               <button
                 type="button"
                 onClick={() => onSendCommand({ action: 'toggleSubtitles' })}
-                className={`min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                  subsEnabled
-                    ? 'bg-red-600 text-white shadow'
-                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
-                }`}
+                className={`min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${subsEnabled
+                  ? 'bg-red-600 text-white shadow'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                  }`}
               >
                 <Subtitles className="w-4 h-4" />
                 <span>Subtítulos {subsEnabled ? 'ON' : 'OFF'}</span>
@@ -1275,11 +1336,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                         onClick={() =>
                           onSendCommand({ action: 'selectServer', payload: { index: idx } })
                         }
-                        className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-bold transition flex items-center justify-between ${
-                          isActive
-                            ? 'bg-red-600 text-white shadow'
-                            : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
-                        }`}
+                        className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-bold transition flex items-center justify-between ${isActive
+                          ? 'bg-red-600 text-white shadow'
+                          : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
+                          }`}
                       >
                         <span className="truncate">{srv.name || `Servidor ${idx + 1}`}</span>
                         <div className="flex items-center gap-1.5 shrink-0">
@@ -1385,11 +1445,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                                   payload: { season: selectedSeason, episode: ep.episode },
                                 })
                               }
-                              className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-semibold transition flex items-center justify-between ${
-                                isCurrent
-                                  ? 'bg-red-600 text-white font-bold shadow'
-                                  : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
-                              }`}
+                              className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-semibold transition flex items-center justify-between ${isCurrent
+                                ? 'bg-red-600 text-white font-bold shadow'
+                                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
+                                }`}
                             >
                               <span className="truncate">
                                 E{ep.episode}: {ep.title}
@@ -1492,11 +1551,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <span
               data-testid="sleep-timer-status"
-              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                  : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'
-              }`}
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'
+                }`}
             >
               {sleepTimerStatusLabel}
             </span>
@@ -1566,11 +1624,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                     <span className="text-xs font-bold text-zinc-200 block">Temporizador de reposo</span>
                     <span
                       data-testid="sleep-timer-status-detail"
-                      className={`text-[11px] font-semibold block truncate ${
-                        playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
-                          ? 'text-amber-300'
-                          : 'text-zinc-400'
-                      }`}
+                      className={`text-[11px] font-semibold block truncate ${playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
+                        ? 'text-amber-300'
+                        : 'text-zinc-400'
+                        }`}
                     >
                       {sleepTimerStatusLabel}
                     </span>
@@ -1609,18 +1666,17 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                               'cinecast_sleep_timer_last_v1',
                               JSON.stringify({ mode: opt.mode, minutes: opt.minutes, updatedAt: Date.now() })
                             );
-                          } catch (_) {}
+                          } catch (_) { }
                         }
                         onSendCommand({
                           action: 'setSleepTimer',
                           payload: { mode: opt.mode, minutes: opt.minutes },
                         });
                       }}
-                      className={`min-h-[36px] px-1.5 py-1 rounded-lg text-[10px] font-bold border transition text-center ${
-                        isSelected
-                          ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
-                          : 'bg-zinc-900 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
-                      }`}
+                      className={`min-h-[36px] px-1.5 py-1 rounded-lg text-[10px] font-bold border transition text-center ${isSelected
+                        ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
+                        : 'bg-zinc-900 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+                        }`}
                     >
                       {opt.label}
                     </button>
@@ -1693,11 +1749,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   <button
                     type="button"
                     onClick={() => handleUpdateAudioOpts({ preset: 'dialogos' })}
-                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${
-                      audioOpts.preset === 'dialogos'
-                        ? 'bg-purple-950/60 border-purple-500 text-white shadow'
-                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
-                    }`}
+                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${audioOpts.preset === 'dialogos'
+                      ? 'bg-purple-950/60 border-purple-500 text-white shadow'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
+                      }`}
                   >
                     <span className="font-extrabold text-xs">Diálogos claros</span>
                     <span className="text-[10px] text-zinc-400 mt-1">Realce 1-3kHz</span>
@@ -1706,11 +1761,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   <button
                     type="button"
                     onClick={() => handleUpdateAudioOpts({ preset: 'nocturno' })}
-                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${
-                      audioOpts.preset === 'nocturno'
-                        ? 'bg-purple-950/60 border-purple-500 text-white shadow'
-                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
-                    }`}
+                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${audioOpts.preset === 'nocturno'
+                      ? 'bg-purple-950/60 border-purple-500 text-white shadow'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
+                      }`}
                   >
                     <span className="font-extrabold text-xs">Nocturno</span>
                     <span className="text-[10px] text-zinc-400 mt-1">Compresión alta</span>
@@ -1719,11 +1773,10 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                   <button
                     type="button"
                     onClick={() => handleUpdateAudioOpts({ preset: 'estandar' })}
-                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${
-                      audioOpts.preset === 'estandar'
-                        ? 'bg-purple-950/60 border-purple-500 text-white shadow'
-                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
-                    }`}
+                    className={`min-h-[44px] p-2.5 rounded-xl text-left border flex flex-col justify-between transition ${audioOpts.preset === 'estandar'
+                      ? 'bg-purple-950/60 border-purple-500 text-white shadow'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850'
+                      }`}
                   >
                     <span className="font-extrabold text-xs">Estándar</span>
                     <span className="text-[10px] text-zinc-400 mt-1">Plano original</span>

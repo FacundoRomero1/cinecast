@@ -12,7 +12,8 @@ import {
 } from '../app/syncDiagnostic';
 import { deviceSync, type ConnectionEventEntry } from '../services/deviceSync';
 import { useAppRuntime } from '../app/AppRuntime';
-import { Server, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Cpu } from 'lucide-react';
+import { computeSyncAuditReport, type SyncSample, type SyncAuditReport } from '../app/syncAuditor';
+import { Server, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Cpu, Activity } from 'lucide-react';
 
 export const ConnectionDiagnosticSection: React.FC = () => {
   const { deviceRole, roomId, devices } = useAppRuntime();
@@ -33,6 +34,10 @@ export const ConnectionDiagnosticSection: React.FC = () => {
   const [serverMeasureResults, setServerMeasureResults] = useState<any[]>([]);
   const [serverMeasureError, setServerMeasureError] = useState<string>('');
   const [copiedLatencyTable, setCopiedLatencyTable] = useState<boolean>(false);
+  const [isRecordingSync, setIsRecordingSync] = useState<boolean>(false);
+  const [syncElapsedSec, setSyncElapsedSec] = useState<number>(0);
+  const [syncReport, setSyncReport] = useState<SyncAuditReport | null>(null);
+  const syncTimerRef = React.useRef<any>(null);
   const [connectionEvents, setConnectionEvents] = useState<ConnectionEventEntry[]>(() =>
     deviceSync.getConnectionEvents()
   );
@@ -288,6 +293,79 @@ export const ConnectionDiagnosticSection: React.FC = () => {
       }
     }, 5000);
   };
+
+  const startSyncRecording = (durationSec = 180) => {
+    if (isRecordingSync) return;
+    setIsRecordingSync(true);
+    setSyncElapsedSec(0);
+    setSyncReport(null);
+
+    const pcSamples: SyncSample[] = [];
+    const phoneSamples: SyncSample[] = [];
+    const startTime = Date.now();
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const elapsed = Math.round((now - startTime) / 1000);
+      setSyncElapsedSec(elapsed);
+
+      const hora = new Date(now).toLocaleTimeString();
+      const runtime = (window as any).__cinecastRuntime;
+      const st = runtime?.remotePlaybackState || {};
+      const lastRx = deviceSync.getLastStateReceivedTime();
+      const age = Math.max(0, now - lastRx);
+
+      const localSample: SyncSample = {
+        hora,
+        timestamp: now,
+        role: deviceRole as 'screen' | 'remote',
+        playing: Boolean(st.isPlaying),
+        tiempo: Number((st.currentTime || 0).toFixed(1)),
+        duracion: Math.round(st.duration || 0),
+        capitulo: { season: st.seasonNumber || 1, episode: st.episodeNumber || 1 },
+        titulo: st.mediaTitle || '',
+        servidor: st.activeServerName || '',
+        vol: st.audioSettings?.volume ?? 100,
+        mute: Boolean(st.audioSettings?.isMuted),
+        subs: Boolean(st.subtitlesEnabled),
+        marathon: Boolean(st.marathon),
+        stateSeq: st.stateSeq || deviceSync.getStateSeq() || 0,
+        age,
+      };
+
+      if (deviceRole === 'screen') {
+        pcSamples.push(localSample);
+      } else {
+        phoneSamples.push(localSample);
+      }
+
+      if (elapsed >= durationSec) {
+        clearInterval(interval);
+        setIsRecordingSync(false);
+        const report = computeSyncAuditReport(pcSamples, phoneSamples);
+        setSyncReport(report);
+      }
+    }, 500);
+
+    syncTimerRef.current = interval;
+  };
+
+  const stopSyncRecording = () => {
+    if (syncTimerRef.current) {
+      clearInterval(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    setIsRecordingSync(false);
+  };
+
+  useEffect(() => {
+    const isDebugSync =
+      Boolean((window as any).CINECAST_DEBUG_SYNC) ||
+      (typeof localStorage !== 'undefined' && localStorage.getItem('CINECAST_DEBUG_SYNC') === '1');
+    if (isDebugSync) {
+      startSyncRecording(180);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if ((window as any).electronAPI?.isDebugPerf?.() || (window as any).CINECAST_DEBUG_PERF) {
@@ -564,6 +642,19 @@ export const ConnectionDiagnosticSection: React.FC = () => {
 
         <button
           type="button"
+          onClick={() => (isRecordingSync ? stopSyncRecording() : startSyncRecording(180))}
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition ${
+            isRecordingSync
+              ? 'bg-amber-600 hover:bg-amber-500 text-white'
+              : 'bg-indigo-700 hover:bg-indigo-600 text-white'
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          <span>{isRecordingSync ? `Grabando sincronía (${syncElapsedSec}s / 180s)...` : 'Grabar sincronía (3 min)'}</span>
+        </button>
+
+        <button
+          type="button"
           data-testid="btn-measure-servers"
           onClick={handleMeasureServers}
           disabled={isMeasuringServers}
@@ -607,6 +698,60 @@ export const ConnectionDiagnosticSection: React.FC = () => {
             rows={8}
             className="w-full rounded-lg bg-zinc-900 border border-zinc-800 p-2 font-mono text-[11px] text-zinc-300"
           />
+        </div>
+      )}
+
+      {syncReport && (
+        <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-3 font-mono text-[11px]">
+          <div className="flex items-center justify-between gap-2 border-b border-zinc-800 pb-2">
+            <span className="text-xs font-bold text-indigo-400">
+              Informe de Auditoría de Sincronía ({syncReport.durationSec}s - {syncReport.totalSamples} muestras)
+            </span>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(JSON.stringify(syncReport, null, 2));
+                  alert('Informe de auditoría copiado al portapapeles');
+                } catch (_) {}
+              }}
+              className="min-h-[32px] px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition"
+            >
+              Copiar JSON
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-zinc-300">
+            <div>Dif Media: <strong className="text-white">{syncReport.meanTimeDiffSec}s</strong></div>
+            <div>Dif Máxima: <strong className="text-white">{syncReport.maxTimeDiffSec}s</strong></div>
+            <div>Divergencias &gt; 2s: <strong className={syncReport.divergencesOver2sCount === 0 ? 'text-emerald-400' : 'text-amber-400'}>{syncReport.divergencesOver2sCount}</strong></div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="font-bold text-zinc-400">Desglose de campos desfasados:</div>
+            <div className="max-h-36 overflow-y-auto space-y-1">
+              {syncReport.fieldDivergences.map((fd) => (
+                <div key={fd.field} className="flex justify-between text-zinc-300 border-b border-zinc-900 py-0.5">
+                  <span>{fd.field}:</span>
+                  <span>{fd.divergenceCount} veces (total {fd.totalDurationMs}ms, máx {fd.maxDurationMs}ms)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {syncReport.top10WorstMoments.length > 0 && (
+            <div className="space-y-1">
+              <div className="font-bold text-amber-400">Top 10 Peores Momentos:</div>
+              <div className="max-h-48 overflow-y-auto space-y-1.5 divide-y divide-zinc-900">
+                {syncReport.top10WorstMoments.map((m, idx) => (
+                  <div key={idx} className="pt-1 text-zinc-400">
+                    <div className="text-zinc-200">#{idx + 1} - {m.hora} | Dif: {m.timeDiffSec}s | Campos: {m.divergentFields.join(', ') || 'tiempo'}</div>
+                    <div className="text-amber-300 text-[10px]">Causa probable: {m.probableCause}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
