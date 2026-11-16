@@ -131,6 +131,8 @@ export class DeviceSyncService {
   private rttHistory: number[] = [];
   private currentLatencyMs: number = 0;
   private lastPingSentAt: number = 0;
+  private lastPongReceivedAt: number = 0;
+  private isCheckingConnection: boolean = false;
   private telemetryCounters = {
     enviados: 0,
     acks: 0,
@@ -497,7 +499,9 @@ export class DeviceSyncService {
     const triggerImmediateReconnect = (triggerReason = 'lifecycle-resume') => {
       if (this.isOtherTabActive) return;
       const now = Date.now();
-      if (this.ws && this.ws.readyState === WebSocket.CONNECTING && now - this.lastConnectAttemptAt < 1000) {
+      if ((!this.isConnected && this.lastConnectAttemptAt > 0 && now - this.lastConnectAttemptAt < 2000) ||
+          (this.ws && this.ws.readyState === WebSocket.CONNECTING && now - this.lastConnectAttemptAt < 2000) ||
+          (this.reconnectTimer && now - this.lastConnectAttemptAt < 2000)) {
         return;
       }
       const gapMs = Math.max(
@@ -507,9 +511,13 @@ export class DeviceSyncService {
       const shouldForceReplace =
         !this.ws ||
         this.ws.readyState !== WebSocket.OPEN ||
+        triggerReason.includes('no-pong') ||
         triggerReason === 'lifecycle-resume' ||
         triggerReason === 'timer-freeze-resume' ||
         triggerReason === 'network-online' ||
+        triggerReason === 'window-focus' ||
+        triggerReason === 'visibility-visible' ||
+        triggerReason === 'window-pageshow' ||
         gapMs >= 4000;
       if (!shouldForceReplace) return;
 
@@ -529,26 +537,59 @@ export class DeviceSyncService {
       this.scheduleReconnect(true);
     };
 
+    const checkConnectionOrReconnect = (triggerReason: string) => {
+      if (this.isOtherTabActive) return;
+      const now = Date.now();
+      const isWsOpen = Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
+      const recentPong = (now - this.lastPongReceivedAt) < 15000;
+
+      if (isWsOpen && recentPong) {
+        if (this.isCheckingConnection) return;
+        this.isCheckingConnection = true;
+        const pingTime = now;
+        this.lastPingSentAt = pingTime;
+        try {
+          this.ws!.send(JSON.stringify({ type: 'ping', timestamp: pingTime, lastSeq: this.lastSeq }));
+        } catch (_) {
+          this.isCheckingConnection = false;
+          triggerImmediateReconnect(triggerReason);
+          return;
+        }
+
+        setTimeout(() => {
+          this.isCheckingConnection = false;
+          if (this.lastPongReceivedAt >= pingTime && this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.recordConnectionEvent('connected', 'ws', 'chequeo ok');
+          } else {
+            triggerImmediateReconnect(`${triggerReason}-no-pong`);
+          }
+        }, 1500);
+        return;
+      }
+
+      triggerImmediateReconnect(triggerReason);
+    };
+
     document.addEventListener('freeze', () => {
       this.frozenOrHiddenAt = Date.now();
       this.recordConnectionEvent('disconnect', 'none', 'lifecycle-freeze');
     });
 
     document.addEventListener('resume', () => {
-      triggerImmediateReconnect('lifecycle-resume');
+      checkConnectionOrReconnect('lifecycle-resume');
     });
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         this.frozenOrHiddenAt = Date.now();
       } else if (document.visibilityState === 'visible') {
-        triggerImmediateReconnect('visibility-visible');
+        checkConnectionOrReconnect('visibility-visible');
       }
     });
 
     window.addEventListener('online', () => triggerImmediateReconnect('network-online'));
-    window.addEventListener('pageshow', () => triggerImmediateReconnect('window-pageshow'));
-    window.addEventListener('focus', () => triggerImmediateReconnect('window-focus'));
+    window.addEventListener('pageshow', () => checkConnectionOrReconnect('window-pageshow'));
+    window.addEventListener('focus', () => checkConnectionOrReconnect('window-focus'));
   }
 
   private recordConnectionEvent(
@@ -704,6 +745,7 @@ export class DeviceSyncService {
         this.disconnectedSince = 0;
         this.frozenOrHiddenAt = 0;
         this.lastInboundWsAt = Date.now();
+        this.lastPongReceivedAt = Date.now();
         if (this.amberDelayTimer) {
           clearTimeout(this.amberDelayTimer);
           this.amberDelayTimer = null;
@@ -728,6 +770,7 @@ export class DeviceSyncService {
 
       this.ws.onmessage = (event) => {
         this.lastInboundWsAt = Date.now();
+        this.lastPongReceivedAt = Date.now();
         try {
           const msg = JSON.parse(event.data);
           this.handleIncomingRawMessage(msg);
@@ -965,6 +1008,9 @@ export class DeviceSyncService {
       const gap = this.lastHeartbeatTickAt > 0 ? now - this.lastHeartbeatTickAt : 0;
       this.lastHeartbeatTickAt = now;
       if (gap > 5000 && !this.isOtherTabActive) {
+        if (this.lastConnectAttemptAt > 0 && now - this.lastConnectAttemptAt < 2000) {
+          return;
+        }
         if (this.ws) {
           const prev = this.ws;
           this.ws = null;
@@ -1215,7 +1261,7 @@ export class DeviceSyncService {
         if (elapsed > 3000 && this.hasReceivedState) {
           this.notifyConnectionStatus(this.isConnected ? 'connected' : 'reconnecting');
           // Forzar resincronización de estado
-          this.sendJoin();
+          this.requestState();
           if (this.httpPollTimer) {
             this.sendHttpJoin();
           }
@@ -1300,6 +1346,7 @@ export class DeviceSyncService {
     } else if (msg.type === 'nack' && msg.id) {
       this.handleNack(msg.id, msg);
     } else if (msg.type === 'pong') {
+      this.lastPongReceivedAt = Date.now();
       if (this.lastPingSentAt > 0) {
         this.currentLatencyMs = Math.max(1, Date.now() - this.lastPingSentAt);
         this.notifyConnectionStatus('connected', 'ws');
