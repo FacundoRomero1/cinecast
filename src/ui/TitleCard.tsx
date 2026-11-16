@@ -117,8 +117,8 @@ export const TitleCard: React.FC<TitleCardProps> = ({
           {item.title}
         </h3>
 
-        <div className="flex items-center justify-between gap-1.5 text-[11px] text-zinc-400">
-          <div className="flex items-center gap-1.5 min-w-0">
+        <div data-card-meta className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-zinc-400">
+          <div data-card-rating className="flex items-center gap-1.5 shrink-0">
             <span>{item.year}</span>
             <span>•</span>
             <span className="inline-flex items-center gap-0.5 text-amber-400 font-semibold">
@@ -128,6 +128,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({
           </div>
 
           <span
+            data-card-badge
             className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0 ${
               isSeries
                 ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
