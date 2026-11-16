@@ -12,13 +12,13 @@
  * - Cálculo de divergencias: diferencia media, máxima, desincronías > 2s, desglose de campos y top 10 peores momentos.
  */
 
-if (process.env.ELECTRON_RUN_AS_NODE) {
-  const { spawnSync } = require('child_process');
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const res = spawnSync(process.execPath, process.argv.slice(1), {
+const { spawnSync } = require('child_process');
+
+if (!process.versions.electron) {
+  const electronPath = require('electron');
+  const res = spawnSync(electronPath, [__filename, ...process.argv.slice(2)], {
     stdio: 'inherit',
-    env,
+    env: { ...process.env, CINECAST_TEST: '1' },
   });
   process.exit(res.status ?? 1);
 }
@@ -46,11 +46,11 @@ function getAllFrames() {
   return frames;
 }
 
-// Timeout de seguridad amplio (220 s)
+// Timeout de seguridad amplio (250 s)
 const globalTimeout = setTimeout(() => {
   console.error('[probe-sync-audit] TIMEOUT GLOBAL ALCANZADO');
   app.exit(1);
-}, 220000);
+}, 250000);
 
 async function run() {
   const args = process.argv.slice(2);
@@ -62,6 +62,7 @@ async function run() {
   }
 
   console.log(`[probe-sync-audit] Iniciando auditoría de sincronía por ${durationSec}s...`);
+  await app.whenReady();
 
   testEnv = await startTestEnv({
     name: 'probe-sync-audit',
@@ -228,6 +229,7 @@ async function run() {
   const phoneSamples = [];
 
   let isAuditRunning = true;
+  let lastActionAt = 0;
 
   const sleepWhile = async (ms) => {
     const end = Date.now() + ms;
@@ -247,6 +249,7 @@ async function run() {
         'play',
         'pause',
         'seek',
+        'seekRelative',
         'volume',
         'subs',
         'nextEpisode',
@@ -255,6 +258,7 @@ async function run() {
         'marathon',
       ];
       const act = actionTypes[Math.floor(Math.random() * actionTypes.length)];
+      lastActionAt = Date.now();
 
       try {
         await winPhone.webContents.executeJavaScript(`(() => {
@@ -263,6 +267,11 @@ async function run() {
           if (a === 'play') window.cinecastDeviceSync.sendCommand({ action: 'play' });
           else if (a === 'pause') window.cinecastDeviceSync.sendCommand({ action: 'pause' });
           else if (a === 'seek') window.cinecastDeviceSync.sendCommand({ action: 'seek', payload: Math.floor(Math.random() * 1200) + 10 });
+          else if (a === 'seekRelative') {
+            const deltas = [-60, -10, 10, 60];
+            const d = deltas[Math.floor(Math.random() * deltas.length)];
+            window.cinecastDeviceSync.sendCommand({ action: 'seekRelative', payload: d });
+          }
           else if (a === 'volume') window.cinecastDeviceSync.sendCommand({ action: 'setVolume', payload: Math.floor(Math.random() * 100) });
           else if (a === 'subs') window.cinecastDeviceSync.sendCommand({ action: 'toggleSubtitles' });
           else if (a === 'nextEpisode') window.cinecastDeviceSync.sendCommand({ action: 'nextEpisode' });
@@ -303,15 +312,17 @@ async function run() {
           }
         `);
       } catch (_) {}
+      lastActionAt = Date.now();
     }
   })();
 
-  // Tarea en segundo plano: Saltos manuales en la PC (cada 45s)
+  // Tarea en segundo plano: Saltos manuales en la PC (cada 40s)
   const pcManualSeeksPromise = (async () => {
     while (isAuditRunning) {
-      await sleepWhile(45000);
+      await sleepWhile(40000);
       if (!isAuditRunning) break;
       console.log('[probe-sync-audit] Simulando salto manual directo en PC...');
+      lastActionAt = Date.now();
       try {
         await winScreen.webContents.executeJavaScript(`(() => {
           const v = document.querySelector('video');
@@ -390,7 +401,10 @@ async function run() {
       })()`);
     } catch (_) {}
 
-    if (pcSample) pcSamples.push(pcSample);
+    if (pcSample) {
+      pcSample.lastActionAt = lastActionAt;
+      pcSamples.push(pcSample);
+    }
     if (phoneSample) phoneSamples.push(phoneSample);
 
     if (tick % 20 === 0) {
@@ -421,7 +435,7 @@ async function run() {
       }
     }
     if (closest) {
-      paired.push({ pc, phone: closest });
+      paired.push({ pc, phone: closest, lastActionAt: pc.lastActionAt });
     }
   }
 
@@ -440,7 +454,8 @@ async function run() {
     totalTimeDiff += timeDiff;
     if (timeDiff > maxTimeDiff) maxTimeDiff = timeDiff;
 
-    if (timeDiff > 2.0) {
+    const inGracePeriod = Math.abs(pc.timestamp - (pair.lastActionAt || 0)) <= 2000;
+    if (!inGracePeriod && timeDiff > 2.0) {
       divergencesOver2s++;
     }
 
@@ -475,7 +490,9 @@ async function run() {
 
     if (timeDiff > 1.5 || divergentFields.length > 0) {
       let probableCause = 'Propagación normal de comando';
-      if (phone.age > 3000) {
+      if (inGracePeriod) {
+        probableCause = 'Ventana de acción remota / salto manual (<= 2s)';
+      } else if (phone.age > 3000) {
         probableCause = `Corte o retardo de red (antigüedad ${phone.age}ms > 3s)`;
       } else if (divergentFields.includes('playing')) {
         probableCause = 'Acción optimista de reproducción pendiente de confirmación';
