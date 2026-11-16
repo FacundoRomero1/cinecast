@@ -7,6 +7,13 @@ export interface StreamServer {
   language?: string;  // "Latino", "Subtitulado", "Castellano", "Original"
   referrer?: string | null;
   userAgent?: string | null;
+  id?: number | string;
+  playable?: 'hls' | 'iframe';
+  validated?: boolean;
+  popular?: number;
+  picks?: number;
+  acao?: string | null;
+  speedMs?: number;
 }
 
 export interface LiveSportsChannel {

@@ -1,16 +1,19 @@
-import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
+import crypto from 'node:crypto';
+import { broadcastWsEvent } from '../ws.js';
+import { recordServerPenalty, getPenaltiesCount, getAllPenalties } from './penalties.js';
 import {
+  getCachedServerList,
   getResolveMetrics,
   getServers,
   peekCachedResolve,
+  resolveServerPlay,
   resolveWithBackground,
   type MediaResolveType,
   type ResolveParams,
   type ResolveResult,
 } from './index.js';
 import { buildCoalescingKey } from './queue.js';
-import { broadcastWsEvent } from '../ws.js';
 
 export interface ResolveRouterOptions {
   baseDir?: string | undefined;
@@ -82,18 +85,52 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
     const jobId = crypto.randomUUID();
     const coalescingKey = buildCoalescingKey(providerId, params);
 
+    const rawLang = (req.body as any)?.lang;
+    const requestedLang = typeof rawLang === 'string' && rawLang.trim() ? rawLang.trim().toLowerCase() : 'latino';
+    const serverCacheKey = `servers:${providerId}:${params.type}:${params.tmdbId}:${params.season ?? null}:${params.episode ?? null}:${requestedLang}`;
+
+    // 0. Revisar si la lista de servidores ya está resuelta en caché para este título
+    const cachedServerEntry = getCachedServerList(serverCacheKey);
+    if (cachedServerEntry && cachedServerEntry.value.servers.length > 0) {
+      const servers = cachedServerEntry.value.servers;
+      const resVal: ResolveResult = {
+        status: 'ready',
+        url: servers[0]?.url || '',
+        serverCount: servers.length,
+        waitedMs: 0,
+      };
+      broadcastWsEvent({
+        type: 'resolve',
+        jobId,
+        ...resVal,
+        servers,
+      });
+
+      res.json({
+        jobId,
+        cached: true,
+        ...resVal,
+        servers,
+      });
+      return;
+    }
+
     const cachedHit = peekCachedResolve(providerId, params, baseDir);
     if (cachedHit) {
+      const cachedServers = getCachedServerList(serverCacheKey) || getCachedServerList(coalescingKey);
+      const servers = cachedServers?.value?.servers || [];
       broadcastWsEvent({
         type: 'resolve',
         jobId,
         ...cachedHit,
+        servers,
       });
 
       res.json({
         jobId,
         cached: true,
         ...cachedHit,
+        servers,
       });
       return;
     }
@@ -121,22 +158,25 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
       }
       record.result = firstResult;
 
+      const cachedServers = getCachedServerList(serverCacheKey) || getCachedServerList(coalescingKey);
       broadcastWsEvent({
         type: 'resolve',
         jobId,
         ...firstResult,
+        servers: cachedServers?.value?.servers || [],
       });
     });
 
     const pComplete = handle.completionPromise
       .then((finalResult) => {
-        if (handle.timedOutSoft()) {
-          broadcastWsEvent({
-            type: 'resolve',
-            jobId,
-            ...finalResult,
-          });
-        }
+        record.result = finalResult;
+        const cachedServers = getCachedServerList(serverCacheKey) || getCachedServerList(coalescingKey);
+        broadcastWsEvent({
+          type: 'resolve',
+          jobId,
+          ...finalResult,
+          servers: cachedServers?.value?.servers || [],
+        });
       })
       .catch(() => {
         if (handle.timedOutSoft()) {
@@ -150,6 +190,7 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
             type: 'resolve',
             jobId,
             ...fallbackResult,
+            servers: [],
           });
         }
       });
@@ -196,11 +237,100 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
     res.json(result);
   });
 
+  // POST /api/resolve/play (Acuña URL fresca bajo demanda, fusiona cadena completa si no hay lista cacheada)
+  router.post('/resolve/play', async (req: Request, res: Response) => {
+    const rawBody = req.body || {};
+    const parsed = parseResolveBody({
+      providerId: rawBody.providerId,
+      tmdbId: rawBody.tmdbId ?? rawBody.params?.tmdbId,
+      type: rawBody.type ?? rawBody.params?.type,
+      season: rawBody.season ?? rawBody.params?.season,
+      episode: rawBody.episode ?? rawBody.params?.episode,
+    });
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    const rawServerId =
+      rawBody.serverId !== undefined &&
+      rawBody.serverId !== null &&
+      String(rawBody.serverId).trim() !== '' &&
+      String(rawBody.serverId) !== '0'
+        ? rawBody.serverId
+        : undefined;
+
+    const preferredServerId = rawBody.preferredServerId;
+    const preferredServerName = rawBody.preferredServerName;
+
+    const lang = typeof rawBody.lang === 'string' && rawBody.lang.trim()
+      ? rawBody.lang.trim()
+      : 'latino';
+
+    try {
+      const result = await resolveServerPlay(
+        parsed.providerId,
+        rawServerId,
+        parsed.params,
+        lang,
+        baseDir,
+        preferredServerId,
+        preferredServerName
+      );
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        serverId: rawServerId ?? 0,
+        error: err?.message || 'Error al acuñar servidor para reproducción',
+      });
+    }
+  });
+
+  // POST /api/resolve/penalty (Registra penalización adaptativa ante fallo o timeout 12s)
+  router.post('/resolve/penalty', (req: Request, res: Response) => {
+    const rawBody = req.body || {};
+    const providerId = rawBody.providerId || 'tukiplay';
+    const tmdbId = rawBody.tmdbId ?? rawBody.params?.tmdbId;
+    const type = rawBody.type ?? rawBody.params?.type ?? 'movie';
+    const serverId = rawBody.serverId;
+    const penaltyMs = Number(rawBody.penaltyMs) || 15_000;
+    const reason = rawBody.reason || 'desconocido';
+
+    if (!tmdbId || serverId === undefined || serverId === null) {
+      res.status(400).json({ error: 'Faltan parámetros requeridos tmdbId o serverId' });
+      return;
+    }
+
+    const titleId = `${type}:${tmdbId}`;
+    const newPenalty = recordServerPenalty(providerId, titleId, serverId, penaltyMs, reason);
+    console.log(`[Penalty] Servidor "${serverId}" penalizado en ${titleId}: +${penaltyMs}ms (total=${newPenalty}ms, motivo="${reason}")`);
+
+    res.json({
+      success: true,
+      providerId,
+      titleId,
+      serverId,
+      penaltyMs: newPenalty,
+      penaltiesCount: getPenaltiesCount(),
+    });
+  });
+
+  // GET /api/resolve/penalties
+  router.get('/resolve/penalties', (_req: Request, res: Response) => {
+    res.json({
+      count: getPenaltiesCount(),
+      penalties: getAllPenalties(),
+    });
+  });
+
   // GET /api/resolve/status (registrado antes de :jobId)
   router.get('/resolve/status', (_req: Request, res: Response) => {
     res.json({
       metrics: getResolveMetrics(baseDir),
       jobsTracked: jobs.size,
+      penaltiesCount: getPenaltiesCount(),
+      penalties: getAllPenalties(),
     });
   });
 
@@ -224,11 +354,14 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
       return;
     }
 
+    const fallbackServerKey = `servers:${record.providerId}:${record.coalescingKey.split(':').slice(1).join(':')}:latino`;
+    const cachedServers = getCachedServerList(record.coalescingKey) || getCachedServerList(fallbackServerKey);
     res.json({
       jobId: record.jobId,
       cached: record.cached,
       coalesced: record.coalesced,
       ...(record.result || { status: 'degraded', url: '', serverCount: 0, waitedMs: 0 }),
+      servers: cachedServers?.value?.servers || [],
     });
   });
 

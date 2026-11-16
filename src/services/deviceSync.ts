@@ -97,6 +97,7 @@ export class DeviceSyncService {
   private lastRemoteToastAtByDevice: Map<string, number> = new Map();
   private commandStatusListeners: Set<(info: { id: string; status: 'confirmed' | 'retrying' | 'failed'; rttMs?: number; reason?: string }) => void> = new Set();
   private tabReplacedListeners: Set<(isReplaced: boolean, reason?: string) => void> = new Set();
+  private resolveListeners: Set<(msg: any) => void> = new Set();
 
   private knownDevices: Map<string, DeviceInfo> = new Map();
   private lanIp: string = '';
@@ -293,45 +294,58 @@ export class DeviceSyncService {
   }
 
   private initDeviceId() {
-    let id = localStorage.getItem('cinecast_device_id');
-    if (!id) {
+    let id: string | null = null;
+    if (typeof localStorage !== 'undefined') {
+      id = localStorage.getItem('cinecast_device_id');
+      if (!id) {
+        id = 'dev_' + Math.random().toString(36).substring(2, 9);
+        localStorage.setItem('cinecast_device_id', id);
+      }
+    } else {
       id = 'dev_' + Math.random().toString(36).substring(2, 9);
-      localStorage.setItem('cinecast_device_id', id);
     }
     this.deviceId = id;
 
-    const params = new URLSearchParams(window.location.search);
-    const roomFromUrl = params.get('room');
-    if (roomFromUrl) {
-      this.roomId = roomFromUrl;
-      localStorage.setItem('cinecast_room_id', roomFromUrl);
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location?.search || '');
+      const roomFromUrl = params.get('room');
+      if (roomFromUrl) {
+        this.roomId = roomFromUrl;
+        if (typeof localStorage !== 'undefined') localStorage.setItem('cinecast_room_id', roomFromUrl);
+      } else if (typeof localStorage !== 'undefined') {
+        const savedRoom = localStorage.getItem('cinecast_room_id');
+        if (savedRoom) this.roomId = savedRoom;
+      }
+
+      const roleFromUrl = params.get('role');
+      const isMobileUA = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+      if (roleFromUrl === 'remote') {
+        this.deviceType = 'remote';
+        this.deviceName = 'Celular Control';
+      } else if (roleFromUrl === 'screen') {
+        this.deviceType = 'screen';
+        this.deviceName = 'PC / Pantalla Principal';
+      } else if (isMobileUA) {
+        this.deviceType = 'remote';
+        this.deviceName = 'Celular Control';
+      } else {
+        this.deviceType = 'screen';
+        this.deviceName = 'PC / Pantalla Principal';
+      }
     } else {
-      const savedRoom = localStorage.getItem('cinecast_room_id');
-      if (savedRoom) this.roomId = savedRoom;
-    }
-
-    const roleFromUrl = params.get('role');
-    const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-
-    if (roleFromUrl === 'remote') {
-      this.deviceType = 'remote';
-      this.deviceName = 'Celular Control';
-    } else if (roleFromUrl === 'screen') {
       this.deviceType = 'screen';
       this.deviceName = 'PC / Pantalla Principal';
-    } else if (isMobileUA) {
-      this.deviceType = 'remote';
-      this.deviceName = 'Celular Control';
-    } else {
-      this.deviceType = 'screen';
-      this.deviceName = 'PC / Pantalla Principal';
     }
 
-    localStorage.setItem('cinecast_device_type', this.deviceType);
-    localStorage.setItem('cinecast_device_name', this.deviceName);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('cinecast_device_type', this.deviceType);
+      localStorage.setItem('cinecast_device_name', this.deviceName);
+    }
   }
 
   private initBroadcastChannel() {
+    if (typeof window === 'undefined') return;
     try {
       if (typeof BroadcastChannel !== 'undefined') {
         this.broadcastChannel = new BroadcastChannel('cinecast_local_bus_' + this.roomId);
@@ -1254,6 +1268,7 @@ export class DeviceSyncService {
   }
 
   private startStateWatchdog() {
+    if (typeof window === 'undefined') return;
     if (this.stateWatchdogTimer) clearInterval(this.stateWatchdogTimer);
     this.stateWatchdogTimer = setInterval(() => {
       if (this.deviceType === 'remote' && this.isConnected) {
@@ -1271,6 +1286,7 @@ export class DeviceSyncService {
   }
 
   private startTelemetryReporting() {
+    if (typeof window === 'undefined') return;
     if (this.telemetryTimer) clearInterval(this.telemetryTimer);
     this.telemetryTimer = setInterval(() => {
       if (typeof window === 'undefined') return;
@@ -1473,6 +1489,12 @@ export class DeviceSyncService {
       this.watchHistoryListeners.forEach((fn) => {
         try {
           fn(msg.items);
+        } catch (_) {}
+      });
+    } else if (msg.type === 'resolve') {
+      this.resolveListeners.forEach((fn) => {
+        try {
+          fn(msg);
         } catch (_) {}
       });
     }
@@ -1780,6 +1802,13 @@ export class DeviceSyncService {
     this.watchHistoryListeners.add(handler);
     return () => {
       this.watchHistoryListeners.delete(handler);
+    };
+  }
+
+  public onResolve(handler: (msg: any) => void) {
+    this.resolveListeners.add(handler);
+    return () => {
+      this.resolveListeners.delete(handler);
     };
   }
 

@@ -16,6 +16,7 @@ import { createSportsRouter, type SportsOptions } from './routes/sports.js';
 import { createSyncRouter } from './routes/sync.js';
 import { createTmdbDetailRouter, type TmdbDetailOptions } from './routes/tmdb-detail.js';
 import { createYouTubeRouter } from './routes/youtube.js';
+import { createResolveRouter } from './resolve/router.js';
 import { getSavedTmdbKey, saveTmdbKeyToConfig, setTmdbConfigDir } from './tmdb.js';
 
 export interface CreateAppOptions {
@@ -136,6 +137,7 @@ export function createApp(options: CreateAppOptions): Express {
   app.use('/api', createAccountsRouter(accountsOpts));
   app.use('/api', createYouTubeRouter());
   app.use('/api', createClientLogRouter());
+  app.use('/api', createResolveRouter({ baseDir: options.baseDir }));
 
   // PARTE 4 (Paso 10): Clave de TMDB configurable en userData/cinecast-config.json (POST solo desde 127.0.0.1)
   const maskTmdbKey = (k: string | null): string => {

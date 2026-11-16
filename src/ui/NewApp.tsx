@@ -1064,8 +1064,10 @@ const TitleDetailRouteView: React.FC = () => {
       try {
         // Consultar /api/catalog?ids= para obtener CardItem real del catálogo de 10.119 títulos
         const base = deviceSync.getApiBase();
+        const queryId = id.startsWith('tmdb-') ? id : `tmdb-${type === 'series' || type === 'anime' ? 'tv' : 'movie'}-${id}`;
+        const idsToFetch = id === queryId ? encodeURIComponent(id) : `${encodeURIComponent(id)},${encodeURIComponent(queryId)}`;
         const catRes = await fetch(
-          `${base}/api/catalog?ids=${encodeURIComponent(id)}&fields=card`
+          `${base}/api/catalog?ids=${idsToFetch}&fields=card`
         );
         let card: CardItem | null = null;
         if (catRes.ok) {

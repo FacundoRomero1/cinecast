@@ -63,6 +63,11 @@ export function buildBrowserHeaders(
 
   if (options.extraHeaders) {
     for (const [k, v] of Object.entries(options.extraHeaders)) {
+      for (const existingKey of Object.keys(headers)) {
+        if (existingKey.toLowerCase() === k.toLowerCase()) {
+          delete headers[existingKey];
+        }
+      }
       headers[k] = v;
     }
   }

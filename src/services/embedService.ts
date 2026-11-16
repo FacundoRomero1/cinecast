@@ -243,19 +243,49 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
 
   // 7. Si el usuario tiene un servidor ganador/preferido en localStorage, ubicarlo al frente
   try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      let preferred = window.localStorage.getItem('cinecast_preferred_server');
-      if (preferred && (preferred.toLowerCase().includes('autoembed.cc') || preferred.toLowerCase().includes('vidsrc.pro') || preferred.includes('Latino HD'))) {
-        preferred = 'TukiPlay (HD)';
-        window.localStorage.setItem('cinecast_preferred_server', preferred);
+    if (typeof window !== 'undefined' && window.localStorage && tmdbId) {
+      const favKey = `cinecast_fav_server:${type}:${tmdbId}`;
+      let raw = window.localStorage.getItem(favKey);
+      if (!raw && (type === 'anime' || (type as string) === 'tv')) {
+        raw = window.localStorage.getItem(`cinecast_fav_server:series:${tmdbId}`);
       }
-      if (preferred) {
-        const prefIdx = ordered.findIndex(
-          (s) => s.name.toLowerCase() === preferred.toLowerCase()
-        );
-        if (prefIdx > 0) {
-          const [fav] = ordered.splice(prefIdx, 1);
-          ordered.unshift(fav);
+      if (raw) {
+        let preferredName = '';
+        let preferredId: string | number | undefined = undefined;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.name) preferredName = parsed.name;
+            if (parsed.id !== undefined) preferredId = parsed.id;
+          }
+        } catch (_) {}
+        if (!preferredName && typeof raw === 'string') {
+          preferredName = raw;
+        }
+        if (preferredName || preferredId !== undefined) {
+          const prefIdx = ordered.findIndex((s) => {
+            if (preferredId !== undefined && (s as any).id !== undefined) {
+              return String((s as any).id) === String(preferredId);
+            }
+            if (preferredName && s.name) {
+              return s.name.toLowerCase() === preferredName.toLowerCase();
+            }
+            return false;
+          });
+          if (prefIdx > 0) {
+            const [fav] = ordered.splice(prefIdx, 1);
+            const isFavHls = fav.type === 'hls' || (fav as any).playable === 'hls';
+            const hasHls = ordered.some((s) => s.type === 'hls' || (s as any).playable === 'hls');
+
+            // Requisito 5: usá el favorito solo para reordenar dentro del mismo tipo (hls con hls, iframe con iframe).
+            // Si hay HLS disponible y el favorito es iframe, gana el HLS.
+            if (!isFavHls && hasHls) {
+              const lastHlsIdx = ordered.reduce((acc, s, idx) => (s.type === 'hls' || (s as any).playable === 'hls' ? idx : acc), -1);
+              ordered.splice(lastHlsIdx + 1, 0, fav);
+            } else {
+              ordered.unshift(fav);
+            }
+          }
         }
       }
     }

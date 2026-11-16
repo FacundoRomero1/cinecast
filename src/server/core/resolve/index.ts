@@ -1,4 +1,39 @@
 import {
+  canExecuteWithBreaker,
+  getAllBreakerStates,
+  getBreakerState,
+  recordBreakerFailure,
+  recordBreakerSuccess,
+  resetBreaker,
+  type BreakerStateSnapshot,
+} from './breaker.js';
+import {
+  clearResolveCache,
+  getCachedResolve,
+  getCachedServerList,
+  getMappingCache,
+  getNegativeCacheEntry,
+  getResolveCacheStats,
+  invalidateMappingCache,
+  SERVER_LIST_HLS_TTL_MS,
+  SERVER_LIST_IFRAME_TTL_MS,
+  SERVER_LIST_TTL_MS,
+  setCachedServerList,
+  setMappingCache,
+  setNegativeCache,
+  setPositiveCache,
+  type CachedServerMetadata,
+  type ResolvedServerEntry,
+  type ResolveResult,
+  type ServerPlayable,
+} from './cache.js';
+import {
+  getServerPenalty,
+  recordServerPenalty,
+  getPenaltiesCount,
+  getAllPenalties,
+} from './penalties.js';
+import {
   getProviderConfig,
   loadProvidersConfig,
   type ProviderConfig,
@@ -17,38 +52,15 @@ import {
   runWithQueueAndCoalescingKey,
   type MediaResolveType,
 } from './queue.js';
-import {
-  clearResolveCache,
-  getCachedResolve,
-  getCachedServerList,
-  getResolveCacheStats,
-  SERVER_LIST_HLS_TTL_MS,
-  SERVER_LIST_IFRAME_TTL_MS,
-  setCachedServerList,
-  setNegativeCache,
-  setPositiveCache,
-  type ResolveResult,
-  type ResolvedServerEntry,
-  type ServerPlayable,
-} from './cache.js';
-import {
-  canExecuteWithBreaker,
-  getAllBreakerStates,
-  getBreakerState,
-  recordBreakerFailure,
-  recordBreakerSuccess,
-  resetBreaker,
-  type BreakerStateSnapshot,
-} from './breaker.js';
 
+export type { BreakerStateSnapshot } from './breaker.js';
+export { getCachedServerList, SERVER_LIST_TTL_MS } from './cache.js';
 export type {
-  ResolveResult,
-  ResolveStatus,
-  ResolvedServerEntry,
-  ServerPlayable,
+  CachedServerMetadata,
+  ResolvedServerEntry, ResolveResult,
+  ResolveStatus, ServerPlayable
 } from './cache.js';
 export type { MediaResolveType } from './queue.js';
-export type { BreakerStateSnapshot } from './breaker.js';
 
 export type ServerLanguage = 'latino' | 'sub' | (string & {});
 
@@ -478,7 +490,7 @@ export function peekCachedResolve(
     resolveMetrics.staleHits += 1;
     const targetUrl = buildProviderUrl(provider, params);
     if (canExecuteWithBreaker(provider.id, provider)) {
-      void triggerQueuedResolve(provider, params, targetUrl, baseDir).catch(() => {});
+      void triggerQueuedResolve(provider, params, targetUrl, baseDir).catch(() => { });
     }
   }
 
@@ -542,7 +554,7 @@ export function resolveWithBackground(
 
     if (cached.stale && canExecuteWithBreaker(provider.id, provider)) {
       resolveMetrics.staleHits += 1;
-      void triggerQueuedResolve(provider, params, targetUrl, baseDir).catch(() => {});
+      void triggerQueuedResolve(provider, params, targetUrl, baseDir).catch(() => { });
     }
 
     const hit: ResolveResult = {
@@ -575,8 +587,8 @@ export function resolveWithBackground(
 
   const softDeadlineMs =
     typeof provider.softDeadlineMs === 'number' &&
-    Number.isFinite(provider.softDeadlineMs) &&
-    provider.softDeadlineMs > 0
+      Number.isFinite(provider.softDeadlineMs) &&
+      provider.softDeadlineMs > 0
       ? provider.softDeadlineMs
       : 4000;
 
@@ -609,7 +621,7 @@ export function resolveWithBackground(
   });
 
   // Evita unhandled rejection si un caller solo espera firstPromise
-  void completionPromise.catch(() => {});
+  void completionPromise.catch(() => { });
 
   return {
     firstPromise,
@@ -738,41 +750,91 @@ function isBlockedEarnvidsCdnHost(urlStr: string): boolean {
   }
 }
 
-function buildOrderedHlsCandidates(streamUrl: string, cdnUrl: string): string[] {
-  const out: string[] = [];
-  if (streamUrl && !isBlockedEarnvidsCdnHost(streamUrl)) {
-    out.push(streamUrl);
+function normalizeHlsCandidateUrl(u: string): string {
+  const clean = cleanStr(u);
+  if (clean.includes('/clean-player/stream/') && !clean.includes('raw=1')) {
+    return clean.includes('?') ? `${clean}&raw=1` : `${clean}?raw=1`;
   }
-  if (cdnUrl && !isBlockedEarnvidsCdnHost(cdnUrl) && !out.includes(cdnUrl)) {
-    out.push(cdnUrl);
+  return clean;
+}
+
+function buildOrderedHlsCandidates(cdnUrl: string, streamUrl: string): string[] {
+  const out: string[] = [];
+  const normCdn = normalizeHlsCandidateUrl(cdnUrl);
+  const normStream = normalizeHlsCandidateUrl(streamUrl);
+
+  if (normCdn && !isBlockedEarnvidsCdnHost(normCdn)) {
+    out.push(normCdn);
+  }
+  if (normStream && !isBlockedEarnvidsCdnHost(normStream) && !out.includes(normStream)) {
+    out.push(normStream);
   }
   return out;
 }
 
+interface HlsValidationResult {
+  valid: boolean;
+  status: number;
+  acao: string | null;
+  isExtM3u: boolean;
+  speedMs: number;
+}
+
 async function validateHlsPlaylist(
   urlStr: string,
+  embedUrl: string,
   tlsLax: boolean,
   counter: { count: number },
   providerId: string,
   deadlineAt: number
-): Promise<boolean> {
+): Promise<HlsValidationResult> {
   const remaining = deadlineAt - Date.now();
-  if (remaining <= 250) return false;
+  if (remaining <= 250) {
+    return { valid: false, status: 0, acao: null, isExtM3u: false, speedMs: 999_999 };
+  }
+  const start = Date.now();
   try {
     counter.count += 1;
     resolveMetrics.outboundHttpRequests += 1;
     touchProviderMetric(providerId).outboundHttpRequests += 1;
 
-    const timeoutMs = Math.min(6_000, remaining);
+    const timeoutMs = Math.min(1_500, remaining);
+    const originHeader = 'https://tukiplay.com';
+    const refererHeader = embedUrl || 'https://tukiplay.com/';
+
     const res = await httpGetFirstBytes(urlStr, 512, {
       tlsLax,
       timeoutMs,
-      retries: remaining > 12_000 ? 1 : 0,
+      retries: 0,
       requiresReferer: false,
+      headers: {
+        Origin: originHeader,
+        Referer: refererHeader,
+      },
     });
-    return res.status >= 200 && res.status < 400 && res.body.trimStart().startsWith('#EXTM3U');
-  } catch {
-    return false;
+
+    const speedMs = Date.now() - start;
+    const status2xx = res.status >= 200 && res.status < 300;
+    const isExtM3u = res.body.trimStart().startsWith('#EXTM3U');
+    const rawAcao =
+      res.headers?.['access-control-allow-origin'] ||
+      (res.headers as any)?.['Access-Control-Allow-Origin'] ||
+      null;
+    const acaoStr = rawAcao ? String(rawAcao).trim() : null;
+    const hasValidAcao = Boolean(
+      acaoStr &&
+      (acaoStr === '*' || acaoStr.toLowerCase() === originHeader.toLowerCase())
+    );
+
+    const valid = status2xx && isExtM3u && hasValidAcao;
+    console.log(
+      `[HLS Validation] url="${urlStr}" status=${res.status} isExtM3u=${isExtM3u} ACAO="${acaoStr || '<ninguno>'}" speedMs=${speedMs} valid=${valid}`
+    );
+    return { valid, status: res.status, acao: acaoStr, isExtM3u, speedMs };
+  } catch (err: any) {
+    const speedMs = Date.now() - start;
+    console.warn(`[HLS Validation] Error validando "${urlStr}" (${speedMs}ms):`, err?.message || err);
+    return { valid: false, status: 0, acao: null, isExtM3u: false, speedMs };
   }
 }
 
@@ -872,38 +934,39 @@ async function resolveSingleServerEntry(
 
   let resolvedUrl = '';
   let playable: ServerPlayable = 'iframe';
+  let matchedHlsAcao: string | null = null;
+  let matchedSpeedMs: number | undefined = undefined;
 
-  const hlsCandidates = buildOrderedHlsCandidates(streamUrl, cdnUrl);
-  if (hlsCandidates.length > 0) {
-    let validHls = '';
-    for (const candidate of hlsCandidates) {
-      if (Date.now() >= ctx.deadlineAt) break;
-      const ok = await validateHlsPlaylist(
-        candidate,
-        ctx.tlsLax,
-        ctx.counter,
-        ctx.providerId,
-        ctx.deadlineAt
-      );
-      if (ok) {
-        validHls = candidate;
-        break;
-      }
-    }
-    if (validHls) {
-      resolvedUrl = validHls;
+  // 1. buildOrderedHlsCandidates: cdnUrl primero, streamUrl segundo
+  const hlsCandidates = buildOrderedHlsCandidates(cdnUrl, streamUrl);
+  for (const candUrl of hlsCandidates) {
+    if (Date.now() >= ctx.deadlineAt) break;
+    const val = await validateHlsPlaylist(
+      candUrl,
+      ctx.embedUrl,
+      ctx.tlsLax,
+      ctx.counter,
+      ctx.providerId,
+      ctx.deadlineAt
+    );
+    if (val.valid) {
+      resolvedUrl = candUrl;
       playable = 'hls';
-    } else {
-      // Degradar a iframe con `original` (o `play` si `original` no vino en el listado)
-      resolvedUrl = originalUrl || playUrl;
+      matchedHlsAcao = val.acao;
+      matchedSpeedMs = val.speedMs;
+      break;
+    }
+  }
+
+  // 2. Degradado: playUrl || originalUrl como iframe si no hubo HLS con ACAO válido
+  if (!resolvedUrl) {
+    if (playUrl) {
+      resolvedUrl = playUrl;
+      playable = 'iframe';
+    } else if (originalUrl) {
+      resolvedUrl = originalUrl;
       playable = 'iframe';
     }
-  } else if (playUrl) {
-    resolvedUrl = playUrl;
-    playable = 'iframe';
-  } else if (originalUrl) {
-    resolvedUrl = originalUrl;
-    playable = 'iframe';
   }
 
   if (!resolvedUrl) {
@@ -920,6 +983,8 @@ async function resolveSingleServerEntry(
     url: resolvedUrl,
     playable,
     validated: true,
+    acao: matchedHlsAcao,
+    speedMs: matchedSpeedMs,
   };
 }
 
@@ -935,7 +1000,7 @@ function buildUnvalidatedServerEntry(
   let resolvedUrl = '';
   let playable: ServerPlayable = 'iframe';
 
-  const hlsCandidates = buildOrderedHlsCandidates(streamUrl, cdnUrl);
+  const hlsCandidates = buildOrderedHlsCandidates(cdnUrl, streamUrl);
   const firstHls = hlsCandidates[0];
   if (firstHls) {
     resolvedUrl = firstHls;
@@ -969,6 +1034,56 @@ const TARGET_VALID_HLS_COUNT = 2;
 const MAX_VALIDATIONS_PER_TITLE = 10;
 const MAX_RETURNED_SERVERS = 6;
 
+export function getEffectiveServerSpeed(
+  providerId: string,
+  titleId: string,
+  srv: { id: string | number; speedMs?: number }
+): number {
+  const penalty = getServerPenalty(providerId, titleId, srv.id);
+  const baseSpeed = typeof srv.speedMs === 'number' && srv.speedMs > 0 ? srv.speedMs : 999_999;
+  return baseSpeed + penalty;
+}
+
+export function sortServersBySpeedAndPenalties<T extends CachedServerMetadata | ResolvedServerEntry>(
+  entries: T[],
+  providerId: string,
+  titleId: string
+): T[] {
+  return [...entries].sort((a, b) => {
+    const aIsHls = a.playable === 'hls';
+    const bIsHls = b.playable === 'hls';
+
+    // 1. HLS antes que iframe
+    if (aIsHls && !bIsHls) return -1;
+    if (!aIsHls && bIsHls) return 1;
+
+    // 2. Si ambos son HLS:
+    if (aIsHls && bIsHls) {
+      const aVal = Boolean((a as any).validated);
+      const bVal = Boolean((b as any).validated);
+      if (aVal && !bVal) return -1;
+      if (!aVal && bVal) return 1;
+
+      // Entre hls validados: speedMs ascendente (+ penalización)
+      const speedA = getEffectiveServerSpeed(providerId, titleId, a);
+      const speedB = getEffectiveServerSpeed(providerId, titleId, b);
+      if (speedA !== speedB) {
+        return speedA - speedB;
+      }
+
+      // Popular solo como desempate
+      const popDiff = (Number(b.popular) || 0) - (Number(a.popular) || 0);
+      if (popDiff !== 0) return popDiff;
+      return (Number(b.picks) || 0) - (Number(a.picks) || 0);
+    }
+
+    // 3. Si ambos son iframe (o ninguno HLS):
+    const popDiff = (Number(b.popular) || 0) - (Number(a.popular) || 0);
+    if (popDiff !== 0) return popDiff;
+    return (Number(b.picks) || 0) - (Number(a.picks) || 0);
+  });
+}
+
 function sortResolvedServerEntries(entries: ResolvedServerEntry[]): ResolvedServerEntry[] {
   return [...entries].sort((a, b) => {
     if (a.validated !== b.validated) {
@@ -982,6 +1097,333 @@ function sortResolvedServerEntries(entries: ResolvedServerEntry[]): ResolvedServ
     }
     return b.picks - a.picks;
   });
+}
+
+export interface ResolvePlayResult {
+  success: boolean;
+  serverId: number | string;
+  name: string;
+  url: string;
+  playable: ServerPlayable;
+  speedMs?: number | undefined;
+  acao?: string | null | undefined;
+  error?: string | undefined;
+  servers?: (CachedServerMetadata | ResolvedServerEntry)[];
+}
+
+interface SharedActiveSession {
+  token: { validtime: string; token: string };
+  edgeUrl: string;
+  embedUrl: string;
+  updatedAt: number;
+}
+let sharedActiveSession: SharedActiveSession | null = null;
+
+async function acuñarServerEntry(
+  srv: CachedServerMetadata | ResolvedServerEntry,
+  ctx: {
+    edgeUrl: string;
+    embedUrl: string;
+    activeToken: { validtime: string; token: string } | undefined;
+    tlsLax: boolean;
+    counter: { count: number };
+    providerId: string;
+    deadlineAt: number;
+    baseDir?: string;
+    norm: any;
+    requestedLang: string;
+    cacheKey: string;
+  }
+): Promise<{
+  url: string;
+  playable: ServerPlayable;
+  speedMs: number;
+  acao: string | null;
+  validated: boolean;
+}> {
+  if ((srv as any).url && typeof (srv as any).speedMs === 'number' && (srv as any).speedMs > 0) {
+    return {
+      url: (srv as any).url,
+      playable: srv.playable || 'iframe',
+      speedMs: (srv as any).speedMs,
+      acao: (srv as any).acao || null,
+      validated: Boolean((srv as any).validated),
+    };
+  }
+
+  let streamUrl = cleanStr(srv.stream_url);
+  let cdnUrl = cleanStr(srv.cdn_url);
+  let playUrl = cleanStr(srv.play);
+  let originalUrl = cleanStr(srv.original);
+  const link = cleanStr(srv.link);
+  const serverName = srv.name || 'Desconocido';
+
+  if (link && ctx.activeToken) {
+    try {
+      let streamingRes = await postEdgeJson(
+        ctx.edgeUrl,
+        ctx.embedUrl,
+        {
+          streaming: link,
+          validtime: ctx.activeToken.validtime,
+          token: ctx.activeToken.token,
+        },
+        ctx.tlsLax,
+        ctx.counter,
+        ctx.providerId,
+        ctx.deadlineAt,
+        12_000
+      );
+
+      // Si el token falló o expiró (codigo !== 200), refrescar la lista/token y reintentar una vez
+      if (!streamingRes.json || streamingRes.json.codigo !== 200) {
+        await getServers(ctx.providerId, { ...ctx.norm, lang: ctx.requestedLang }, ctx.baseDir);
+        const refreshedCached = getCachedServerList(ctx.cacheKey);
+        if (refreshedCached && refreshedCached.value.token) {
+          ctx.activeToken = refreshedCached.value.token;
+          const freshTarget = refreshedCached.value.servers.find(
+            (s) => String(s.id) === String(srv.id) || s.name.toLowerCase() === String(srv.name).toLowerCase()
+          );
+          const freshLink = cleanStr(freshTarget?.link) || link;
+          streamingRes = await postEdgeJson(
+            refreshedCached.value.edgeUrl || ctx.edgeUrl,
+            refreshedCached.value.embedUrl || ctx.embedUrl,
+            {
+              streaming: freshLink,
+              validtime: ctx.activeToken.validtime,
+              token: ctx.activeToken.token,
+            },
+            ctx.tlsLax,
+            ctx.counter,
+            ctx.providerId,
+            ctx.deadlineAt,
+            12_000
+          );
+        }
+      }
+
+      if (streamingRes.json && streamingRes.json.codigo === 200) {
+        streamUrl = cleanStr(streamingRes.json.stream_url) || streamUrl;
+        cdnUrl = cleanStr(streamingRes.json.cdn_url) || cdnUrl;
+        playUrl = cleanStr(streamingRes.json.url) || playUrl;
+        originalUrl = cleanStr(streamingRes.json.original) || originalUrl;
+      }
+    } catch (err: any) {
+      console.warn(`[ResolvePlay] Error en POST streaming para servidor "${serverName}":`, err?.message);
+    }
+  }
+
+  let resolvedUrl = '';
+  let playable: ServerPlayable = 'iframe';
+  let matchedHlsAcao: string | null = null;
+  let matchedSpeedMs = 999_999;
+  let isValidated = false;
+
+  // 1. buildOrderedHlsCandidates: cdnUrl primero, streamUrl segundo
+  const hlsCandidates = buildOrderedHlsCandidates(cdnUrl, streamUrl);
+  for (const candUrl of hlsCandidates) {
+    if (Date.now() >= ctx.deadlineAt) break;
+    const val = await validateHlsPlaylist(
+      candUrl,
+      ctx.embedUrl,
+      ctx.tlsLax,
+      ctx.counter,
+      ctx.providerId,
+      ctx.deadlineAt
+    );
+    if (val.valid) {
+      resolvedUrl = candUrl;
+      playable = 'hls';
+      matchedHlsAcao = val.acao;
+      matchedSpeedMs = val.speedMs;
+      isValidated = true;
+      break;
+    }
+  }
+
+  // 2. Degradado: playUrl || originalUrl como iframe si no hubo HLS con ACAO válido
+  if (!resolvedUrl) {
+    if (playUrl) {
+      resolvedUrl = playUrl;
+      playable = 'iframe';
+    } else if (originalUrl) {
+      resolvedUrl = originalUrl;
+      playable = 'iframe';
+    }
+  }
+
+  if (!resolvedUrl) {
+    resolvedUrl = ctx.embedUrl;
+    playable = 'iframe';
+  }
+
+  return {
+    url: resolvedUrl,
+    playable,
+    speedMs: matchedSpeedMs,
+    acao: matchedHlsAcao,
+    validated: isValidated,
+  };
+}
+
+export async function resolveServerPlay(
+  providerId: string,
+  serverId: number | string | undefined,
+  params: ResolveParams,
+  lang = 'latino',
+  baseDir?: string,
+  preferredServerId?: number | string,
+  preferredServerName?: string
+): Promise<ResolvePlayResult> {
+  const workStart = Date.now();
+  const norm = normalizeResolveKeyParams(params);
+  const requestedLang = (lang || 'latino').trim().toLowerCase();
+  const cacheKey = `servers:${providerId}:${norm.type}:${norm.tmdbId}:${norm.season ?? null}:${norm.episode ?? null}:${requestedLang}`;
+
+  let cached = getCachedServerList(cacheKey);
+  // Requisito 3: "si no hay lista cacheada, /api/resolve/play hace la cadena completa y devuelve la URL en una sola llamada."
+  if (!cached || cached.value.servers.length === 0) {
+    await getServers(providerId, { ...norm, lang: requestedLang }, baseDir);
+    cached = getCachedServerList(cacheKey);
+  }
+
+  if (!cached || cached.value.servers.length === 0) {
+    return {
+      success: false,
+      serverId: serverId ?? 0,
+      name: 'Desconocido',
+      url: '',
+      playable: 'iframe',
+      error: 'No se encontraron servidores para este título',
+      servers: [],
+    };
+  }
+
+  const srvList = cached.value.servers;
+  const titleId = `${norm.type}:${norm.tmdbId}`;
+  const counter = { count: 0 };
+  const provider = getProviderConfig(providerId, baseDir);
+  const tlsLax = Boolean(provider.tlsLax);
+  const edgeUrl = cached.value.edgeUrl || provider.edgeUrl || 'https://tukiplay.com/edge-data';
+  const embedUrl = cached.value.embedUrl || 'https://tukiplay.com/';
+  let activeToken = cached.value.token || (sharedActiveSession?.token ? { ...sharedActiveSession.token } : undefined);
+  const deadlineAt = Date.now() + 15_000;
+
+  const ctx = {
+    edgeUrl,
+    embedUrl,
+    activeToken,
+    tlsLax,
+    counter,
+    providerId,
+    deadlineAt,
+    baseDir,
+    norm,
+    requestedLang,
+    cacheKey,
+  };
+
+  // CASO 1: Si serverId vino especificado y es válido (no 0 / no vacío):
+  if (serverId !== undefined && serverId !== null && String(serverId).trim() !== '' && String(serverId) !== '0') {
+    let target = srvList.find(
+      (s) => String(s.id) === String(serverId) || s.name.toLowerCase() === String(serverId).toLowerCase()
+    );
+    if (!target) {
+      return {
+        success: false,
+        serverId,
+        name: 'Desconocido',
+        url: '',
+        playable: 'iframe',
+        error: 'Servidor no encontrado en la lista',
+        servers: srvList,
+      };
+    }
+
+    const acuñado = await acuñarServerEntry(target, ctx);
+    (target as any).url = acuñado.url;
+    target.playable = acuñado.playable;
+    (target as any).speedMs = acuñado.speedMs;
+    (target as any).acao = acuñado.acao;
+    (target as any).validated = acuñado.validated;
+
+    const sortedServers = sortServersBySpeedAndPenalties(srvList, providerId, titleId);
+    cached.value.servers = sortedServers;
+    setCachedServerList(cacheKey, cached.value, SERVER_LIST_TTL_MS);
+
+    console.log(
+      `[ResolvePlay] Servidor específico acuñado: name="${target.name}" (id=${target.id}) playable=${target.playable} speedMs=${acuñado.speedMs} ACAO="${acuñado.acao || 'N/A'}" ms=${Date.now() - workStart}`
+    );
+
+    return {
+      success: true,
+      serverId: target.id,
+      name: target.name,
+      url: acuñado.url,
+      playable: target.playable || 'iframe',
+      speedMs: acuñado.speedMs,
+      acao: acuñado.acao,
+      servers: sortedServers,
+    };
+  }
+
+  // CASO 2: serverId NO especificado -> ranking por velocidad observada y penalizaciones adaptativas
+  // a) Identificar candidatos HLS
+  const hlsCandidates = srvList.filter(
+    (s) => s.playable === 'hls' || s.name.toLowerCase().includes('vimeo') || s.name.toLowerCase().includes('earnvids')
+  );
+
+  // b) Validar candidatos HLS no acuñados (hasta 2 en paralelo) para medir su speedMs
+  const unvalidatedHls = hlsCandidates.filter((s) => !(s as any).validated || typeof (s as any).speedMs !== 'number');
+  if (unvalidatedHls.length > 0) {
+    const toValidate = unvalidatedHls.slice(0, 2);
+    await Promise.all(
+      toValidate.map(async (candidate) => {
+        try {
+          const res = await acuñarServerEntry(candidate, ctx);
+          (candidate as any).url = res.url;
+          candidate.playable = res.playable;
+          (candidate as any).speedMs = res.speedMs;
+          (candidate as any).acao = res.acao;
+          (candidate as any).validated = res.validated;
+        } catch (_) {}
+      })
+    );
+  }
+
+  // c) Ordenar toda la lista por velocidad observada y penalizaciones:
+  // "Orden: entre hls validados, speedMs ascendente; popular solo como desempate. Los iframe siguen después."
+  const sortedServers = sortServersBySpeedAndPenalties(srvList, providerId, titleId);
+  cached.value.servers = sortedServers;
+  setCachedServerList(cacheKey, cached.value, SERVER_LIST_TTL_MS);
+
+  // d) Seleccionar el mejor servidor
+  let target = sortedServers[0];
+
+  // Si el target seleccionado no tiene URL todavía (por ejemplo, si era un iframe que no pasó por acuñarServerEntry):
+  if (!(target as any).url) {
+    const acuñado = await acuñarServerEntry(target, ctx);
+    (target as any).url = acuñado.url;
+    target.playable = acuñado.playable;
+    (target as any).speedMs = acuñado.speedMs;
+    (target as any).acao = acuñado.acao;
+    (target as any).validated = acuñado.validated;
+  }
+
+  console.log(
+    `[ResolvePlay] Servidor seleccionado por ranking de velocidad: name="${target.name}" (id=${target.id}) playable=${target.playable} speedMs=${(target as any).speedMs} penalización=${getServerPenalty(providerId, titleId, target.id)}ms ACAO="${(target as any).acao || 'N/A'}" ms=${Date.now() - workStart}`
+  );
+
+  return {
+    success: true,
+    serverId: target.id,
+    name: target.name,
+    url: (target as any).url || embedUrl,
+    playable: target.playable || 'iframe',
+    speedMs: (target as any).speedMs,
+    acao: (target as any).acao || null,
+    servers: sortedServers,
+  };
 }
 
 function findLanguageBlock(
@@ -1074,8 +1516,8 @@ export async function getServers(
       const workStart = Date.now();
       const hardTimeoutMs =
         typeof provider.hardTimeoutMs === 'number' &&
-        Number.isFinite(provider.hardTimeoutMs) &&
-        provider.hardTimeoutMs > 0
+          Number.isFinite(provider.hardTimeoutMs) &&
+          provider.hardTimeoutMs > 0
           ? provider.hardTimeoutMs
           : 25_000;
       const deadlineAt = workStart + hardTimeoutMs;
@@ -1101,115 +1543,209 @@ export async function getServers(
 
       const workPromise = (async (): Promise<GetServersResult> => {
         try {
-          counter.count += 1;
-          resolveMetrics.outboundHttpRequests += 1;
-          pMetric.outboundHttpRequests += 1;
+          const mappingKey = `${provider.id}:${norm.type}:${norm.tmdbId}:${norm.season ?? null}:${norm.episode ?? null}`;
+          let cachedMapping = getMappingCache(mappingKey);
+          let edgeUrl = cachedMapping?.edgeUrl || sharedActiveSession?.edgeUrl || provider.edgeUrl || 'https://tukiplay.com/edge-data';
+          let finalEmbedUrl = cachedMapping?.embedUrl || sharedActiveSession?.embedUrl || embedUrl;
+          let activeToken = sharedActiveSession?.token ? { ...sharedActiveSession.token } : null;
+          let contentId = cachedMapping?.contentId;
+          let contentType = cachedMapping?.contentType;
+          let serversResp: { status: number; json: EdgeApiResponse | null } | null = null;
 
-          const remEmbed = Math.max(250, deadlineAt - Date.now());
-          const embedRes = await httpRequestFollowingRedirects(embedUrl, {
-            method: 'GET',
-            requiresReferer: provider.requiresReferer,
-            tlsLax,
-            timeoutMs: Math.min(SINGLE_REQUEST_TIMEOUT_MS, remEmbed),
-            retries: remEmbed > SINGLE_REQUEST_TIMEOUT_MS * 2 ? 1 : 0,
-          });
+          // 1. Si hay mapeo cacheado Y token previo activo:
+          // "Si hay mapeo, la cadena saltea el GET del embed y va directo a token + servers. Si el POST servers falla con el id cacheado, invalidá el mapeo y reintentá una vez con el GET."
+          if (cachedMapping && activeToken) {
+            try {
+              console.log(`[GetServers] Mapeo cacheado tmdbId=${norm.tmdbId} -> contentId=${contentId}, contentType=${contentType}. Saltando GET del embed...`);
 
-          if (embedRes.status >= 500 || embedRes.status === 403 || embedRes.status === 429) {
-            baseChainRecorded = true;
-            recordBreakerFailure(provider.id, provider);
-            return {
-              providerId,
-              tmdbId: norm.tmdbId,
-              type: norm.type,
-              lang: requestedLang,
-              status: 'degraded',
-              servers: [],
-              total: 0,
-              hasHls: false,
-              truncated: false,
-              cached: false,
-              waitedMs: Date.now() - workStart,
-              httpRequests: counter.count,
-            };
+              // Refrescar token
+              const tokenResp = await postEdgeJson(
+                edgeUrl,
+                finalEmbedUrl,
+                {
+                  action: 'token',
+                  validtime: activeToken.validtime,
+                  token: activeToken.token,
+                },
+                tlsLax,
+                counter,
+                provider.id,
+                deadlineAt,
+                10_000
+              );
+
+              if (
+                tokenResp.json?.codigo === 200 &&
+                cleanStr(tokenResp.json.token) &&
+                cleanStr(tokenResp.json.validtime)
+              ) {
+                activeToken = {
+                  validtime: cleanStr(tokenResp.json.validtime),
+                  token: cleanStr(tokenResp.json.token),
+                };
+                sharedActiveSession = {
+                  token: { ...activeToken },
+                  edgeUrl,
+                  embedUrl: finalEmbedUrl,
+                  updatedAt: Date.now(),
+                };
+              }
+
+              // Llamar a action: 'servers' con el contentId cacheado
+              serversResp = await postEdgeJson(
+                edgeUrl,
+                finalEmbedUrl,
+                {
+                  action: 'servers',
+                  id: String(contentId),
+                  type: String(contentType),
+                  validtime: activeToken.validtime,
+                  token: activeToken.token,
+                },
+                tlsLax,
+                counter,
+                provider.id,
+                deadlineAt,
+                10_000
+              );
+
+              // Si falló serversResp (codigo !== 200 o sin servers), invalidar mapeo y forzar reintento con GET
+              if (!serversResp.json || serversResp.json.codigo !== 200 || !serversResp.json.servers) {
+                console.warn(`[GetServers] POST servers falló con id cacheado (${contentId}): codigo=${serversResp.json?.codigo}. Invalidando mapeo y reintentando con GET...`);
+                invalidateMappingCache(mappingKey);
+                serversResp = null;
+              }
+            } catch (err: any) {
+              console.warn(`[GetServers] Error con mapeo cacheado: ${err?.message}. Invalidando mapeo y reintentando con GET...`);
+              invalidateMappingCache(mappingKey);
+              serversResp = null;
+            }
           }
 
-          const cfg = extractPelixConfigObject(embedRes.body);
-          const initToken = cleanStr(cfg?.token?.token);
-          const initValidtime = cleanStr(cfg?.token?.validtime);
-          const contentId = cfg?.content?.id;
-          const contentType =
-            cleanStr(cfg?.content?.type) || (norm.type === 'movie' ? 'movie' : 'episode');
+          // 2. Si no se usó mapeo o si falló y toca reintentar una vez con GET:
+          if (!serversResp) {
+            counter.count += 1;
+            resolveMetrics.outboundHttpRequests += 1;
+            pMetric.outboundHttpRequests += 1;
 
-          if (!cfg || !initToken || !initValidtime || contentId === undefined || contentId === null) {
-            baseChainRecorded = true;
-            recordBreakerSuccess(provider.id, provider, Date.now() - workStart);
-            setCachedServerList(
-              cacheKey,
-              { servers: [], total: 0, hasHls: false },
-              SERVER_LIST_IFRAME_TTL_MS
+            const remEmbed = Math.max(250, deadlineAt - Date.now());
+            const embedRes = await httpRequestFollowingRedirects(embedUrl, {
+              method: 'GET',
+              requiresReferer: provider.requiresReferer,
+              tlsLax,
+              timeoutMs: Math.min(SINGLE_REQUEST_TIMEOUT_MS, remEmbed),
+              retries: remEmbed > SINGLE_REQUEST_TIMEOUT_MS * 2 ? 1 : 0,
+            });
+
+            if (embedRes.status >= 500 || embedRes.status === 403 || embedRes.status === 429) {
+              baseChainRecorded = true;
+              recordBreakerFailure(provider.id, provider);
+              return {
+                providerId,
+                tmdbId: norm.tmdbId,
+                type: norm.type,
+                lang: requestedLang,
+                status: 'degraded',
+                servers: [],
+                total: 0,
+                hasHls: false,
+                truncated: false,
+                cached: false,
+                waitedMs: Date.now() - workStart,
+                httpRequests: counter.count,
+              };
+            }
+
+            finalEmbedUrl = embedRes.finalUrl;
+            const cfg = extractPelixConfigObject(embedRes.body);
+            const initToken = cleanStr(cfg?.token?.token);
+            const initValidtime = cleanStr(cfg?.token?.validtime);
+            contentId = cfg?.content?.id;
+            contentType = cleanStr(cfg?.content?.type) || (norm.type === 'movie' ? 'movie' : 'episode');
+
+            if (!cfg || !initToken || !initValidtime || contentId === undefined || contentId === null) {
+              baseChainRecorded = true;
+              recordBreakerSuccess(provider.id, provider, Date.now() - workStart);
+              setCachedServerList(
+                cacheKey,
+                { servers: [], total: 0, hasHls: false },
+                SERVER_LIST_IFRAME_TTL_MS
+              );
+              return {
+                providerId,
+                tmdbId: norm.tmdbId,
+                type: norm.type,
+                lang: requestedLang,
+                status: 'empty',
+                servers: [],
+                total: 0,
+                hasHls: false,
+                truncated: false,
+                cached: false,
+                waitedMs: Date.now() - workStart,
+                httpRequests: counter.count,
+              };
+            }
+
+            edgeUrl = new URL(cleanStr(cfg.edge) || '/edge-data', finalEmbedUrl).toString();
+            activeToken = { validtime: initValidtime, token: initToken };
+
+            // Guardar mapeo con TTL 24h
+            setMappingCache(mappingKey, contentId, contentType, edgeUrl, finalEmbedUrl);
+
+            // Guardar sesión activa compartida
+            sharedActiveSession = {
+              token: { ...activeToken },
+              edgeUrl,
+              embedUrl: finalEmbedUrl,
+              updatedAt: Date.now(),
+            };
+
+            // b. POST action=token
+            const tokenResp = await postEdgeJson(
+              edgeUrl,
+              finalEmbedUrl,
+              {
+                action: 'token',
+                validtime: activeToken.validtime,
+                token: activeToken.token,
+              },
+              tlsLax,
+              counter,
+              provider.id,
+              deadlineAt,
+              10_000
             );
-            return {
-              providerId,
-              tmdbId: norm.tmdbId,
-              type: norm.type,
-              lang: requestedLang,
-              status: 'empty',
-              servers: [],
-              total: 0,
-              hasHls: false,
-              truncated: false,
-              cached: false,
-              waitedMs: Date.now() - workStart,
-              httpRequests: counter.count,
-            };
+            if (
+              tokenResp.json?.codigo === 200 &&
+              cleanStr(tokenResp.json.token) &&
+              cleanStr(tokenResp.json.validtime)
+            ) {
+              activeToken = {
+                validtime: cleanStr(tokenResp.json.validtime),
+                token: cleanStr(tokenResp.json.token),
+              };
+              sharedActiveSession.token = { ...activeToken };
+            }
+
+            // c. POST action=servers
+            serversResp = await postEdgeJson(
+              edgeUrl,
+              finalEmbedUrl,
+              {
+                action: 'servers',
+                id: String(contentId),
+                type: String(contentType),
+                validtime: activeToken.validtime,
+                token: activeToken.token,
+              },
+              tlsLax,
+              counter,
+              provider.id,
+              deadlineAt,
+              10_000
+            );
           }
-
-          const edgeUrl = new URL(cleanStr(cfg.edge) || '/edge-data', embedRes.finalUrl).toString();
-          let activeToken = { validtime: initValidtime, token: initToken };
-
-          // b. POST action=token
-          const tokenResp = await postEdgeJson(
-            edgeUrl,
-            embedRes.finalUrl,
-            {
-              action: 'token',
-              validtime: activeToken.validtime,
-              token: activeToken.token,
-            },
-            tlsLax,
-            counter,
-            provider.id,
-            deadlineAt,
-            10_000
-          );
-          if (
-            tokenResp.json?.codigo === 200 &&
-            cleanStr(tokenResp.json.token) &&
-            cleanStr(tokenResp.json.validtime)
-          ) {
-            activeToken = {
-              validtime: cleanStr(tokenResp.json.validtime),
-              token: cleanStr(tokenResp.json.token),
-            };
-          }
-
-          // c. POST action=servers
-          const serversResp = await postEdgeJson(
-            edgeUrl,
-            embedRes.finalUrl,
-            {
-              action: 'servers',
-              id: String(contentId),
-              type: String(contentType),
-              validtime: activeToken.validtime,
-              token: activeToken.token,
-            },
-            tlsLax,
-            counter,
-            provider.id,
-            deadlineAt,
-            10_000
-          );
 
           // Breaker evalúa solo la cadena base (embed + token + servers), nunca el fan-out
           const baseChainMs = Date.now() - workStart;
@@ -1219,114 +1755,71 @@ export async function getServers(
           const langBlock = findLanguageBlock(serversResp.json?.servers, requestedLang);
           const rawList = Array.isArray(langBlock?.servers) ? langBlock.servers : [];
 
-          // 1) Ordenar por popular descendente ANTES de validar en dos fases:
-          // Fase 1: validar hasta alcanzar 2 HLS válidos o 10 validaciones (lo que ocurra primero)
+          // 1) Ordenar por popular descendente, luego picks descendente
           const preSortedCandidates = [...rawList].sort((a, b) => {
             const popDiff = (Number(b.popular) || 0) - (Number(a.popular) || 0);
             if (popDiff !== 0) return popDiff;
             return (Number(b.picks) || 0) - (Number(a.picks) || 0);
           });
 
-          let truncated = false;
-          let validHlsCount = 0;
-          let validationCount = 0;
-          let nextUnvalidatedIdx = 0;
+          // Requisito 3: "en cache.ts, la lista cacheada guarda solo id, name, popular, picks y link — sin url ni playable definitivos. TTL de lista: 15 min. Sin caché de URL."
+          const serverListEntries: CachedServerMetadata[] = preSortedCandidates.map((srv) => {
+            const isHlsCandidate =
+              cleanStr(srv.link_name || srv.server).toLowerCase().includes('vimeo') ||
+              cleanStr(srv.link_name || srv.server).toLowerCase().includes('earnvids') ||
+              Boolean(cleanStr(srv.stream_url) || cleanStr(srv.cdn_url));
+            return {
+              id: srv.id ?? (cleanStr(srv.link_name || srv.server) || 'Desconocido'),
+              name: cleanStr(srv.link_name || srv.server) || 'Desconocido',
+              lang: requestedLang,
+              popular: Number(srv.popular) || 0,
+              picks: Number(srv.picks) || 0,
+              link: cleanStr(srv.link),
+              play: cleanStr(srv.play),
+              original: cleanStr(srv.original),
+              stream_url: cleanStr(srv.stream_url),
+              cdn_url: cleanStr(srv.cdn_url),
+              playable: isHlsCandidate ? ('hls' as const) : ('iframe' as const),
+            };
+          });
 
-          for (let idx = 0; idx < preSortedCandidates.length; idx += 1) {
-            if (
-              validHlsCount >= TARGET_VALID_HLS_COUNT ||
-              validationCount >= MAX_VALIDATIONS_PER_TITLE
-            ) {
-              break;
-            }
-            if (abortedByHardTimeout || Date.now() >= deadlineAt) {
-              truncated = true;
-              break;
-            }
+          const hasPotentialHls = serverListEntries.some((s) => (s as any).playable === 'hls');
 
-            const srv = preSortedCandidates[idx];
-            nextUnvalidatedIdx = idx + 1;
-            if (!srv) continue;
-            const hasRawOrLink = Boolean(
-              cleanStr(srv.stream_url) ||
-                cleanStr(srv.cdn_url) ||
-                cleanStr(srv.play) ||
-                cleanStr(srv.original) ||
-                cleanStr(srv.link)
-            );
-            if (!hasRawOrLink) {
-              continue;
-            }
-
-            const entry = await resolveSingleServerEntry(srv, requestedLang, {
-              providerId: provider.id,
-              edgeUrl,
-              embedUrl: embedRes.finalUrl,
+          setCachedServerList(
+            cacheKey,
+            {
+              servers: serverListEntries,
+              total: serverListEntries.length,
+              hasHls: hasPotentialHls,
               token: activeToken,
-              tlsLax,
-              counter,
-              deadlineAt,
-            });
+              edgeUrl,
+              embedUrl: finalEmbedUrl,
+            },
+            SERVER_LIST_TTL_MS
+          );
 
-            if (abortedByHardTimeout) {
-              break;
-            }
-            validationCount += 1;
-            if (entry) {
-              resolvedEntries.push(entry);
-              if (entry.playable === 'hls') {
-                validHlsCount += 1;
-              }
-            }
-            if (
-              Date.now() >= deadlineAt &&
-              validHlsCount < TARGET_VALID_HLS_COUNT &&
-              validationCount < MAX_VALIDATIONS_PER_TITLE &&
-              idx + 1 < preSortedCandidates.length
-            ) {
-              truncated = true;
-              break;
-            }
-          }
-
-          // Fase 2: conservar no validados con URL y playable (validated: false) sin requests HTTP
-          if (!truncated && !abortedByHardTimeout) {
-            for (let idx = nextUnvalidatedIdx; idx < preSortedCandidates.length; idx += 1) {
-              const srv = preSortedCandidates[idx];
-              if (!srv) continue;
-              const unvalidated = buildUnvalidatedServerEntry(srv, requestedLang);
-              if (unvalidated) {
-                resolvedEntries.push(unvalidated);
-              }
-            }
-          }
-
-          const finalSorted = sortResolvedServerEntries(resolvedEntries);
-          const hasHls = finalSorted.some((s) => s.validated && s.playable === 'hls');
-
-          if (!truncated || finalSorted.length > 0) {
-            const ttlMs = truncated
-              ? SERVER_LIST_IFRAME_TTL_MS
-              : hasHls
-                ? SERVER_LIST_HLS_TTL_MS
-                : SERVER_LIST_IFRAME_TTL_MS;
-            setCachedServerList(
-              cacheKey,
-              { servers: finalSorted, total: finalSorted.length, hasHls },
-              ttlMs
-            );
-          }
+          const publicServers = serverListEntries.map((s) => ({
+            id: s.id,
+            name: s.name,
+            lang: requestedLang,
+            popular: s.popular,
+            picks: s.picks,
+            link: s.link,
+            url: '',
+            playable: (s.name.toLowerCase().includes('vimeo') || s.name.toLowerCase().includes('earnvids')) ? ('hls' as const) : ('iframe' as const),
+            validated: false,
+          }));
 
           return {
             providerId,
             tmdbId: norm.tmdbId,
             type: norm.type,
             lang: requestedLang,
-            status: finalSorted.length > 0 ? 'ready' : 'empty',
-            servers: finalSorted.slice(0, MAX_RETURNED_SERVERS),
-            total: finalSorted.length,
-            hasHls,
-            truncated,
+            status: publicServers.length > 0 ? 'ready' : 'empty',
+            servers: publicServers.slice(0, MAX_RETURNED_SERVERS),
+            total: publicServers.length,
+            hasHls: hasPotentialHls,
+            truncated: false,
             cached: false,
             waitedMs: Date.now() - workStart,
             httpRequests: counter.count,
@@ -1388,7 +1881,7 @@ export async function getServers(
         }
       })();
 
-      void workPromise.catch(() => {});
+      void workPromise.catch(() => { });
 
       try {
         const raceWinner = await Promise.race([workPromise, hardTimeoutPromise]);
@@ -1478,4 +1971,11 @@ export function resetResolveRuntimeForTest(): void {
   resolveMetrics.timeouts = 0;
   resolveMetrics.perProvider = {};
 }
+
+export {
+  getMappingCache,
+  setMappingCache,
+  invalidateMappingCache,
+  getNegativeCacheEntry,
+};
 
