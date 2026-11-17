@@ -1,5 +1,5 @@
-import { resolve, type MediaResolveType } from './index.js';
 import { httpRequestFollowingRedirects } from './http.js';
+import { resolve, type MediaResolveType } from './index.js';
 
 export interface PrewarmOptions {
   baseUrl: string;
@@ -27,7 +27,7 @@ export interface PrewarmController {
 
 export function startResolvePrewarm(options: PrewarmOptions): PrewarmController {
   const intervalMs = options.intervalMs ?? DEFAULT_PREWARM_INTERVAL_MS;
-  const providerId = options.providerId ?? 'tukiplay';
+  const providerId = options.providerId ?? 'vidlink.pro';
   const limit = options.limit ?? DEFAULT_PREWARM_LIMIT;
   let running = false;
   let stopped = false;

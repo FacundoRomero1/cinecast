@@ -24,5 +24,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["scratch", "dist", "release", "node_modules", "legacy"]
+  "include": ["src/**/*", "scripts/**/*", "vite.config.ts"],
+  "exclude": ["scratch", "dist", "release", "node_modules", "legacy", "electron"]
 }

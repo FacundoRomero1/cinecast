@@ -38,6 +38,13 @@ export interface TMDBEnrichedData {
   genres: string[];
 }
 
+const CJK_REGEX = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+export function hasCjkCharacters(text?: string | null): boolean {
+  if (!text) return false;
+  return CJK_REGEX.test(text);
+}
+
 function loadTmdbCache(): Record<string, TMDBEnrichedData> {
   if (typeof window === 'undefined') return {};
   try {
@@ -104,12 +111,12 @@ export function getVideoSources(
       language: '🌐 Multi / Sub ES',
     },
     {
-      name: 'TukiPlay (HD)',
+      name: 'FrameX (HD)',
       url: isTV
-        ? `https://tukiplay.com/embed/tv/${tmdbId}/${season}/${episode}`
-        : `https://tukiplay.com/embed/movie/${tmdbId}`,
+        ? `https://framextv.tech/embed/tv/${tmdbId}/${season}/${episode}`
+        : `https://framextv.tech/embed/movie/${tmdbId}`,
       type: 'iframe',
-      language: '🇲🇽 Latino',
+      language: '🌐 Multi / Sub ES',
     },
     {
       name: 'VidEasy (Multi)',
@@ -159,8 +166,9 @@ export const tmdbService = {
 
   getApiKey(): string {
     return (
-      (import.meta as any).env?.VITE_TMDB_API_KEY ||
-      localStorage.getItem('cinecast_tmdb_api_key') ||
+      (typeof process !== 'undefined' && process.env?.VITE_TMDB_API_KEY) ||
+      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TMDB_API_KEY) ||
+      (typeof localStorage !== 'undefined' ? localStorage.getItem('cinecast_tmdb_api_key') : null) ||
       '2dca580c2a14b55200e784d157207b4d'
     );
   },
@@ -207,7 +215,16 @@ export const tmdbService = {
       (item.genre_ids && item.genre_ids.includes(16) && (item.original_language === 'ja' || item.origin_country?.includes('JP')));
 
     const finalCategory: 'movie' | 'series' | 'anime' = isAnime ? 'anime' : isTV ? 'series' : 'movie';
-    const title = item.title || item.name || 'Título Sin Nombre';
+    let title = item.title || item.name || 'Título Sin Nombre';
+    if (hasCjkCharacters(title)) {
+      if (item.original_name && !hasCjkCharacters(item.original_name)) {
+        title = item.original_name;
+      } else if (item.original_title && !hasCjkCharacters(item.original_title)) {
+        title = item.original_title;
+      } else if (item.english_title && !hasCjkCharacters(item.english_title)) {
+        title = item.english_title;
+      }
+    }
     const releaseDate = item.release_date || item.first_air_date || '2024-01-01';
     const year = parseInt(releaseDate.slice(0, 4), 10) || new Date().getFullYear();
     const posterPath = item.poster_path;
@@ -254,15 +271,57 @@ export const tmdbService = {
     };
   },
 
+  // Resuelve títulos en japonés / kanji hacia títulos occidentales (US, GB, ES) o Romaji via /alternative_titles
+  async resolveAnimeTitle(tmdbId: number, currentTitle: string, isMovie = false): Promise<string> {
+    if (!hasCjkCharacters(currentTitle) || !tmdbId || tmdbId <= 0) {
+      return currentTitle;
+    }
+    const key = this.getApiKey();
+    const type = isMovie ? 'movie' : 'tv';
+    try {
+      const res = await fetch(`${TMDB_BASE_URL}/${type}/${tmdbId}/alternative_titles?api_key=${key}`);
+      if (!res.ok) return currentTitle;
+      const data = await res.json();
+      const titles = Array.isArray(data.results) ? data.results : Array.isArray(data.titles) ? data.titles : [];
+
+      // 1. Buscar títulos en US, GB, ES, MX que no contengan caracteres CJK
+      const western = titles.find(
+        (t: any) =>
+          (t.iso_3166_1 === 'US' || t.iso_3166_1 === 'GB' || t.iso_3166_1 === 'ES' || t.iso_3166_1 === 'MX') &&
+          t.title &&
+          !hasCjkCharacters(t.title)
+      );
+      if (western?.title) return western.title.trim();
+
+      // 2. Buscar entrada de tipo 'romaji'
+      const romaji = titles.find(
+        (t: any) =>
+          t.type &&
+          typeof t.type === 'string' &&
+          t.type.toLowerCase().includes('romaji') &&
+          t.title &&
+          !hasCjkCharacters(t.title)
+      );
+      if (romaji?.title) return romaji.title.trim();
+
+      // 3. Buscar cualquier título legible en alfabeto latino
+      const anyNonCjk = titles.find((t: any) => t.title && !hasCjkCharacters(t.title));
+      if (anyNonCjk?.title) return anyNonCjk.title.trim();
+    } catch (_) {}
+
+    return currentTitle;
+  },
+
   // Expansión controlada de catálogo Anime (Pool de concurrencia 4)
-  async fetchAnimeCatalog(maxPages = 8): Promise<Movie[]> {
+  async fetchAnimeCatalog(maxPages = 5, year?: number): Promise<Movie[]> {
     const key = this.getApiKey();
     try {
       const pageNumbers = Array.from({ length: maxPages }, (_, i) => i + 1);
+      const yearParam = year ? `&first_air_date_year=${year}` : '';
       const responses = await asyncPool(4, pageNumbers, async (p) => {
         try {
           const res = await fetch(
-            `${TMDB_BASE_URL}/discover/tv?api_key=${key}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-ES&page=${p}`
+            `${TMDB_BASE_URL}/discover/tv?api_key=${key}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-MX${yearParam}&page=${p}`
           );
           if (!res.ok) return [];
           const data = await res.json();
@@ -285,6 +344,17 @@ export const tmdbService = {
           return m;
         });
 
+      // Si quedan títulos en kanji/japonés, resolverlos concurrentemente con sus títulos alternativos US/Romaji
+      const cjkAnimes = animeMovies.filter((m) => hasCjkCharacters(m.title));
+      if (cjkAnimes.length > 0) {
+        await asyncPool(4, cjkAnimes, async (movie) => {
+          const resolved = await this.resolveAnimeTitle(movie.tmdbId, movie.title, movie.type === 'movie');
+          if (resolved && resolved !== movie.title) {
+            movie.title = resolved;
+          }
+        });
+      }
+
       return animeMovies;
     } catch (err) {
       console.warn('Error fetching massive anime catalog from TMDB:', err);
@@ -297,7 +367,7 @@ export const tmdbService = {
     const key = this.getApiKey();
     try {
       const response = await fetch(
-        `${TMDB_BASE_URL}/trending/${type}/day?api_key=${key}&language=es-ES&page=${page}`
+        `${TMDB_BASE_URL}/trending/${type}/day?api_key=${key}&language=es-MX&page=${page}`
       );
       if (!response.ok) {
         throw new Error(`TMDB Trending HTTP ${response.status}`);
@@ -357,10 +427,10 @@ export const tmdbService = {
     try {
       // 2. Buscamos explícitamente por tipo en paralelo para evitar cruces
       const [movieRes, tvRes] = await Promise.all([
-        fetch(`${TMDB_BASE_URL}/search/movie?api_key=${key}&query=${encodeURIComponent(q)}&language=es-ES`)
+        fetch(`${TMDB_BASE_URL}/search/movie?api_key=${key}&query=${encodeURIComponent(q)}&language=es-MX`)
           .then((r) => (r.ok ? r.json() : { results: [] }))
           .catch(() => ({ results: [] })),
-        fetch(`${TMDB_BASE_URL}/search/tv?api_key=${key}&query=${encodeURIComponent(q)}&language=es-ES`)
+        fetch(`${TMDB_BASE_URL}/search/tv?api_key=${key}&query=${encodeURIComponent(q)}&language=es-MX`)
           .then((r) => (r.ok ? r.json() : { results: [] }))
           .catch(() => ({ results: [] })),
       ]);
@@ -415,7 +485,7 @@ export const tmdbService = {
     const key = this.getApiKey();
     try {
       const response = await fetch(
-        `${TMDB_BASE_URL}/search/multi?api_key=${key}&query=${encodeURIComponent(q)}&language=es-ES&page=${page}`
+        `${TMDB_BASE_URL}/search/multi?api_key=${key}&query=${encodeURIComponent(q)}&language=es-MX&page=${page}`
       );
       if (!response.ok) {
         throw new Error(`TMDB Search HTTP ${response.status}`);
@@ -476,7 +546,7 @@ export const tmdbService = {
         const response = await fetch(
           `${TMDB_BASE_URL}/search/${endpoint}?api_key=${key}&query=${encodeURIComponent(
             cleanTitle
-          )}${yearParam}&language=es-ES`
+          )}${yearParam}&language=es-MX`
         );
         if (response.ok) {
           const data = await response.json();
@@ -536,7 +606,7 @@ export const tmdbService = {
     const key = this.getApiKey();
     try {
       const response = await fetch(
-        `${TMDB_BASE_URL}/movie/${tmdbId}?api_key=${key}&language=es-ES&append_to_response=credits`
+        `${TMDB_BASE_URL}/movie/${tmdbId}?api_key=${key}&language=es-MX&append_to_response=credits`
       );
       if (!response.ok) return null;
       return response.json();
@@ -599,7 +669,7 @@ export async function fetchMoreByCategory(category: string, page: number): Promi
     const data = await res.json();
     const rawResults = data.results || [];
 
-    return rawResults
+    const mappedMedia: MediaItem[] = rawResults
       .filter((item: any) => item && (item.poster_path || item.backdrop_path))
       .map((item: any) => {
         const movie = tmdbService.createMovieFromTmdbItem(item, forceType);
@@ -630,6 +700,23 @@ export async function fetchMoreByCategory(category: string, page: number): Promi
         };
         return mediaItem;
       });
+
+    if (cat === 'anime') {
+      const cjk = mappedMedia.filter((m: MediaItem) => hasCjkCharacters(m.title));
+      if (cjk.length > 0) {
+        await Promise.allSettled(
+          cjk.map(async (m: MediaItem) => {
+            if (!m.tmdbId) return;
+            const resolved = await tmdbService.resolveAnimeTitle(m.tmdbId, m.title, m.type === 'movie');
+            if (resolved && resolved !== m.title) {
+              m.title = resolved;
+            }
+          })
+        );
+      }
+    }
+
+    return mappedMedia;
   } catch (err) {
     console.warn(`[TMDB] Error fetching page ${page} for category ${category}:`, err);
     return [];

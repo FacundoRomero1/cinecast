@@ -28,7 +28,7 @@ await build({
   format: 'cjs',
   target: 'node22',
   bundle: true,
-  external: ['express', 'ws', 'electron', ...nodeExternals],
+  packages: 'external',
 });
 
 console.log('✓ electron/core.cjs compilado exitosamente');

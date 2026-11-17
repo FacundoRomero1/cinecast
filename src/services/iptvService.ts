@@ -689,6 +689,48 @@ class IPTVService {
     try {
       this.isFetching = true;
 
+      // 1. Intentar consultar endpoint optimizado del servidor backend /api/sports/channels (M3U oficial iptv-org)
+      try {
+        const apiBase = typeof window !== 'undefined' ? (window.location?.origin || '') : '';
+        const res = await fetch(`${apiBase}/api/sports/channels`, { signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data?.channels) && data.channels.length > 0) {
+            const mapped: LiveSportsChannel[] = data.channels.map((ch: any) => ({
+              id: ch.id,
+              name: ch.name,
+              country: ch.country,
+              countryName: ch.countryName,
+              countryFlag: ch.countryFlag,
+              logo: ch.logo,
+              streamUrl: ch.streamUrl,
+              quality: ch.quality || '1080p HD',
+              category: ch.category || 'Fútbol & Deportes',
+              isOnline: true,
+              servers: [
+                {
+                  name: `${ch.name} (${ch.quality || 'HD'})`,
+                  url: ch.streamUrl,
+                  type: 'hls',
+                  language: 'En Vivo',
+                },
+              ],
+            }));
+
+            // Combinar con canales verificados locales prioritarios (TyC, TV Pública, DeporTV, etc.)
+            const existingIds = new Set(mapped.map((c) => c.id));
+            const verifiedUnique = VERIFIED_SPORTS_CHANNELS.filter((c) => !existingIds.has(c.id));
+            const combined = [...verifiedUnique, ...mapped];
+
+            this.memoryCache = combined;
+            this.saveToStorage(combined);
+            return combined;
+          }
+        }
+      } catch (e) {
+        console.warn('Endpoint /api/sports/channels no respondió, usando scraping de respaldo:', e);
+      }
+
       const [channelsRes, streamsRes, logosRes] = await Promise.allSettled([
         this.fetchJson<RawChannel[]>(CHANNELS_API),
         this.fetchJson<RawStream[]>(STREAMS_API),
@@ -862,3 +904,7 @@ class IPTVService {
 }
 
 export const iptvService = new IPTVService();
+
+export const IPTV_STREAM_ERROR_MESSAGE =
+  'Este canal de IPTV gratuito no está disponible en este momento. Los canales de fútbol premium (ESPN, Fox) suelen tener enlaces caídos. Probá con TyC Sports o TV Pública.';
+

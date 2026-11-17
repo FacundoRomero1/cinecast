@@ -21,6 +21,31 @@ const SMART_TV_UA = 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36
 
 app.userAgentFallback = REAL_UA;
 
+// Manejo seguro de excepciones internas de Electron/V8 en iframes/webviews
+process.on('uncaughtException', (err) => {
+  const msg = err ? String(err.message || err) : '';
+  if (
+    msg.includes('Script failed to execute') ||
+    msg.includes('GUEST_VIEW_MANAGER_CALL') ||
+    msg.includes('findGuest')
+  ) {
+    return;
+  }
+  console.error('[UncaughtException]', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason ? String(reason.message || reason) : '';
+  if (
+    msg.includes('Script failed to execute') ||
+    msg.includes('GUEST_VIEW_MANAGER_CALL') ||
+    msg.includes('findGuest')
+  ) {
+    return;
+  }
+  console.warn('[UnhandledRejection]', reason);
+});
+
 // TAREA 2 & D: Variables de Estado para Modo Diagnóstico
 let isDiagnosticMode = false;
 let isNoCorsFix = false;
@@ -138,6 +163,9 @@ protocol.registerSchemesAsPrivileged([
 
 // Servidores embed conocidos que requieren Referer y Origin del propio host para evitar pantallas negras o 403
 const EMBED_HOSTS = [
+  'framextv.tech',
+  'api.framextv.tech',
+  'cloudwindow-route.com',
   'tukiplay.com',
   'vidlink.pro',
   'videasy.net',
@@ -149,6 +177,20 @@ const EMBED_HOSTS = [
   'vidsrc.me',
   'vidsrc.xyz',
   'vidsrc.to',
+  'vidsrc.sh',
+  '2embed.skin',
+  '2embed.cc',
+  'vidfast.pro',
+  'streamhg.com',
+  'vimeos.net',
+  'earnvids.com',
+  'pelixplay.com',
+  'streamxhd.click',
+  'streamtp99a.sbs',
+  'streamx723.sbs',
+  'tvf90.com',
+  'la18hd.su',
+  'golperutv.xyz',
   'multiembed.mov',
   'superembed.stream',
   'cloudstream.to',
@@ -162,6 +204,10 @@ const EMBED_HOSTS = [
 
 // Redes de anuncios agresivas y popups a bloquear
 const AD_HOSTS = [
+  'acscdn.com',
+  'llvpn.com',
+  'waust.at',
+  'aclib.js',
   'doubleclick.net',
   'googlesyndication.com',
   'google-analytics.com',
@@ -284,9 +330,36 @@ const AD_CSS = `
   }
 `;
 
+// Script de auto-play y clic simulado en el centro del reproductor embed
+const clickScript = `
+  setTimeout(() => {
+    try {
+      const video = document.querySelector('video');
+      if (video) {
+        video.play().catch(e => console.log('Autoplay blocked'));
+        const centerX = window.innerWidth / 2;
+        const centerY = window.innerHeight / 2;
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true, cancelable: true, view: window,
+          clientX: centerX, clientY: centerY
+        });
+        document.elementFromPoint(centerX, centerY)?.dispatchEvent(clickEvent);
+      } else {
+        const centerX = window.innerWidth / 2;
+        const centerY = window.innerHeight / 2;
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true, cancelable: true, view: window,
+          clientX: centerX, clientY: centerY
+        });
+        document.elementFromPoint(centerX, centerY)?.dispatchEvent(clickEvent);
+      }
+    } catch (_) {}
+  }, 2000);
+`;
+
 // Proveedores embed configurados en embedService.ts (para el chequeo de salud)
 const EMBED_PROVIDER_CHECKS = [
-  { name: 'TukiPlay (HD)', url: 'https://tukiplay.com/embed/movie/550' },
+  { name: 'FrameX (HD)', url: 'https://framextv.tech/embed/movie/550' },
   { name: 'VidLink Pro (Multi / Sub ES)', url: 'https://vidlink.pro/movie/550' },
   { name: 'VidEasy (Multi)', url: 'https://player.videasy.net/movie/550' },
   { name: 'AutoEmbed (HD)', url: 'https://player.autoembed.co/embed/movie/550' },
@@ -755,7 +828,10 @@ function createWindow() {
       const urlObj = new URL(details.url);
       const isEmbedHost = EMBED_HOSTS.some((host) => urlObj.hostname.includes(host));
 
-      if (isEmbedHost) {
+      if (details.url && details.url.includes('cloudwindow-route.com')) {
+        headers['Referer'] = 'https://vidlink.pro/';
+        headers['Origin'] = 'https://vidlink.pro';
+      } else if (isEmbedHost) {
         // Asignar el propio host como Referer y Origin para pasar verificaciones anti-hotlinking
         headers['Referer'] = `${urlObj.protocol}//${urlObj.hostname}/`;
         headers['Origin'] = `${urlObj.protocol}//${urlObj.hostname}`;
@@ -918,6 +994,8 @@ function createWindow() {
     },
   });
 
+  mainWindow.webContents.setMaxListeners(100);
+
   mainWindow.webContents.setUserAgent(REAL_CHROME_USER_AGENT);
 
   // Inyecta el escudo anti-popup (window.open falso) y el CSS anti-anuncios en todos los iframes
@@ -946,10 +1024,11 @@ function createWindow() {
         if (/youtube\.com|google\.com|accounts\.google\.com|gstatic\.com|spotify\.com/i.test(url)) continue;
         // TAREA F: No spoofear navigator.userAgentData en frames de challenges.cloudflare.com ni turnstile
         if (!/challenges\.cloudflare\.com|turnstile/i.test(url)) {
-          await f.executeJavaScript(FP_SHIELD, false);
+          await f.executeJavaScript(FP_SHIELD, false).catch(() => {});
         }
-        await f.executeJavaScript(AD_SHIELD, false);
-        await f.executeJavaScript(AD_CSS_INJECTOR, false);
+        await f.executeJavaScript(AD_SHIELD, false).catch(() => {});
+        await f.executeJavaScript(AD_CSS_INJECTOR, false).catch(() => {});
+        await f.executeJavaScript(clickScript, false).catch(() => {});
       } catch (_) {}
     }
   };
@@ -1039,9 +1118,22 @@ function createWindow() {
 
   const configureGuestWebview = (contents) => {
     if (!contents || contents.isDestroyed()) return;
+    try {
+      contents.setMaxListeners(100);
+    } catch (_) {}
     const videoSes = session.fromPartition('persist:videosession', { cache: true });
     const isVideoSession = contents.session === videoSes;
     loadDiagnostics.hookGuestWebContents(contents);
+
+    const runClickScript = async () => {
+      if (!contents || contents.isDestroyed()) return;
+      try {
+        await contents.executeJavaScript(clickScript, false).catch(() => {});
+      } catch (_) {}
+    };
+
+    contents.on('dom-ready', runClickScript);
+    contents.on('did-frame-finish-load', runClickScript);
 
     contents.setWindowOpenHandler(({ url }) => {
       if (isVideoSession) {
@@ -1974,6 +2066,166 @@ ipcMain.handle('set-compatibility-mode', (_event, enabled) => {
   return isCompatibilityMode;
 });
 
+// =========================================================================
+// EXTRACTOR FANTASMA (GHOST SNIFFER)
+// Abre un BrowserWindow invisible para interceptar el stream .m3u8 o .mp4
+// de iframes de terceros con anuncios o protecciones.
+// =========================================================================
+let ghostWindow = null;
+let ghostTimeout = null;
+
+function destroyGhostWindow() {
+  if (ghostTimeout) {
+    clearTimeout(ghostTimeout);
+    ghostTimeout = null;
+  }
+  if (ghostWindow && !ghostWindow.isDestroyed()) {
+    try {
+      ghostWindow.destroy();
+    } catch (_) {}
+  }
+  ghostWindow = null;
+}
+
+ipcMain.handle('start-ghost-extraction', async (_event, iframeUrl) => {
+  destroyGhostWindow();
+
+  if (!iframeUrl || typeof iframeUrl !== 'string') {
+    return { ok: false, error: 'URL inválida' };
+  }
+
+  console.log(`[GhostSniffer] Iniciando ventana invisible para extraer stream de: ${iframeUrl}`);
+
+  const ghostPartition = `ghost-sniff-${Date.now()}`;
+  const ghostSes = session.fromPartition(ghostPartition, { cache: false });
+
+  // Escuchar peticiones en la sesión de la ventana invisible
+  ghostSes.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
+    const u = details.url || '';
+
+    // Interceptar stream .m3u8 o .mp4
+    if (/\.(m3u8|mp4)(\?|$)/i.test(u) || u.includes('.m3u8') || (u.includes('.mp4') && !u.includes('pixel') && !u.includes('blank'))) {
+      console.log(`[GhostSniffer] ¡Stream .m3u8/.mp4 interceptado en ventana invisible! -> ${u}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ghost-stream-found', {
+          url: u,
+          originalUrl: iframeUrl,
+        });
+      }
+      setImmediate(() => {
+        destroyGhostWindow();
+      });
+      return callback({ cancel: false });
+    }
+
+    // Bloquear todas las peticiones a dominios de anuncios conocidos
+    const isAd = AD_HOSTS.some((adh) => u.includes(adh));
+    if (isAd) {
+      return callback({ cancel: true });
+    }
+
+    callback({ cancel: false });
+  });
+
+  ghostWindow = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 720,
+    webPreferences: {
+      partition: ghostPartition,
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: false,
+      autoplayPolicy: 'no-user-gesture-required',
+      spellcheck: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  ghostWindow.webContents.setUserAgent(REAL_CHROME_USER_AGENT);
+
+  // Denegar cualquier ventana emergente/popup que intente abrir la página de anime
+  ghostWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' };
+  });
+
+  // Verificar si la página presenta un desafío de Cloudflare o Captcha
+  const checkCloudflareChallenge = async () => {
+    try {
+      if (!ghostWindow || ghostWindow.isDestroyed()) return;
+      const pageTitle = ghostWindow.webContents.getTitle() || '';
+      const isChallenge =
+        pageTitle.includes('Just a moment...') ||
+        pageTitle.includes('Verificación de seguridad') ||
+        pageTitle.includes('Cloudflare') ||
+        pageTitle.includes('Attention Required!');
+
+      if (isChallenge) {
+        console.log(`[GhostSniffer] Se requiere captcha / verificación de seguridad en: ${iframeUrl}`);
+        // Pausar el timeout para darle oportunidad al usuario de resolver el captcha
+        if (ghostTimeout) {
+          clearTimeout(ghostTimeout);
+          ghostTimeout = null;
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ghost-captcha-detected', {
+            url: iframeUrl,
+            title: pageTitle,
+          });
+        }
+      }
+    } catch (_) {}
+  };
+
+  ghostWindow.webContents.on('did-finish-load', checkCloudflareChallenge);
+  ghostWindow.webContents.on('did-stop-loading', checkCloudflareChallenge);
+
+  // Intentar iniciar video al cargar DOM si requiere un click
+  ghostWindow.webContents.on('dom-ready', async () => {
+    try {
+      if (!ghostWindow || ghostWindow.isDestroyed()) return;
+      await checkCloudflareChallenge();
+      await ghostWindow.webContents.executeJavaScript(`(function() {
+        try {
+          const v = document.querySelector('video');
+          if (v) { v.muted = true; v.play().catch(function(){}); }
+          const btn = document.querySelector('.play, .vjs-big-play-button, button[aria-label="Play"], #play, [data-action="play"]');
+          if (btn) { btn.click(); }
+        } catch (_) {}
+      })();`, false).catch(() => {});
+    } catch (_) {}
+  });
+
+  // Timeout de 30 segundos para evitar fugas si no se encuentra stream
+  ghostTimeout = setTimeout(() => {
+    console.warn(`[GhostSniffer] Timeout alcanzado (30s) para: ${iframeUrl}`);
+    destroyGhostWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('ghost-stream-timeout', { originalUrl: iframeUrl });
+    }
+  }, 30000);
+
+  ghostWindow.on('closed', () => {
+    ghostWindow = null;
+  });
+
+  try {
+    await ghostWindow.loadURL(iframeUrl, {
+      userAgent: REAL_CHROME_USER_AGENT,
+      httpReferrer: 'https://jkanime.net/',
+    });
+  } catch (err) {
+    console.warn(`[GhostSniffer] Error cargando URL en ventana invisible:`, err?.message || err);
+  }
+
+  return { ok: true };
+});
+
+ipcMain.handle('stop-ghost-extraction', () => {
+  destroyGhostWindow();
+  return { ok: true };
+});
+
 // PARTE 4 (Paso 11): "Grabar carga" y "Medir servidores" (en Ajustes > Diagnóstico)
 loadDiagnostics.registerIpcHandlers(ipcMain);
 
@@ -2097,6 +2349,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  destroyGhostWindow();
   if (embeddedHttpServer) {
     try {
       embeddedHttpServer.close();

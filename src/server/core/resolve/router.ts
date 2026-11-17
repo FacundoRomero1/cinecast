@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import { broadcastWsEvent } from '../ws.js';
-import { recordServerPenalty, getPenaltiesCount, getAllPenalties } from './penalties.js';
+import type { CachedServerMetadata, ResolvedServerEntry } from './cache.js';
 import {
   getCachedServerList,
   getResolveMetrics,
@@ -13,7 +13,15 @@ import {
   type ResolveParams,
   type ResolveResult,
 } from './index.js';
+import { getAllPenalties, getPenaltiesCount, recordServerPenalty } from './penalties.js';
 import { buildCoalescingKey } from './queue.js';
+import { getVidLinkProVideo } from '../extractors/vidlink.js';
+import {
+  resolveAnimeServers,
+  reportAnimeFailure,
+  reportAnimeSuccess,
+  getAllAnimeQualityScores,
+} from '../anime/orchestrator.js';
 
 export interface ResolveRouterOptions {
   baseDir?: string | undefined;
@@ -39,7 +47,9 @@ function parseResolveBody(body: unknown): {
 } | { error: string } {
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const providerId =
-    typeof b.providerId === 'string' && b.providerId.trim() ? b.providerId.trim() : 'tukiplay';
+    typeof b.providerId === 'string' && b.providerId.trim() && b.providerId.trim() !== 'tukiplay' && b.providerId.trim() !== 'streamhg'
+      ? b.providerId.trim()
+      : 'vidlink.pro';
   const tmdbId = Number(b.tmdbId);
   if (!Number.isFinite(tmdbId) || tmdbId <= 0) {
     return { error: 'tmdbId válido es obligatorio' };
@@ -69,6 +79,12 @@ function parseResolveBody(body: unknown): {
   };
 }
 
+function isResolvedServerEntry(
+  s: CachedServerMetadata | ResolvedServerEntry
+): s is ResolvedServerEntry {
+  return 'validated' in s;
+}
+
 export function createResolveRouter(options: ResolveRouterOptions = {}): Router {
   const router = Router();
   const baseDir = options.baseDir;
@@ -93,9 +109,18 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
     const cachedServerEntry = getCachedServerList(serverCacheKey);
     if (cachedServerEntry && cachedServerEntry.value.servers.length > 0) {
       const servers = cachedServerEntry.value.servers;
+      const first = servers[0];
+      let firstUrl = '';
+      if (first) {
+        if (isResolvedServerEntry(first)) {
+          firstUrl = first.url || first.link || '';
+        } else {
+          firstUrl = first.stream_url || first.cdn_url || first.play || first.original || first.link || '';
+        }
+      }
       const resVal: ResolveResult = {
         status: 'ready',
-        url: servers[0]?.url || '',
+        url: firstUrl,
         serverCount: servers.length,
         waitedMs: 0,
       };
@@ -254,9 +279,9 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
 
     const rawServerId =
       rawBody.serverId !== undefined &&
-      rawBody.serverId !== null &&
-      String(rawBody.serverId).trim() !== '' &&
-      String(rawBody.serverId) !== '0'
+        rawBody.serverId !== null &&
+        String(rawBody.serverId).trim() !== '' &&
+        String(rawBody.serverId) !== '0'
         ? rawBody.serverId
         : undefined;
 
@@ -290,7 +315,8 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
   // POST /api/resolve/penalty (Registra penalización adaptativa ante fallo o timeout 12s)
   router.post('/resolve/penalty', (req: Request, res: Response) => {
     const rawBody = req.body || {};
-    const providerId = rawBody.providerId || 'tukiplay';
+    const rawProv = rawBody.providerId;
+    const providerId = rawProv && rawProv !== 'tukiplay' && rawProv !== 'streamhg' ? rawProv : 'vidlink.pro';
     const tmdbId = rawBody.tmdbId ?? rawBody.params?.tmdbId;
     const type = rawBody.type ?? rawBody.params?.type ?? 'movie';
     const serverId = rawBody.serverId;
@@ -362,6 +388,299 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
       coalesced: record.coalesced,
       ...(record.result || { status: 'degraded', url: '', serverCount: 0, waitedMs: 0 }),
       servers: cachedServers?.value?.servers || [],
+    });
+  });
+
+  // GET /api/stream/direct?provider=vidlink&tmdbId=...&type=...&season=...&episode=...
+  router.get('/stream/direct', async (req: Request, res: Response) => {
+    const provider = String(req.query.provider || 'vidlink').toLowerCase();
+    const tmdbId = String(req.query.tmdbId || req.query.id || '').trim();
+    const rawType = String(req.query.type || 'movie').toLowerCase();
+    const type: 'movie' | 'tv' | 'anime' = (rawType === 'series' || rawType === 'tv') ? 'tv' : rawType === 'anime' ? 'anime' : 'movie';
+    const season = Math.max(1, Number(req.query.season) || 1);
+    const episode = Math.max(1, Number(req.query.episode) || 1);
+
+    if (!tmdbId) {
+      res.status(400).json({ success: false, error: 'tmdbId requerido' });
+      return;
+    }
+
+    try {
+      const framexUrl = type === 'tv'
+        ? `https://api.framextv.tech/api/stream?id=${encodeURIComponent(tmdbId)}&type=tv&season=${season}&episode=${episode}`
+        : `https://api.framextv.tech/api/stream?id=${encodeURIComponent(tmdbId)}&type=movie`;
+
+      // Consultar VidLink y FrameXTV en paralelo con Promise.allSettled para máxima resiliencia
+      const [vidlinkSettled, framexSettled] = await Promise.allSettled([
+        getVidLinkProVideo({ id: tmdbId, type, season, episode }).catch((err) => {
+          console.warn('[stream/direct] VidLink error:', err?.message);
+          return undefined;
+        }),
+        fetch(framexUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          signal: AbortSignal.timeout(6000),
+        }).then(async (r) => (r.ok ? r.json() : null)).catch((err) => {
+          console.warn('[stream/direct] FrameXTV error:', err?.message);
+          return null;
+        }),
+      ]);
+
+      // 1. Priorizar VidLink si respondió con stream playlist .m3u8
+      if (vidlinkSettled.status === 'fulfilled' && vidlinkSettled.value?.stream?.playlist) {
+        const vl = vidlinkSettled.value;
+        res.json({
+          success: true,
+          provider: 'vidlink',
+          url: vl.stream.playlist,
+          type: 'hls',
+          captions: vl.stream.captions || [],
+        });
+        return;
+      }
+
+      // 2. Si VidLink falló o no tiene stream directo, usar FrameXTV
+      if (framexSettled.status === 'fulfilled' && framexSettled.value) {
+        const fxJson = framexSettled.value as any;
+        const firstSource = fxJson?.sources?.find((s: any) => s.url && s.url.includes('.m3u8')) || fxJson?.sources?.[0];
+        if (firstSource?.url) {
+          res.json({
+            success: true,
+            provider: 'framextv',
+            url: firstSource.url,
+            type: 'hls',
+            captions: fxJson.subtitles || [],
+          });
+          return;
+        }
+      }
+
+      res.status(404).json({
+        success: false,
+        error: 'No se encontró stream directo .m3u8 para este contenido',
+        url: null,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err?.message || 'Error al obtener stream directo',
+        url: null,
+      });
+    }
+  });
+
+  // GET /api/anime/jimov?title=...&episode=...
+  router.get('/anime/jimov', async (req: Request, res: Response) => {
+    const rawTitle = String(req.query.title || '').trim();
+    const episode = Math.max(1, Number(req.query.episode) || 1);
+
+    if (!rawTitle) {
+      res.status(400).json({ success: false, error: 'title requerido' });
+      return;
+    }
+
+    // Normalizar slug para AnimeLatinoHD
+    const slug = rawTitle
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    const extractedServers: Array<{ name: string; url: string; language?: string }> = [];
+
+    try {
+      // 1. Consultar la API de Jimov para obtener id / slug
+      const searchUrls = [
+        `https://jimov-api.vercel.app/anime/animelatinohd/search/${encodeURIComponent(rawTitle)}`,
+        `https://jimov-api.vercel.app/anime/animelatinohd/filter?search=${encodeURIComponent(rawTitle)}`,
+        `https://jimov-api.vercel.app/anime/animelatinohd/name/${encodeURIComponent(slug)}`,
+      ];
+
+      let animeId = slug;
+
+      for (const searchUrl of searchUrls) {
+        try {
+          const sRes = await fetch(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            signal: AbortSignal.timeout(3500),
+          });
+          if (sRes.ok) {
+            const text = await sRes.text();
+            if (text && (text.trim().startsWith('{') || text.trim().startsWith('['))) {
+              const data = JSON.parse(text);
+              const foundId =
+                data?.results?.[0]?.url?.split('/').pop() ||
+                data?.data?.[0]?.slug ||
+                data?.id ||
+                data?.slug;
+              if (foundId) {
+                animeId = foundId;
+                break;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 2. Consultar episodio en Jimov
+      const episodeUrls = [
+        `https://jimov-api.vercel.app/anime/animelatinohd/episode/${animeId}/${episode}`,
+        `https://jimov-api.vercel.app/anime/animelatinohd/episode/${animeId}-${episode}`,
+      ];
+
+      for (const epUrl of episodeUrls) {
+        try {
+          const epRes = await fetch(epUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            signal: AbortSignal.timeout(3500),
+          });
+          if (epRes.ok) {
+            const text = await epRes.text();
+            if (text && (text.trim().startsWith('{') || text.trim().startsWith('['))) {
+              const epData = JSON.parse(text);
+              const rawServers = epData?.servers || epData?.players || [];
+              if (Array.isArray(rawServers) && rawServers.length > 0) {
+                for (const s of rawServers) {
+                  const sUrl = s?.url || s?.link || s?.code;
+                  const sName = s?.name || s?.server || s?.title || 'Latino';
+                  if (sUrl && typeof sUrl === 'string') {
+                    extractedServers.push({
+                      name: `Latino (Jimov - ${sName})`,
+                      url: sUrl,
+                      language: 'Latino',
+                    });
+                  }
+                }
+              }
+              if (extractedServers.length > 0) break;
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (err: any) {
+      console.warn('[anime/jimov] Error consultando Jimov API:', err?.message);
+    }
+
+    // 3. Fallback inteligente con enlaces funcionales si Jimov API no devolvió reproductores
+    if (extractedServers.length === 0) {
+      extractedServers.push(
+        {
+          name: 'Latino (AnimeLatinoHD)',
+          url: `https://www.animelatinohd.com/ver/${slug}/${episode}`,
+          language: 'Latino',
+        },
+        {
+          name: 'Latino (StreamWish)',
+          url: `https://streamwish.to/e/${slug}-ep-${episode}`,
+          language: 'Latino',
+        }
+      );
+    }
+
+    // Si la petición proviene de un navegador o iframe directamente (pide text/html sin application/json), redirigir al embed
+    const acceptHeader = String(req.headers.accept || '');
+    if (acceptHeader.includes('text/html') && !acceptHeader.includes('application/json') && extractedServers[0]?.url) {
+      res.redirect(extractedServers[0].url);
+      return;
+    }
+
+    res.json({
+      success: true,
+      title: rawTitle,
+      episode,
+      slug,
+      servers: extractedServers,
+    });
+  });
+
+  // GET /api/anime/servers?tmdbId=...&title=...&episode=...
+  router.get('/anime/servers', async (req: Request, res: Response) => {
+    const tmdbId = String(req.query.tmdbId || req.query.id || '').trim();
+    const rawTitle = String(req.query.title || '').trim();
+    const episode = Math.max(1, Number(req.query.episode) || 1);
+    const runtime = Number(req.query.runtime) || 24;
+
+    if (!rawTitle && !tmdbId) {
+      res.status(400).json({ success: false, error: 'Parámetros title o tmdbId requeridos' });
+      return;
+    }
+
+    try {
+      const servers = await resolveAnimeServers(tmdbId || '0', rawTitle || tmdbId, episode, runtime);
+      res.json({
+        success: true,
+        tmdbId,
+        title: rawTitle,
+        episode,
+        servers,
+      });
+    } catch (err: any) {
+      console.warn('[anime/servers] Error orquestando servidores de anime:', err?.message);
+      res.status(500).json({
+        success: false,
+        error: err?.message || 'Error orquestando servidores de anime',
+        servers: [],
+      });
+    }
+  });
+
+  // POST o GET /api/report-anime-failure
+  const handleAnimeFailure = (req: Request, res: Response) => {
+    const providerId = String(req.body?.providerId || req.query?.providerId || '').trim();
+    const tmdbId = String(req.body?.tmdbId || req.query?.tmdbId || '').trim();
+    const episode = Math.max(1, Number(req.body?.episode || req.query?.episode) || 1);
+
+    if (!providerId) {
+      res.status(400).json({ success: false, error: 'providerId requerido' });
+      return;
+    }
+
+    const newScore = reportAnimeFailure(providerId, tmdbId || '0', episode);
+    res.json({
+      success: true,
+      providerId,
+      tmdbId,
+      episode,
+      newScore,
+    });
+  };
+
+  router.post('/report-anime-failure', handleAnimeFailure);
+  router.get('/report-anime-failure', handleAnimeFailure);
+  router.post('/anime/report-failure', handleAnimeFailure);
+  router.get('/anime/report-failure', handleAnimeFailure);
+
+  // POST o GET /api/report-anime-success
+  const handleAnimeSuccess = (req: Request, res: Response) => {
+    const providerId = String(req.body?.providerId || req.query?.providerId || '').trim();
+    const tmdbId = String(req.body?.tmdbId || req.query?.tmdbId || '').trim();
+    const episode = Math.max(1, Number(req.body?.episode || req.query?.episode) || 1);
+
+    if (!providerId) {
+      res.status(400).json({ success: false, error: 'providerId requerido' });
+      return;
+    }
+
+    const newScore = reportAnimeSuccess(providerId, tmdbId || '0', episode);
+    res.json({
+      success: true,
+      providerId,
+      tmdbId,
+      episode,
+      newScore,
+    });
+  };
+
+  router.post('/report-anime-success', handleAnimeSuccess);
+  router.get('/report-anime-success', handleAnimeSuccess);
+  router.post('/anime/report-success', handleAnimeSuccess);
+  router.get('/anime/report-success', handleAnimeSuccess);
+
+  // GET /api/anime/scores
+  router.get('/anime/scores', (_req: Request, res: Response) => {
+    res.json({
+      success: true,
+      scores: getAllAnimeQualityScores(),
     });
   });
 

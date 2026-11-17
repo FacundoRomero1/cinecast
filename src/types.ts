@@ -1,5 +1,15 @@
 export type MediaType = 'movie' | 'series';
 
+export interface StreamCaption {
+  id?: string;
+  url: string;
+  language?: string;
+  lang?: string;
+  label?: string;
+  format?: string;
+  isDefault?: boolean;
+}
+
 export interface StreamServer {
   name: string;       // Ej: "Server 1 (Byseraguci)", "VidSrc Latino", "Archive MP4"
   url: string;        // Ej: "https://byseraguci.com/e/xxxx" o "https://vidsrc.xyz/embed/movie/{tmdbId}"
@@ -8,12 +18,15 @@ export interface StreamServer {
   referrer?: string | null;
   userAgent?: string | null;
   id?: number | string;
+  providerId?: string;
   playable?: 'hls' | 'iframe';
   validated?: boolean;
   popular?: number;
   picks?: number;
   acao?: string | null;
   speedMs?: number;
+  qualityScore?: number;
+  captions?: StreamCaption[];
 }
 
 export interface LiveSportsChannel {
@@ -133,6 +146,7 @@ export interface MediaItem {
   backdropUrl: string;
   videoUrl?: string; // Preview or main movie video
   duration?: string | number;
+  runtime?: number;
   introStart?: number; // for movies or default
   introEnd?: number;
   recapStart?: number;
@@ -379,6 +393,11 @@ export interface ElectronAPI {
       timedOut?: boolean;
     }>;
   }>;
+  startGhostExtraction?: (url: string) => Promise<{ ok: boolean; error?: string }>;
+  stopGhostExtraction?: () => Promise<{ ok: boolean }>;
+  onGhostStreamFound?: (callback: (payload: { url: string; originalUrl?: string }) => void) => () => void;
+  onGhostStreamTimeout?: (callback: (payload: { originalUrl?: string }) => void) => () => void;
+  onGhostCaptchaDetected?: (callback: (payload: { url: string; title?: string }) => void) => () => void;
 }
 
 declare global {

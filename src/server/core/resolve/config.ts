@@ -23,6 +23,7 @@ export interface ProviderConfig {
   breakerWindow: number;
   breakerOpenMs: number;
   notes?: string;
+  edgeUrl?: string;
 }
 
 let cachedProviders: ProviderConfig[] | null = null;

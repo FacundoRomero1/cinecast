@@ -15,7 +15,6 @@ import {
   getNegativeCacheEntry,
   getResolveCacheStats,
   invalidateMappingCache,
-  SERVER_LIST_HLS_TTL_MS,
   SERVER_LIST_IFRAME_TTL_MS,
   SERVER_LIST_TTL_MS,
   setCachedServerList,
@@ -25,14 +24,8 @@ import {
   type CachedServerMetadata,
   type ResolvedServerEntry,
   type ResolveResult,
-  type ServerPlayable,
+  type ServerPlayable
 } from './cache.js';
-import {
-  getServerPenalty,
-  recordServerPenalty,
-  getPenaltiesCount,
-  getAllPenalties,
-} from './penalties.js';
 import {
   getProviderConfig,
   loadProvidersConfig,
@@ -43,6 +36,9 @@ import {
   httpPostForm,
   httpRequestFollowingRedirects,
 } from './http.js';
+import {
+  getServerPenalty
+} from './penalties.js';
 import {
   buildCoalescingKey,
   getQueueStats,
@@ -898,10 +894,10 @@ async function resolveSingleServerEntry(
     return null;
   }
 
-  let streamUrl = cleanStr(srv.stream_url);
-  let cdnUrl = cleanStr(srv.cdn_url);
-  let playUrl = cleanStr(srv.play);
-  let originalUrl = cleanStr(srv.original);
+  let streamUrl = cleanStr('stream_url' in srv ? srv.stream_url : undefined);
+  let cdnUrl = cleanStr('cdn_url' in srv ? srv.cdn_url : undefined);
+  let playUrl = cleanStr('play' in srv ? srv.play : undefined);
+  let originalUrl = cleanStr('original' in srv ? srv.original : undefined);
   const link = cleanStr(srv.link);
 
   // Solo si no trae ninguna de las cuatro URLs, POST streaming=<link> una vez
@@ -1151,10 +1147,10 @@ async function acuñarServerEntry(
     };
   }
 
-  let streamUrl = cleanStr(srv.stream_url);
-  let cdnUrl = cleanStr(srv.cdn_url);
-  let playUrl = cleanStr(srv.play);
-  let originalUrl = cleanStr(srv.original);
+  let streamUrl = cleanStr('stream_url' in srv ? srv.stream_url : undefined);
+  let cdnUrl = cleanStr('cdn_url' in srv ? srv.cdn_url : undefined);
+  let playUrl = cleanStr('play' in srv ? srv.play : undefined);
+  let originalUrl = cleanStr('original' in srv ? srv.original : undefined);
   const link = cleanStr(srv.link);
   const serverName = srv.name || 'Desconocido';
 
@@ -1278,6 +1274,20 @@ export async function resolveServerPlay(
   const workStart = Date.now();
   const norm = normalizeResolveKeyParams(params);
   const requestedLang = (lang || 'latino').trim().toLowerCase();
+
+  // Erradicación global de tukiplay y streamhg
+  if (providerId === 'tukiplay' || providerId === 'streamhg') {
+    return {
+      success: false,
+      serverId: serverId ?? 0,
+      name: 'Desconocido',
+      url: '',
+      playable: 'iframe',
+      error: 'Proveedor erradicado',
+      servers: [],
+    };
+  }
+
   const cacheKey = `servers:${providerId}:${norm.type}:${norm.tmdbId}:${norm.season ?? null}:${norm.episode ?? null}:${requestedLang}`;
 
   let cached = getCachedServerList(cacheKey);
@@ -1299,12 +1309,24 @@ export async function resolveServerPlay(
     };
   }
 
-  const srvList = cached.value.servers;
+  // Filtrar servidores basura (tukiplay, videoapp, vimeo, streamhg)
+  const isForbiddenServerName = (name: string, link: string) => {
+    const l = `${name} ${link}`.toLowerCase();
+    return (
+      l.includes('tukiplay') ||
+      l.includes('videoapp') ||
+      l.includes('vimeo') ||
+      l.includes('streamhg')
+    );
+  };
+  const srvList = cached.value.servers.filter(
+    (s) => !isForbiddenServerName(s.name, s.link || '')
+  );
   const titleId = `${norm.type}:${norm.tmdbId}`;
   const counter = { count: 0 };
   const provider = getProviderConfig(providerId, baseDir);
-  const tlsLax = Boolean(provider.tlsLax);
-  const edgeUrl = cached.value.edgeUrl || provider.edgeUrl || 'https://tukiplay.com/edge-data';
+  const tlsLax = Boolean(provider?.tlsLax);
+  const edgeUrl = cached.value.edgeUrl || provider?.edgeUrl || 'https://tukiplay.com/edge-data';
   const embedUrl = cached.value.embedUrl || 'https://tukiplay.com/';
   let activeToken = cached.value.token || (sharedActiveSession?.token ? { ...sharedActiveSession.token } : undefined);
   const deadlineAt = Date.now() + 15_000;
@@ -1370,7 +1392,7 @@ export async function resolveServerPlay(
   // CASO 2: serverId NO especificado -> ranking por velocidad observada y penalizaciones adaptativas
   // a) Identificar candidatos HLS
   const hlsCandidates = srvList.filter(
-    (s) => s.playable === 'hls' || s.name.toLowerCase().includes('vimeo') || s.name.toLowerCase().includes('earnvids')
+    (s) => s.playable === 'hls' || s.name.toLowerCase().includes('earnvids')
   );
 
   // b) Validar candidatos HLS no acuñados (hasta 2 en paralelo) para medir su speedMs
@@ -1386,7 +1408,7 @@ export async function resolveServerPlay(
           (candidate as any).speedMs = res.speedMs;
           (candidate as any).acao = res.acao;
           (candidate as any).validated = res.validated;
-        } catch (_) {}
+        } catch (_) { }
       })
     );
   }
@@ -1398,7 +1420,18 @@ export async function resolveServerPlay(
   setCachedServerList(cacheKey, cached.value, SERVER_LIST_TTL_MS);
 
   // d) Seleccionar el mejor servidor
-  let target = sortedServers[0];
+  const target = sortedServers[0];
+  if (!target) {
+    return {
+      success: false,
+      serverId: 0,
+      name: 'Sin servidores',
+      url: embedUrl,
+      playable: 'iframe',
+      servers: [],
+      error: 'No se encontraron servidores disponibles',
+    };
+  }
 
   // Si el target seleccionado no tiene URL todavía (por ejemplo, si era un iframe que no pasó por acuñarServerEntry):
   if (!(target as any).url) {
@@ -1446,6 +1479,47 @@ function findLanguageBlock(
  * Ordena (`validated` primero; dentro de cada grupo `hls` antes que `iframe`, luego `popular` desc.),
  * cachea la lista completa (15 min si hay HLS válido, 5 min si solo iframe) y devuelve los primeros 6 + `total`.
  */
+function isResolvedServerEntry(
+  s: CachedServerMetadata | ResolvedServerEntry
+): s is ResolvedServerEntry {
+  return 'validated' in s;
+}
+
+function normalizeToResolvedEntry(
+  s: CachedServerMetadata | ResolvedServerEntry,
+  fallbackLang: string
+): ResolvedServerEntry {
+  if (isResolvedServerEntry(s)) {
+    return {
+      id: s.id,
+      name: s.name,
+      lang: s.lang || fallbackLang,
+      popular: s.popular,
+      picks: s.picks,
+      url: s.url || s.link,
+      playable: s.playable || 'iframe',
+      validated: s.validated,
+      acao: s.acao,
+      link: s.link,
+      speedMs: s.speedMs,
+    };
+  }
+
+  return {
+    id: s.id,
+    name: s.name,
+    lang: s.lang || fallbackLang,
+    popular: s.popular,
+    picks: s.picks,
+    url: s.stream_url || s.cdn_url || s.play || s.original || s.link,
+    playable: s.playable || 'iframe',
+    validated: false,
+    acao: null,
+    link: s.link,
+    speedMs: s.speedMs,
+  };
+}
+
 export async function getServers(
   providerId: string,
   params: GetServersParams,
@@ -1456,7 +1530,8 @@ export async function getServers(
   const norm = normalizeResolveKeyParams(params);
   const provider = getProviderConfig(providerId, baseDir);
 
-  if (!provider || !provider.enabled) {
+  const isForbiddenProvider = providerId === 'tukiplay' || providerId === 'streamhg';
+  if (isForbiddenProvider || !provider || !provider.enabled) {
     return {
       providerId,
       tmdbId: norm.tmdbId,
@@ -1482,9 +1557,11 @@ export async function getServers(
       type: norm.type,
       lang: requestedLang,
       status: cached.value.total > 0 ? 'ready' : 'empty',
-      servers: cached.value.servers.slice(0, MAX_RETURNED_SERVERS),
+      servers: cached.value.servers
+        .slice(0, MAX_RETURNED_SERVERS)
+        .map((s) => normalizeToResolvedEntry(s, requestedLang)),
       total: cached.value.total,
-      hasHls: cached.value.hasHls,
+      hasHls: Boolean(cached.value.hasHls),
       truncated: false,
       cached: true,
       waitedMs: 0,
@@ -1547,7 +1624,7 @@ export async function getServers(
           let cachedMapping = getMappingCache(mappingKey);
           let edgeUrl = cachedMapping?.edgeUrl || sharedActiveSession?.edgeUrl || provider.edgeUrl || 'https://tukiplay.com/edge-data';
           let finalEmbedUrl = cachedMapping?.embedUrl || sharedActiveSession?.embedUrl || embedUrl;
-          let activeToken = sharedActiveSession?.token ? { ...sharedActiveSession.token } : null;
+          let activeToken: { validtime: string; token: string } | undefined = sharedActiveSession?.token ? { ...sharedActiveSession.token } : undefined;
           let contentId = cachedMapping?.contentId;
           let contentType = cachedMapping?.contentType;
           let serversResp: { status: number; json: EdgeApiResponse | null } | null = null;
@@ -1755,8 +1832,26 @@ export async function getServers(
           const langBlock = findLanguageBlock(serversResp.json?.servers, requestedLang);
           const rawList = Array.isArray(langBlock?.servers) ? langBlock.servers : [];
 
-          // 1) Ordenar por popular descendente, luego picks descendente
-          const preSortedCandidates = [...rawList].sort((a, b) => {
+          // 1) Filtrar servidores basura (tukiplay, videoapp, vimeo/vimeos, streamhg)
+          const isForbidden = (str: string) => {
+            const l = str.toLowerCase();
+            return (
+              l.includes('tukiplay') ||
+              l.includes('videoapp') ||
+              l.includes('vimeo') ||
+              l.includes('streamhg')
+            );
+          };
+
+          const filteredRaw = rawList.filter((srv) => {
+            const n = cleanStr(srv.link_name || srv.server);
+            const l = cleanStr(srv.link || '');
+            const id = String(srv.id || '');
+            return !isForbidden(n) && !isForbidden(l) && !isForbidden(id);
+          });
+
+          // 2) Ordenar por popular descendente, luego picks descendente
+          const preSortedCandidates = [...filteredRaw].sort((a, b) => {
             const popDiff = (Number(b.popular) || 0) - (Number(a.popular) || 0);
             if (popDiff !== 0) return popDiff;
             return (Number(b.picks) || 0) - (Number(a.picks) || 0);
@@ -1765,7 +1860,6 @@ export async function getServers(
           // Requisito 3: "en cache.ts, la lista cacheada guarda solo id, name, popular, picks y link — sin url ni playable definitivos. TTL de lista: 15 min. Sin caché de URL."
           const serverListEntries: CachedServerMetadata[] = preSortedCandidates.map((srv) => {
             const isHlsCandidate =
-              cleanStr(srv.link_name || srv.server).toLowerCase().includes('vimeo') ||
               cleanStr(srv.link_name || srv.server).toLowerCase().includes('earnvids') ||
               Boolean(cleanStr(srv.stream_url) || cleanStr(srv.cdn_url));
             return {
@@ -1806,7 +1900,7 @@ export async function getServers(
             picks: s.picks,
             link: s.link,
             url: '',
-            playable: (s.name.toLowerCase().includes('vimeo') || s.name.toLowerCase().includes('earnvids')) ? ('hls' as const) : ('iframe' as const),
+            playable: s.name.toLowerCase().includes('earnvids') ? ('hls' as const) : ('iframe' as const),
             validated: false,
           }));
 
@@ -1973,9 +2067,6 @@ export function resetResolveRuntimeForTest(): void {
 }
 
 export {
-  getMappingCache,
-  setMappingCache,
-  invalidateMappingCache,
-  getNegativeCacheEntry,
+  getMappingCache, getNegativeCacheEntry, invalidateMappingCache, setMappingCache
 };
 

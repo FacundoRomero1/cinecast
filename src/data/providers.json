@@ -1,10 +1,185 @@
 [
   {
+    "id": "framextv",
+    "name": "FrameX (Direct HLS)",
+    "enabled": true,
+    "priority": 10,
+    "languages": [
+      "multi",
+      "en",
+      "es"
+    ],
+    "urlMovie": "https://framextv.tech/embed/movie/{tmdbId}",
+    "urlTv": "https://framextv.tech/embed/tv/{tmdbId}",
+    "urlTvEpisode": "https://framextv.tech/embed/tv/{tmdbId}/{season}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Agregador FrameXTV con direct stream API y reproductor embed HLS verificado 2026-11-16."
+  },
+  {
+    "id": "vidsrc.sh",
+    "name": "VidSrc SH (HD)",
+    "enabled": true,
+    "priority": 9,
+    "languages": [
+      "multi",
+      "en"
+    ],
+    "urlMovie": "https://vidsrc.sh/embed/movie/{tmdbId}",
+    "urlTv": "https://vidsrc.sh/embed/tv/{tmdbId}",
+    "urlTvEpisode": "https://vidsrc.sh/embed/tv/{tmdbId}/{season}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Proveedor verificado activo 2026-11-16 (1080p y subtítulos)."
+  },
+  {
+    "id": "vidfast.pro",
+    "name": "VidFast (HD)",
+    "enabled": true,
+    "priority": 8,
+    "languages": [
+      "multi",
+      "en"
+    ],
+    "urlMovie": "https://vidfast.pro/movie/{tmdbId}",
+    "urlTv": "https://vidfast.pro/tv/{tmdbId}",
+    "urlTvEpisode": "https://vidfast.pro/tv/{tmdbId}/{season}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Proveedor verificado activo 2026-11-16."
+  },
+  {
+    "id": "2embed.skin",
+    "name": "2Embed (Multi)",
+    "enabled": false,
+    "priority": 7,
+    "languages": [
+      "multi",
+      "en"
+    ],
+    "urlMovie": "https://www.2embed.stream/embed/{tmdbId}",
+    "urlTv": "https://www.2embed.stream/embedtv/{tmdbId}?s=1&e=1",
+    "urlTvEpisode": "https://www.2embed.stream/embedtv/{tmdbId}?s={season}&e={episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Bloquea iframes (generador embed en iframe), deshabilitado."
+  },
+  {
+    "id": "vidsrc.to",
+    "name": "VidSrc TO",
+    "enabled": true,
+    "priority": 6,
+    "languages": [
+      "multi",
+      "en"
+    ],
+    "urlMovie": "https://vidsrc.to/embed/movie/{tmdbId}",
+    "urlTv": "https://vidsrc.to/embed/tv/{tmdbId}",
+    "urlTvEpisode": "https://vidsrc.to/embed/tv/{tmdbId}/{season}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Proveedor core verificado activo 2026-11-16."
+  },
+  {
+    "id": "streamhg",
+    "name": "StreamHG (HD)",
+    "enabled": false,
+    "priority": 2,
+    "languages": [
+      "es-419",
+      "es",
+      "multi"
+    ],
+    "urlMovie": "https://streamhg.com/embed/{tmdbId}",
+    "urlTv": "https://streamhg.com/embed/tv/{tmdbId}",
+    "urlTvEpisode": "https://streamhg.com/embed/tv/{tmdbId}/{season}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 15000,
+    "softDeadlineMs": 4000,
+    "hardTimeoutMs": 25000,
+    "slowThresholdMs": 15000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 60,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Mirror interno de streaming HD."
+  },
+  {
+    "id": "vidlink.pro",
+    "name": "VidLink Pro",
+    "enabled": true,
+    "priority": 1,
+    "languages": [
+      "en"
+    ],
+    "urlMovie": "https://vidlink.pro/movie/{tmdbId}",
+    "urlTv": "https://vidlink.pro/tv/{tmdbId}",
+    "urlTvEpisode": "https://vidlink.pro/tv/{tmdbId}/{season}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Proveedor verificado activo pero sin audio/sub latino; reservado como último recurso."
+  },
+  {
     "id": "vidsrc.cc",
     "name": "Vidsrc CC (Latino / ES)",
     "enabled": false,
     "priority": 1,
-    "languages": ["es-419", "es", "multi"],
+    "languages": [
+      "es-419",
+      "es",
+      "multi"
+    ],
     "urlMovie": "https://vidsrc.cc/embed/movie/{tmdbId}?lang=es",
     "urlTv": "https://vidsrc.cc/embed/tv/{tmdbId}?lang=es",
     "urlTvEpisode": "https://vidsrc.cc/embed/tv/{tmdbId}/{season}-{episode}?lang=es",
@@ -18,14 +193,17 @@
     "breakerErrorPct": 40,
     "breakerWindow": 20,
     "breakerOpenMs": 60000,
-    "notes": "HTTP 523 Cloudflare origin unreachable en 121/200, 2026-11-12"
+    "notes": "En mantenimiento 2026-11-16, revisar /v2/."
   },
   {
     "id": "vidsrc.pro",
     "name": "Vidsrc Pro (HD / ES)",
     "enabled": false,
     "priority": 2,
-    "languages": ["es", "multi"],
+    "languages": [
+      "es",
+      "multi"
+    ],
     "urlMovie": "https://vidsrc.pro/embed/movie/{tmdbId}?lang=es",
     "urlTv": "https://vidsrc.pro/embed/tv/{tmdbId}?lang=es",
     "urlTvEpisode": "https://vidsrc.pro/embed/tv/{tmdbId}/{season}/{episode}?lang=es",
@@ -42,34 +220,15 @@
     "notes": "conexión cerrada 2026-11-12"
   },
   {
-    "id": "tukiplay",
-    "name": "TukiPlay (HD)",
-    "enabled": true,
-    "priority": 3,
-    "languages": ["es-419", "es", "multi"],
-    "urlMovie": "https://tukiplay.com/embed/movie/{tmdbId}",
-    "urlTv": "https://tukiplay.com/embed/tv/{tmdbId}",
-    "urlTvEpisode": "https://tukiplay.com/embed/tv/{tmdbId}/{season}/{episode}",
-    "requiresReferer": true,
-    "tlsLax": false,
-    "pendingMs": 15000,
-    "softDeadlineMs": 4000,
-    "hardTimeoutMs": 25000,
-    "slowThresholdMs": 15000,
-    "maxConcurrent": 5,
-    "swrTtlMs": 21600000,
-    "negativeTtlMs": 1800000,
-    "breakerErrorPct": 60,
-    "breakerWindow": 20,
-    "breakerOpenMs": 60000,
-    "notes": "Proveedor primario (puesto #0 en embedService.ts). Medido 2026-11-12: 103/200 pelix-pending resuelven con espera de 15000ms (retryTtfbMs prom 2953ms)."
-  },
-  {
     "id": "videasy",
     "name": "VidEasy (Multi)",
-    "enabled": true,
+    "enabled": false,
     "priority": 4,
-    "languages": ["multi", "en", "es"],
+    "languages": [
+      "multi",
+      "en",
+      "es"
+    ],
     "urlMovie": "https://player.videasy.net/movie/{tmdbId}",
     "urlTv": "https://player.videasy.net/tv/{tmdbId}",
     "urlTvEpisode": "https://player.videasy.net/tv/{tmdbId}/{season}/{episode}",
@@ -83,7 +242,103 @@
     "breakerErrorPct": 40,
     "breakerWindow": 20,
     "breakerOpenMs": 60000,
-    "notes": "Puesto #3 actual en embedService.ts; redirige a player.videasy.to con cert autofirmado DDoS-Guard (requiere tlsLax)."
+    "notes": "DNS no resuelve, verificado 2026-11-16"
+  },
+  {
+    "id": "megaplay",
+    "name": "MegaPlay (Anime Sub/Dub)",
+    "enabled": false,
+    "priority": 8,
+    "languages": [
+      "ja",
+      "es",
+      "en",
+      "multi"
+    ],
+    "urlMovie": "https://megaplay.buzz/embed/anime/{tmdbId}",
+    "urlTv": "https://megaplay.buzz/embed/anime/{tmdbId}/1",
+    "urlTvEpisode": "https://megaplay.buzz/embed/anime/{tmdbId}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Soft 404, verificado 2026-11-16"
+  },
+  {
+    "id": "vidplus",
+    "name": "VidPlus Player (Anime)",
+    "enabled": false,
+    "priority": 7,
+    "languages": [
+      "ja",
+      "es",
+      "en",
+      "multi"
+    ],
+    "urlMovie": "https://player.vidplus.to/embed/anime/{tmdbId}",
+    "urlTv": "https://player.vidplus.to/embed/anime/{tmdbId}/1",
+    "urlTvEpisode": "https://player.vidplus.to/embed/anime/{tmdbId}/{episode}?dub=false",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Cloudflare 403, verificado 2026-11-16"
+  },
+  {
+    "id": "animeav1",
+    "name": "AnimeAV1",
+    "enabled": true,
+    "priority": 12,
+    "languages": [
+      "ja",
+      "es",
+      "multi"
+    ],
+    "urlTvEpisode": "https://animeav1.com/media/{slug}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "notes": "Scraper nativo AnimeAV1 con streams HLS directos"
+  },
+  {
+    "id": "jkanime",
+    "name": "JKAnime",
+    "enabled": true,
+    "priority": 11,
+    "languages": [
+      "ja",
+      "es",
+      "multi"
+    ],
+    "urlTvEpisode": "https://jkanime.net/{slug}/{episode}/",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "notes": "Scraper nativo JKAnime con espejos multi-servidor"
+  },
+  {
+    "id": "animeflv",
+    "name": "AnimeFLV",
+    "enabled": true,
+    "priority": 10,
+    "languages": [
+      "ja",
+      "es",
+      "multi"
+    ],
+    "urlTvEpisode": "https://www3.animeflv.net/ver/{slug}-{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "notes": "Scraper nativo AnimeFLV"
   }
 ]
-

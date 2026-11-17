@@ -26,7 +26,31 @@
   "uefa.champions": {
     "name": "UEFA Champions League",
     "country": "INT",
-    "primaryChannels": ["ESPN", "Fox Sports"],
+    "primaryChannels": ["ESPN", "ESPN 2", "Fox Sports", "TNT Sports"],
+    "channelKeywords": ["espn", "fox sports", "tnt sports"]
+  },
+  "uefa.europa": {
+    "name": "UEFA Europa League",
+    "country": "INT",
+    "primaryChannels": ["ESPN", "ESPN 2", "ESPN 3", "Fox Sports"],
     "channelKeywords": ["espn", "fox sports"]
+  },
+  "eng.1": {
+    "name": "Premier League",
+    "country": "GB",
+    "primaryChannels": ["ESPN", "ESPN 2", "ESPN Extra", "Fox Sports"],
+    "channelKeywords": ["espn", "espn 2", "espn extra"]
+  },
+  "esp.1": {
+    "name": "LaLiga EA Sports",
+    "country": "ES",
+    "primaryChannels": ["DSports", "ESPN", "ESPN 2", "Movistar LaLiga"],
+    "channelKeywords": ["dsports", "espn", "movistar"]
+  },
+  "ita.1": {
+    "name": "Serie A",
+    "country": "IT",
+    "primaryChannels": ["ESPN", "ESPN 2", "ESPN 4"],
+    "channelKeywords": ["espn", "espn 2", "espn 4"]
   }
 }

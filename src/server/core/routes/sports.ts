@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
+import {
+  getOrFetchSportsChannels,
+  fetchTudeporteAgenda,
+  fetchTudeporteReplays,
+} from '../sports.js';
 
 export interface SportsOptions {
   baseDir?: string | undefined;
@@ -85,6 +90,66 @@ export function createSportsRouter(options: SportsOptions = {}): Router {
   let sportsMatchesCache: SportsMatchesPayload | null = null;
   let sportsMatchesCacheTime = 0;
 
+  // GET /api/sports/channels: Obtiene canales de deportes parseados de iptv-org con caché de 1h
+  router.get('/sports/channels', async (req, res) => {
+    try {
+      const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
+      const shouldValidate = req.query.validate === 'true';
+      const cacheDir = path.join(baseDir, '.cinecast-data');
+      const data = await getOrFetchSportsChannels(cacheDir, forceRefresh, shouldValidate);
+      res.setHeader('Cache-Control', shouldValidate ? 'public, max-age=1800' : 'public, max-age=3600');
+      res.json(data);
+    } catch (err: any) {
+      console.warn('[Sports Router] Error obteniendo canales M3U:', err?.message || err);
+      res.status(500).json({
+        error: 'No se pudieron obtener canales de deportes en este momento',
+        channels: [],
+      });
+    }
+  });
+
+  // GET /api/sports/live: Agenda en vivo de tudeporte.lat limpia con caché de 3 min
+  router.get('/sports/live', async (req, res) => {
+    try {
+      const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
+      const cacheDir = path.join(baseDir, '.cinecast-data');
+      const matches = await fetchTudeporteAgenda(cacheDir, forceRefresh);
+      res.setHeader('Cache-Control', 'public, max-age=180');
+      res.json({
+        updatedAt: new Date().toISOString(),
+        total: matches.length,
+        matches,
+      });
+    } catch (err: any) {
+      console.warn('[Sports Router] Error obteniendo agenda de tudeporte:', err?.message || err);
+      res.status(500).json({
+        error: 'No se pudo obtener la agenda deportiva en este momento',
+        matches: [],
+      });
+    }
+  });
+
+  // GET /api/sports/replays: Lista de repeticiones de partidos recientes de tudeporte.lat
+  router.get('/sports/replays', async (req, res) => {
+    try {
+      const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
+      const cacheDir = path.join(baseDir, '.cinecast-data');
+      const replays = await fetchTudeporteReplays(cacheDir, forceRefresh);
+      res.setHeader('Cache-Control', 'public, max-age=1800');
+      res.json({
+        updatedAt: new Date().toISOString(),
+        total: replays.length,
+        replays,
+      });
+    } catch (err: any) {
+      console.warn('[Sports Router] Error obteniendo repeticiones de tudeporte:', err?.message || err);
+      res.status(500).json({
+        error: 'No se pudieron obtener repeticiones en este momento',
+        replays: [],
+      });
+    }
+  });
+
   router.get('/sports/matches', async (_req, res) => {
     const now = Date.now();
     if (sportsMatchesCache && now - sportsMatchesCacheTime < 45000) {
@@ -97,6 +162,11 @@ export function createSportsRouter(options: SportsOptions = {}): Router {
       { slug: 'arg.copa', name: 'Copa Argentina', country: 'AR' },
       { slug: 'conmebol.libertadores', name: 'Copa Libertadores', country: 'CONMEBOL' },
       { slug: 'conmebol.sudamericana', name: 'Copa Sudamericana', country: 'CONMEBOL' },
+      { slug: 'uefa.champions', name: 'UEFA Champions League', country: 'INT' },
+      { slug: 'uefa.europa', name: 'UEFA Europa League', country: 'INT' },
+      { slug: 'eng.1', name: 'Premier League', country: 'GB' },
+      { slug: 'esp.1', name: 'LaLiga EA Sports', country: 'ES' },
+      { slug: 'ita.1', name: 'Serie A', country: 'IT' },
     ];
 
     let compChannels: Record<string, CompetitionChannelEntry> = {};

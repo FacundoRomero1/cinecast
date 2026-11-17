@@ -82,7 +82,7 @@ export async function resolveServerPlay(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        providerId: options.providerId || 'tukiplay',
+        providerId: options.providerId || 'vidlink.pro',
         serverId: options.serverId,
         preferredServerId: options.preferredServerId,
         preferredServerName: options.preferredServerName,
@@ -144,7 +144,7 @@ export async function reportServerPlaybackPenalty(params: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        providerId: params.providerId || 'tukiplay',
+        providerId: params.providerId || 'vidlink.pro',
         tmdbId: params.tmdbId,
         type: params.type || 'movie',
         serverId: params.serverId,
@@ -152,7 +152,7 @@ export async function reportServerPlaybackPenalty(params: {
         reason: params.reason || 'desconocido',
       }),
     });
-  } catch (_) {}
+  } catch (_) { }
 }
 
 /**
@@ -168,7 +168,7 @@ export function requestServers(
   options: RequestServersOptions
 ): Promise<ResolveServersResult> & { cancel: () => void } {
   let isSettled = false;
-  let cancelFn = () => {};
+  let cancelFn = () => { };
 
   const promise = new Promise<ResolveServersResult>(async (resolvePromise) => {
     let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -192,7 +192,7 @@ export function requestServers(
       if (standaloneWs) {
         try {
           standaloneWs.close();
-        } catch (_) {}
+        } catch (_) { }
         standaloneWs = null;
       }
       if (options.signal) {
@@ -259,7 +259,7 @@ export function requestServers(
       const fetchFullServers = async (): Promise<ResolvedServer[]> => {
         try {
           const q = new URLSearchParams({
-            providerId: 'tukiplay',
+            providerId: 'vidlink.pro',
             type,
             tmdbId: String(tmdbId),
             lang,
@@ -283,7 +283,7 @@ export function requestServers(
 
       // 1. POST /api/resolve
       const postBody: Record<string, unknown> = {
-        providerId: 'tukiplay',
+        providerId: 'vidlink.pro',
         type,
         tmdbId,
         lang,
@@ -403,13 +403,13 @@ export function requestServers(
               try {
                 const parsed = JSON.parse(event.data);
                 onWsMessage(parsed);
-              } catch (_) {}
+              } catch (_) { }
             };
             ws.onerror = () => {
-              try { ws.close(); } catch (_) {}
+              try { ws.close(); } catch (_) { }
             };
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // 3. Fallback a GET /api/resolve/:jobId cada 2s
@@ -449,7 +449,7 @@ export function requestServers(
             finish({ status: 'ready', servers: fallbackServers, jobId });
             return;
           }
-        } catch (_) {}
+        } catch (_) { }
         finish({ status: 'degraded', servers: [] });
       }, 30000);
     } catch {

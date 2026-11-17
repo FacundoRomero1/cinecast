@@ -1,0 +1,16 @@
+export interface AnimeServer {
+  id?: string;
+  provider: string;
+  name: string;
+  url: string;
+  type: 'hls' | 'iframe';
+  language: 'latino' | 'sub';
+  qualityScore?: number;
+}
+
+export interface QualityScoreRecord {
+  score: number;
+  failures: number;
+  successes: number;
+  lastUpdated: number;
+}

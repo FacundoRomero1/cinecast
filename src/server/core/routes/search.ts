@@ -1,15 +1,15 @@
 import { Router } from 'express';
+import { openCatalogDb, searchLocalCatalogFts } from '../catalogDb.js';
+import { isCatalogMemoryEngine } from '../catalogSchema.js';
 import {
   TMDB_URL,
   getTmdbKey,
-  normalizeSearch,
   getTypoSuggestion,
+  normalizeSearch,
   rankAndDeduplicateItems,
   type SearchableMediaItem,
 } from '../tmdb.js';
 import { loadServerCatalogFromDisk, type CatalogItem } from './catalog.js';
-import { isCatalogMemoryEngine } from '../catalogSchema.js';
-import { openCatalogDb, searchLocalCatalogFts } from '../catalogDb.js';
 
 export interface SearchOptions {
   baseDir?: string | undefined;
@@ -194,9 +194,9 @@ export function createSearchRouter(options: SearchOptions): Router {
             const vidsrcProUrl = isTV
               ? `https://vidsrc.pro/embed/tv/${item.id}/1/1?lang=es`
               : `https://vidsrc.pro/embed/movie/${item.id}?lang=es`;
-            const tukiUrl = isTV
-              ? `https://tukiplay.com/embed/tv/${item.id}/1/1`
-              : `https://tukiplay.com/embed/movie/${item.id}`;
+            const framexUrl = isTV
+              ? `https://framextv.tech/embed/tv/${item.id}/1/1`
+              : `https://framextv.tech/embed/movie/${item.id}`;
             const videasyUrl = isTV
               ? `https://player.videasy.net/tv/${item.id}/1/1`
               : `https://player.videasy.net/movie/${item.id}`;
@@ -227,13 +227,13 @@ export function createSearchRouter(options: SearchOptions): Router {
               servers: [
                 { name: 'Vidsrc CC (Latino / ES)', url: vidsrcCcUrl, type: 'iframe', language: '🇲🇽 Latino / Español' },
                 { name: 'Vidsrc Pro (HD / ES)', url: vidsrcProUrl, type: 'iframe', language: '🌐 Multi / Sub ES' },
-                { name: 'TukiPlay (HD)', url: tukiUrl, type: 'iframe', language: '🇲🇽 Latino' },
+                { name: 'FrameX (HD)', url: framexUrl, type: 'iframe', language: '🌐 Multi / Sub ES' },
                 { name: 'VidEasy (Multi)', url: videasyUrl, type: 'iframe', language: '🌐 Multi / Original' },
               ],
             });
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     // Deduplicar respetando idioma latino y aplicar scoring estricto

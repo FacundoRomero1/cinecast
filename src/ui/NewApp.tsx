@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   HashRouter,
   Routes,
@@ -35,22 +35,22 @@ import { watchHistoryService } from '../services/watchHistoryService';
 import { deviceSync } from '../services/deviceSync';
 import { diagnosticService } from '../services/diagnosticService';
 import { MEDIA_CATALOG } from '../data/catalog';
-import { DetailModal } from '../components/DetailModal';
-import { VideoPlayer } from '../components/VideoPlayer';
-import { AmbientScreen } from '../components/AmbientScreen';
+const DetailModal = React.lazy(() => import('../components/DetailModal').then((m) => ({ default: m.DetailModal })));
+const VideoPlayer = React.lazy(() => import('../components/VideoPlayer').then((m) => ({ default: m.VideoPlayer })));
+const AmbientScreen = React.lazy(() => import('../components/AmbientScreen').then((m) => ({ default: m.AmbientScreen })));
 import { RemoteControlDrawer } from '../components/RemoteControlDrawer';
 import { RemoteControlSheet } from '../components/RemoteControlSheet';
-import { AudioSettingsModal } from '../components/AudioSettingsModal';
-import { GuestShareModal } from '../components/GuestShareModal';
+const AudioSettingsModal = React.lazy(() => import('../components/AudioSettingsModal').then((m) => ({ default: m.AudioSettingsModal })));
+const GuestShareModal = React.lazy(() => import('../components/GuestShareModal').then((m) => ({ default: m.GuestShareModal })));
 import { ContinueRow } from './ContinueRow';
 import { MiniRemote } from './MiniRemote';
 import { RemotePanel } from './RemotePanel';
-import { ScreensManagerView } from './ScreensManagerView';
-import { SportsMatchesTab } from '../components/SportsMatchesTab';
-import { SportsLiveGrid } from '../components/SportsLiveGrid';
-import { SpotifyHub } from '../components/SpotifyHub';
+const ScreensManagerView = React.lazy(() => import('./ScreensManagerView').then((m) => ({ default: m.ScreensManagerView })));
+const SportsMatchesTab = React.lazy(() => import('../components/SportsMatchesTab').then((m) => ({ default: m.SportsMatchesTab })));
+const SportsLiveGrid = React.lazy(() => import('../components/SportsLiveGrid').then((m) => ({ default: m.SportsLiveGrid })));
+const SpotifyHub = React.lazy(() => import('../components/SpotifyHub').then((m) => ({ default: m.SpotifyHub })));
 import { SpotifyDevice, SpotifySettingsSection } from './SpotifyDevice';
-import { YouTubeHub } from '../components/YouTubeHub';
+const YouTubeHub = React.lazy(() => import('../components/YouTubeHub').then((m) => ({ default: m.YouTubeHub })));
 import { SPOTIFY_TRACKS } from '../data/spotifyCatalog';
 import { YOUTUBE_VIDEOS } from '../data/youtubeCatalog';
 import { AppRuntimeProvider, useAppRuntime, type HubType } from '../app/AppRuntime';
@@ -2066,15 +2066,17 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
       {/* 11. Rol 'screen' en reposo: <AmbientScreen> con las props de App.tsx L1132-1157 */}
       {isScreenInStandby && deviceRole === 'screen' ? (
         <div className="relative" data-testid="screen-standby-view">
-          <AmbientScreen
-            deviceName={deviceSync.getDeviceName()}
-            roomId={roomId}
-            recentMedia={MEDIA_CATALOG}
-            onWakeScreen={() => setIsScreenInStandby(false)}
-            onPlayDirectly={(media) => {
-              handlePlayLocal(media);
-            }}
-          />
+          <Suspense fallback={<div className="w-full h-screen bg-black flex items-center justify-center text-white">Cargando...</div>}>
+            <AmbientScreen
+              deviceName={deviceSync.getDeviceName()}
+              roomId={roomId}
+              recentMedia={MEDIA_CATALOG}
+              onWakeScreen={() => setIsScreenInStandby(false)}
+              onPlayDirectly={(media) => {
+                handlePlayLocal(media);
+              }}
+            />
+          </Suspense>
           <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
             <button
               onClick={() => {
@@ -2095,36 +2097,38 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
           onPointerDownCapture={() => notifyUserActivity('player_pointer')}
           onKeyDownCapture={() => notifyUserActivity('player_key')}
         >
-          <VideoPlayer
-            key={activeMedia.id + ':' + (activeEpisode?.id ?? '')}
-            media={activeMedia}
-            episode={activeEpisode}
-            audioSettings={audioSettings}
-            playbackSettings={playbackSettings}
-            remoteCommandTrigger={lastRemoteCommand}
-            initialTime={playerInitialTime}
-            onBeforeAutoAdvance={handleBeforeAutoAdvance}
-            onUpdateAudio={(newSettings) => {
-              setAudioSettings((prev) => ({ ...prev, ...newSettings }));
-              deviceSync.broadcastPlaybackState({
-                ...remotePlaybackState,
-                audioSettings: { ...audioSettings, ...newSettings },
-              });
-            }}
-            onClose={() => {
-              setIsPlayingLocally(false);
-              setIsScreenInStandby(false);
-              setActiveMedia(null);
-              setActiveEpisode(null);
-              refreshContinueWatching();
-            }}
-            onNextEpisode={handlePlayNextEpisode}
-            onPrevEpisode={handlePlayPrevEpisode}
-            hasNextEpisode={true}
-            onBroadcastState={handleBroadcastPlayerState}
-            remoteCommandNotification={remoteNotification}
-            onOpenAudioSettings={() => setIsAudioModalOpen(true)}
-          />
+          <Suspense fallback={<div className="w-full h-screen bg-black flex items-center justify-center text-white">Cargando...</div>}>
+            <VideoPlayer
+              key={activeMedia.id + ':' + (activeEpisode?.id ?? '')}
+              media={activeMedia}
+              episode={activeEpisode}
+              audioSettings={audioSettings}
+              playbackSettings={playbackSettings}
+              remoteCommandTrigger={lastRemoteCommand}
+              initialTime={playerInitialTime}
+              onBeforeAutoAdvance={handleBeforeAutoAdvance}
+              onUpdateAudio={(newSettings) => {
+                setAudioSettings((prev) => ({ ...prev, ...newSettings }));
+                deviceSync.broadcastPlaybackState({
+                  ...remotePlaybackState,
+                  audioSettings: { ...audioSettings, ...newSettings },
+                });
+              }}
+              onClose={() => {
+                setIsPlayingLocally(false);
+                setIsScreenInStandby(false);
+                setActiveMedia(null);
+                setActiveEpisode(null);
+                refreshContinueWatching();
+              }}
+              onNextEpisode={handlePlayNextEpisode}
+              onPrevEpisode={handlePlayPrevEpisode}
+              hasNextEpisode={true}
+              onBroadcastState={handleBroadcastPlayerState}
+              remoteCommandNotification={remoteNotification}
+              onOpenAudioSettings={() => setIsAudioModalOpen(true)}
+            />
+          </Suspense>
         </div>
       ) : (
         <AppShell
@@ -2162,80 +2166,82 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             ) : undefined
           }
         >
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <HomeView
-                  onSelectItem={handleSelectCard}
-                  onPlayItem={handlePlayCard}
-                  onCastItem={handleCastCard}
-                />
-              }
-            />
-            <Route
-              path="/explorar"
-              element={
-                <ExploreView
-                  onSelectItem={handleSelectCard}
-                  onPlayItem={handlePlayCard}
-                  onCastItem={handleCastCard}
-                />
-              }
-            />
-            <Route
-              path="/buscar"
-              element={
-                <SearchView
-                  onSelectItem={handleSelectCard}
-                  onPlayItem={handlePlayCard}
-                  onCastItem={handleCastCard}
-                />
-              }
-            />
-            <Route
-              path="/lista"
-              element={
-                <MyListView
-                  onSelectItem={handleSelectCard}
-                  onPlayItem={handlePlayCard}
-                  onCastItem={handleCastCard}
-                />
-              }
-            />
-            <Route path="/titulo/:type/:id" element={<TitleDetailRouteView />} />
-            <Route
-              path="/deportes"
-              element={
-                <div className="p-4 sm:p-8">
-                  <SportsMatchesTab
-                    onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
-                    onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
+          <Suspense fallback={<div className="w-full h-screen bg-black flex items-center justify-center text-white">Cargando...</div>}>
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <HomeView
+                    onSelectItem={handleSelectCard}
+                    onPlayItem={handlePlayCard}
+                    onCastItem={handleCastCard}
                   />
-                </div>
-              }
-            />
-            <Route
-              path="/canales"
-              element={
-                <div className="p-4 sm:p-8">
-                  <SportsLiveGrid
-                    onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
-                    onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
-                    connectedScreenName={connectedScreenName}
+                }
+              />
+              <Route
+                path="/explorar"
+                element={
+                  <ExploreView
+                    onSelectItem={handleSelectCard}
+                    onPlayItem={handlePlayCard}
+                    onCastItem={handleCastCard}
                   />
-                </div>
-              }
-            />
-            <Route path="/musica" element={<SpotifyView />} />
-            <Route path="/youtube" element={<YouTubeView />} />
-            <Route
-              path="/ajustes"
-              element={<SettingsView onSwitchToClassic={onSwitchToClassic} />}
-            />
-            <Route path="/control" element={<ControlView />} />
-            <Route path="/pantallas" element={<ScreensManagerView />} />
-          </Routes>
+                }
+              />
+              <Route
+                path="/buscar"
+                element={
+                  <SearchView
+                    onSelectItem={handleSelectCard}
+                    onPlayItem={handlePlayCard}
+                    onCastItem={handleCastCard}
+                  />
+                }
+              />
+              <Route
+                path="/lista"
+                element={
+                  <MyListView
+                    onSelectItem={handleSelectCard}
+                    onPlayItem={handlePlayCard}
+                    onCastItem={handleCastCard}
+                  />
+                }
+              />
+              <Route path="/titulo/:type/:id" element={<TitleDetailRouteView />} />
+              <Route
+                path="/deportes"
+                element={
+                  <div className="p-4 sm:p-8">
+                    <SportsMatchesTab
+                      onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
+                      onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
+                    />
+                  </div>
+                }
+              />
+              <Route
+                path="/canales"
+                element={
+                  <div className="p-4 sm:p-8">
+                    <SportsLiveGrid
+                      onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
+                      onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
+                      connectedScreenName={connectedScreenName}
+                    />
+                  </div>
+                }
+              />
+              <Route path="/musica" element={<SpotifyView />} />
+              <Route path="/youtube" element={<YouTubeView />} />
+              <Route
+                path="/ajustes"
+                element={<SettingsView onSwitchToClassic={onSwitchToClassic} />}
+              />
+              <Route path="/control" element={<ControlView />} />
+              <Route path="/pantallas" element={<ScreensManagerView />} />
+            </Routes>
+          </Suspense>
         </AppShell>
       )}
 
@@ -2295,33 +2301,35 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
       />
 
       {/* Modales clásicos con las mismas props de App.tsx L1675-1746 */}
-      <AudioSettingsModal
-        isOpen={isAudioModalOpen}
-        onClose={() => setIsAudioModalOpen(false)}
-        audioSettings={audioSettings}
-        playbackSettings={playbackSettings}
-        onUpdateAudio={(newAudio: Partial<AudioSettings>) => {
-          setAudioSettings((prev) => ({ ...prev, ...newAudio }));
-          sendRemoteCommand({
-            action: 'setAudioSettings',
-            payload: newAudio,
-          });
-        }}
-        onUpdatePlayback={(newPlayback: Partial<PlaybackSettings>) => {
-          setPlaybackSettings((prev) => ({ ...prev, ...newPlayback }));
-          sendRemoteCommand({
-            action: 'setPlaybackSettings',
-            payload: newPlayback,
-          });
-        }}
-      />
+      <Suspense fallback={null}>
+        <AudioSettingsModal
+          isOpen={isAudioModalOpen}
+          onClose={() => setIsAudioModalOpen(false)}
+          audioSettings={audioSettings}
+          playbackSettings={playbackSettings}
+          onUpdateAudio={(newAudio: Partial<AudioSettings>) => {
+            setAudioSettings((prev) => ({ ...prev, ...newAudio }));
+            sendRemoteCommand({
+              action: 'setAudioSettings',
+              payload: newAudio,
+            });
+          }}
+          onUpdatePlayback={(newPlayback: Partial<PlaybackSettings>) => {
+            setPlaybackSettings((prev) => ({ ...prev, ...newPlayback }));
+            sendRemoteCommand({
+              action: 'setPlaybackSettings',
+              payload: newPlayback,
+            });
+          }}
+        />
 
-      <GuestShareModal
-        isOpen={isGuestModalOpen}
-        onClose={() => setIsGuestModalOpen(false)}
-        roomId={roomId}
-        screenName={connectedScreenName}
-      />
+        <GuestShareModal
+          isOpen={isGuestModalOpen}
+          onClose={() => setIsGuestModalOpen(false)}
+          roomId={roomId}
+          screenName={connectedScreenName}
+        />
+      </Suspense>
     </>
   );
 };

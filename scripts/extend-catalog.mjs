@@ -143,7 +143,7 @@ function convertTmdbItem(item, forceCategory) {
       (item.original_language === 'ja' || item.origin_country?.includes('JP')));
 
   const finalCategory = isAnime ? 'anime' : isTV ? 'series' : 'movie';
-  const title = (item.title || item.name || '').trim();
+  const title = (item.title || item.name || item.english_title || item.original_title || '').trim();
   if (!title) return null;
 
   const releaseDate = item.release_date || item.first_air_date || '2024-01-01';
@@ -245,8 +245,8 @@ function buildDiscoveryQueue() {
   }
 
   // 4. Anime adicional por año y votación
-  for (let year = 2025; year >= 1990; year -= 1) {
-    for (let page = 1; page <= 6; page += 1) {
+  for (let year = 2026; year >= 1990; year -= 1) {
+    for (let page = 1; page <= 5; page += 1) {
       push(
         `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&with_original_language=ja&with_genres=16&first_air_date_year=${year}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
         'anime'
@@ -312,7 +312,7 @@ async function main() {
           }
         }
       }
-    } catch {}
+    } catch { }
   }
 
   if (!opts.reset && fs.existsSync(statePath)) {
@@ -321,7 +321,7 @@ async function main() {
       if (typeof st.cursor === 'number' && st.cursor >= 0) {
         startCursor = st.cursor;
       }
-    } catch {}
+    } catch { }
   }
 
   console.log(

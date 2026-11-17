@@ -21,7 +21,7 @@ const DEFAULT_PENALTY_MS = 15_000; // 15 segundos adicionales por fallo
 const penaltiesMap = new Map<string, ServerPenaltyRecord>();
 
 function makePenaltyKey(providerId: string, titleId: string | number, serverId: string | number): string {
-  const normProv = String(providerId || 'tukiplay').trim().toLowerCase();
+  const normProv = String(providerId || 'vidlink.pro').trim().toLowerCase();
   const normTitle = String(titleId).trim().toLowerCase();
   const normServer = String(serverId).trim().toLowerCase();
   return `${normProv}:${normTitle}:${normServer}`;

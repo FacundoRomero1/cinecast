@@ -57,8 +57,36 @@ export default defineConfig(() => {
       },
     },
     build: {
+      chunkSizeWarningLimit: 700,
       rollupOptions: {
         external: [/^legacy\/.*/],
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('hls.js')) {
+                return 'vendor-hls';
+              }
+              if (id.includes('lucide-react')) {
+                return 'vendor-icons';
+              }
+              if (id.includes('motion')) {
+                return 'vendor-motion';
+              }
+              if (
+                id.includes('react-router') ||
+                id.includes('react-dom') ||
+                id.includes('react/') ||
+                id.includes('scheduler')
+              ) {
+                return 'vendor-react';
+              }
+              if (id.includes('react-virtuoso')) {
+                return 'vendor-virtuoso';
+              }
+              return 'vendor-libs';
+            }
+          },
+        },
       },
     },
     server: {

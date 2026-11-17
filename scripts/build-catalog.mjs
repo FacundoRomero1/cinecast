@@ -117,7 +117,7 @@ function convertTmdbItem(item, forceCategory) {
       (item.original_language === 'ja' || item.origin_country?.includes('JP')));
 
   const finalCategory = isAnime ? 'anime' : isTV ? 'series' : 'movie';
-  const title = (item.title || item.name || '').trim();
+  const title = (item.title || item.name || item.english_title || item.original_title || '').trim();
   if (!title) return null;
 
   const releaseDate = item.release_date || item.first_air_date || '2024-01-01';

@@ -15,10 +15,10 @@ export function createMovieServers(tmdbId: number): StreamServer[] {
       language: '🌐 Multi / Sub ES',
     },
     {
-      name: 'TukiPlay (Latino HD)',
-      url: `https://tukiplay.com/embed/movie/${tmdbId}`,
+      name: 'FrameX (HD)',
+      url: `https://framextv.tech/embed/movie/${tmdbId}`,
       type: 'iframe',
-      language: '🇲🇽 Latino',
+      language: '🌐 Multi / Sub ES',
     },
     {
       name: 'VidEasy (Multi)',
@@ -44,10 +44,10 @@ export function createSeriesServers(tmdbId: number, season = 1, episode = 1): St
       language: '🌐 Multi / Sub ES',
     },
     {
-      name: 'TukiPlay (HD)',
-      url: `https://tukiplay.com/embed/tv/${tmdbId}/${season}/${episode}`,
+      name: 'FrameX (HD)',
+      url: `https://framextv.tech/embed/tv/${tmdbId}/${season}/${episode}`,
       type: 'iframe',
-      language: 'Audio según servidor',
+      language: '🌐 Multi / Sub ES',
     },
     {
       name: 'VidEasy (Multi)',

@@ -114,4 +114,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPlayerServers: (servers) => ipcRenderer.invoke('set-player-servers', servers),
   getPlayerServers: () => ipcRenderer.invoke('get-player-servers'),
   measureServers: (payload) => ipcRenderer.invoke('measure-servers', payload),
+  startGhostExtraction: (url) => ipcRenderer.invoke('start-ghost-extraction', url),
+  stopGhostExtraction: () => ipcRenderer.invoke('stop-ghost-extraction'),
+  onGhostStreamFound: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('ghost-stream-found', listener);
+    return () => ipcRenderer.removeListener('ghost-stream-found', listener);
+  },
+  onGhostStreamTimeout: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('ghost-stream-timeout', listener);
+    return () => ipcRenderer.removeListener('ghost-stream-timeout', listener);
+  },
+  onGhostCaptchaDetected: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('ghost-captcha-detected', listener);
+    return () => ipcRenderer.removeListener('ghost-captcha-detected', listener);
+  },
 });

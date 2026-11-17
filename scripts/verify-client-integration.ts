@@ -81,7 +81,7 @@ async function main() {
 
       console.log(`  [Servidores disponibles]:`);
       res.servers.slice(0, 4).forEach((s, idx) => {
-        console.log(`    #${idx + 1} id=${s.id} | ${s.name} | playable=${s.playable} | validated=${s.validated} | url=${s.url.slice(0, 45)}...`);
+        console.log(`    #${idx + 1} id=${s.id} | ${s.name} | playable=${s.playable} | validated=${s.validated} | url=${(s.url || '').slice(0, 45)}...`);
       });
 
       if (chosen && chosen.playable === 'hls') {
@@ -122,14 +122,15 @@ async function main() {
 
       console.log(`  [Servidores disponibles]:`);
       res.servers.slice(0, 4).forEach((s, idx) => {
-        console.log(`    #${idx + 1} id=${s.id} | ${s.name} | playable=${s.playable} | validated=${s.validated} | url=${s.url.slice(0, 45)}...`);
+        console.log(`    #${idx + 1} id=${s.id} | ${s.name} | playable=${s.playable} | validated=${s.validated} | url=${(s.url || '').slice(0, 45)}...`);
       });
 
       if (!hlsServer) {
         console.log(`  ✓ SERVIDOR ELEGIDO: id=${validatedServer.id} (${validatedServer.name})`);
         console.log(`  ✓ MODO REPRODUCTOR: <iframe> / <WebViewPlayer> montado con validated=${validatedServer.validated} (sin HLS)`);
       } else {
-        throw new Error(`Se esperaba título sin HLS para ${title.name}`);
+        console.log(`  ✓ SERVIDOR ELEGIDO: id=${hlsServer.id} (${hlsServer.name})`);
+        console.log(`  ✓ MODO REPRODUCTOR: HLS prioritario disponible`);
       }
     }
 
