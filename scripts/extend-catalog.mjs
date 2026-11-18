@@ -176,6 +176,7 @@ function convertTmdbItem(item, forceCategory) {
     id: `tmdb-${finalCategory}-${tmdbId}`,
     tmdbId,
     title,
+    titleEs: title,
     originalTitle: (item.original_title || item.original_name || title).trim(),
     originalLanguage: item.original_language || (isAnime ? 'ja' : 'en'),
     overview,
@@ -211,7 +212,7 @@ function buildDiscoveryQueue() {
     for (const sortBy of ['popularity.desc', 'vote_count.desc', 'revenue.desc']) {
       for (let page = 1; page <= 10; page += 1) {
         push(
-          `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-MX&primary_release_year=${year}&sort_by=${sortBy}&vote_count.gte=15&page=${page}`,
+          `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&primary_release_year=${year}&sort_by=${sortBy}&vote_count.gte=15&page=${page}`,
           'movie'
         );
       }
@@ -223,7 +224,7 @@ function buildDiscoveryQueue() {
     for (const sortBy of ['popularity.desc', 'vote_count.desc']) {
       for (let page = 1; page <= 8; page += 1) {
         push(
-          `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&first_air_date_year=${year}&sort_by=${sortBy}&vote_count.gte=8&page=${page}`,
+          `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&first_air_date_year=${year}&sort_by=${sortBy}&vote_count.gte=8&page=${page}`,
           'series'
         );
       }
@@ -234,11 +235,11 @@ function buildDiscoveryQueue() {
   for (const lang of ['es', 'en', 'ko', 'fr', 'pt', 'it']) {
     for (let page = 1; page <= 25; page += 1) {
       push(
-        `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-MX&with_original_language=${lang}&sort_by=vote_count.desc&vote_count.gte=20&page=${page}`,
+        `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=${lang}&sort_by=vote_count.desc&vote_count.gte=20&page=${page}`,
         'movie'
       );
       push(
-        `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&with_original_language=${lang}&sort_by=vote_count.desc&vote_count.gte=10&page=${page}`,
+        `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=${lang}&sort_by=vote_count.desc&vote_count.gte=10&page=${page}`,
         'series'
       );
     }
@@ -248,7 +249,7 @@ function buildDiscoveryQueue() {
   for (let year = 2026; year >= 1990; year -= 1) {
     for (let page = 1; page <= 5; page += 1) {
       push(
-        `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&with_original_language=ja&with_genres=16&first_air_date_year=${year}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
+        `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=ja&with_genres=16&first_air_date_year=${year}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
         'anime'
       );
     }

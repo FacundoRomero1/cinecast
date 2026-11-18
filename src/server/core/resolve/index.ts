@@ -32,9 +32,7 @@ import {
   type ProviderConfig,
 } from './config.js';
 import {
-  httpGetFirstBytes,
-  httpPostForm,
-  httpRequestFollowingRedirects,
+  httpRequestFollowingRedirects
 } from './http.js';
 import {
   getServerPenalty
@@ -151,9 +149,6 @@ export function buildProviderUrl(config: ProviderConfig, params: ResolveParams):
   const template = isTV ? config.urlTvEpisode || config.urlTv : config.urlMovie;
 
   return String(template || '')
-    .replaceAll('{tmdbId}', String(norm.tmdbId))
-    .replaceAll('{season}', String(norm.season))
-    .replaceAll('{episode}', String(norm.episode));
 }
 
 async function fetchHtmlFollowingRedirects(
@@ -768,12 +763,81 @@ function buildOrderedHlsCandidates(cdnUrl: string, streamUrl: string): string[] 
   return out;
 }
 
+export function parseHlsAudioLangs(body: string): string[] {
+  if (!body || typeof body !== 'string') {
+    return ['desconocido'];
+  }
+
+  const lines = body.split(/\r?\n/);
+  const audioTracks: Array<{ language: string; name: string }> = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('#EXT-X-MEDIA:')) continue;
+    if (!/TYPE\s*=\s*AUDIO\b/i.test(trimmed)) continue;
+
+    const langMatch = trimmed.match(/LANGUAGE\s*=\s*(?:"([^"]*)"|([^,\s]+))/i);
+    const nameMatch = trimmed.match(/NAME\s*=\s*(?:"([^"]*)"|([^,\s]+))/i);
+
+    const language = (langMatch?.[1] ?? langMatch?.[2] ?? '').trim();
+    const name = (nameMatch?.[1] ?? nameMatch?.[2] ?? '').trim();
+
+    audioTracks.push({ language, name });
+  }
+
+  if (audioTracks.length === 0) {
+    return ['desconocido'];
+  }
+
+  const detected = new Set<string>();
+
+  for (const track of audioTracks) {
+    const langLower = track.language.toLowerCase();
+    const nameLower = track.name.toLowerCase();
+    const combined = `${langLower} ${nameLower}`.trim();
+
+    // Regla:
+    // 'es-ES' o 'castellano' → 'es'
+    // 'es' o 'latino' o 'spa' en NAME/LANGUAGE → 'latino'
+    if (combined.includes('es-es') || combined.includes('castellano')) {
+      detected.add('es');
+    } else if (
+      combined.includes('latino') ||
+      combined.includes('spa') ||
+      /\b(es)\b/i.test(combined) ||
+      langLower === 'es' ||
+      langLower.startsWith('es-')
+    ) {
+      detected.add('latino');
+    } else if (
+      combined.includes('en') ||
+      combined.includes('eng') ||
+      combined.includes('english') ||
+      combined.includes('ingles') ||
+      combined.includes('inglés')
+    ) {
+      detected.add('en');
+    } else if (langLower) {
+      detected.add(langLower);
+    } else if (nameLower) {
+      detected.add(nameLower);
+    }
+  }
+
+  if (detected.size === 0) {
+    return ['desconocido'];
+  }
+
+  return Array.from(detected);
+}
+
 interface HlsValidationResult {
   valid: boolean;
   status: number;
   acao: string | null;
   isExtM3u: boolean;
   speedMs: number;
+  audioLangs: string[];
 }
 
 async function validateHlsPlaylist(
@@ -786,203 +850,11 @@ async function validateHlsPlaylist(
 ): Promise<HlsValidationResult> {
   const remaining = deadlineAt - Date.now();
   if (remaining <= 250) {
-    return { valid: false, status: 0, acao: null, isExtM3u: false, speedMs: 999_999 };
-  }
-  const start = Date.now();
-  try {
-    counter.count += 1;
-    resolveMetrics.outboundHttpRequests += 1;
-    touchProviderMetric(providerId).outboundHttpRequests += 1;
-
-    const timeoutMs = Math.min(1_500, remaining);
-    const originHeader = 'https://tukiplay.com';
-    const refererHeader = embedUrl || 'https://tukiplay.com/';
-
-    const res = await httpGetFirstBytes(urlStr, 512, {
-      tlsLax,
-      timeoutMs,
-      retries: 0,
-      requiresReferer: false,
-      headers: {
-        Origin: originHeader,
-        Referer: refererHeader,
-      },
-    });
-
-    const speedMs = Date.now() - start;
-    const status2xx = res.status >= 200 && res.status < 300;
-    const isExtM3u = res.body.trimStart().startsWith('#EXTM3U');
-    const rawAcao =
-      res.headers?.['access-control-allow-origin'] ||
-      (res.headers as any)?.['Access-Control-Allow-Origin'] ||
-      null;
-    const acaoStr = rawAcao ? String(rawAcao).trim() : null;
-    const hasValidAcao = Boolean(
-      acaoStr &&
-      (acaoStr === '*' || acaoStr.toLowerCase() === originHeader.toLowerCase())
-    );
-
-    const valid = status2xx && isExtM3u && hasValidAcao;
-    console.log(
-      `[HLS Validation] url="${urlStr}" status=${res.status} isExtM3u=${isExtM3u} ACAO="${acaoStr || '<ninguno>'}" speedMs=${speedMs} valid=${valid}`
-    );
-    return { valid, status: res.status, acao: acaoStr, isExtM3u, speedMs };
-  } catch (err: any) {
-    const speedMs = Date.now() - start;
-    console.warn(`[HLS Validation] Error validando "${urlStr}" (${speedMs}ms):`, err?.message || err);
-    return { valid: false, status: 0, acao: null, isExtM3u: false, speedMs };
+    return { valid: false, status: 0, acao: null, isExtM3u: false, speedMs: 999_999, audioLangs: ['desconocido'] };
   }
 }
 
-async function postEdgeJson(
-  edgeUrl: string,
-  embedUrl: string,
-  fields: Record<string, string>,
-  tlsLax: boolean,
-  counter: { count: number },
-  providerId: string,
-  deadlineAt: number,
-  maxTimeoutMs = 15_000
-): Promise<{ status: number; json: EdgeApiResponse | null }> {
-  const remaining = deadlineAt - Date.now();
-  if (remaining <= 250) {
-    const err = new Error('Hard timeout reached before POST /edge-data');
-    (err as Error & { code?: string }).code = 'HARD_TIMEOUT_ERR';
-    throw err;
-  }
 
-  counter.count += 1;
-  resolveMetrics.outboundHttpRequests += 1;
-  touchProviderMetric(providerId).outboundHttpRequests += 1;
-
-  const timeoutMs = Math.min(maxTimeoutMs, remaining);
-  const origin = new URL(edgeUrl).origin;
-  const res = await httpPostForm(edgeUrl, fields, {
-    tlsLax,
-    timeoutMs,
-    retries: remaining > timeoutMs * 2 ? 1 : 0,
-    headers: {
-      Referer: embedUrl,
-      Origin: origin,
-    },
-  });
-
-  if (!res.body) {
-    return { status: res.status, json: null };
-  }
-  try {
-    return { status: res.status, json: JSON.parse(res.body) as EdgeApiResponse };
-  } catch {
-    return { status: res.status, json: null };
-  }
-}
-
-async function resolveSingleServerEntry(
-  srv: PelixRawServerItem,
-  requestedLang: string,
-  ctx: {
-    providerId: string;
-    edgeUrl: string;
-    embedUrl: string;
-    token: { validtime: string; token: string };
-    tlsLax: boolean;
-    counter: { count: number };
-    deadlineAt: number;
-  }
-): Promise<ResolvedServerEntry | null> {
-  if (Date.now() >= ctx.deadlineAt) {
-    return null;
-  }
-
-  let streamUrl = cleanStr('stream_url' in srv ? srv.stream_url : undefined);
-  let cdnUrl = cleanStr('cdn_url' in srv ? srv.cdn_url : undefined);
-  let playUrl = cleanStr('play' in srv ? srv.play : undefined);
-  let originalUrl = cleanStr('original' in srv ? srv.original : undefined);
-  const link = cleanStr(srv.link);
-
-  // Solo si no trae ninguna de las cuatro URLs, POST streaming=<link> una vez
-  if (!streamUrl && !cdnUrl && !playUrl && !originalUrl && link) {
-    try {
-      const streamingRes = await postEdgeJson(
-        ctx.edgeUrl,
-        ctx.embedUrl,
-        {
-          streaming: link,
-          validtime: ctx.token.validtime,
-          token: ctx.token.token,
-        },
-        ctx.tlsLax,
-        ctx.counter,
-        ctx.providerId,
-        ctx.deadlineAt,
-        15_000
-      );
-      if (streamingRes.json && streamingRes.json.codigo === 200) {
-        streamUrl = cleanStr(streamingRes.json.stream_url) || streamUrl;
-        cdnUrl = cleanStr(streamingRes.json.cdn_url) || cdnUrl;
-        playUrl = cleanStr(streamingRes.json.url) || playUrl;
-        originalUrl = cleanStr(streamingRes.json.original) || originalUrl;
-      }
-    } catch {
-      // sigue sin streaming= si falla o vence deadline
-    }
-  }
-
-  let resolvedUrl = '';
-  let playable: ServerPlayable = 'iframe';
-  let matchedHlsAcao: string | null = null;
-  let matchedSpeedMs: number | undefined = undefined;
-
-  // 1. buildOrderedHlsCandidates: cdnUrl primero, streamUrl segundo
-  const hlsCandidates = buildOrderedHlsCandidates(cdnUrl, streamUrl);
-  for (const candUrl of hlsCandidates) {
-    if (Date.now() >= ctx.deadlineAt) break;
-    const val = await validateHlsPlaylist(
-      candUrl,
-      ctx.embedUrl,
-      ctx.tlsLax,
-      ctx.counter,
-      ctx.providerId,
-      ctx.deadlineAt
-    );
-    if (val.valid) {
-      resolvedUrl = candUrl;
-      playable = 'hls';
-      matchedHlsAcao = val.acao;
-      matchedSpeedMs = val.speedMs;
-      break;
-    }
-  }
-
-  // 2. Degradado: playUrl || originalUrl como iframe si no hubo HLS con ACAO válido
-  if (!resolvedUrl) {
-    if (playUrl) {
-      resolvedUrl = playUrl;
-      playable = 'iframe';
-    } else if (originalUrl) {
-      resolvedUrl = originalUrl;
-      playable = 'iframe';
-    }
-  }
-
-  if (!resolvedUrl) {
-    return null;
-  }
-
-  const name = cleanStr(srv.link_name || srv.server) || 'Desconocido';
-  return {
-    id: srv.id ?? name,
-    name,
-    lang: requestedLang,
-    popular: Number(srv.popular) || 0,
-    picks: Number(srv.picks) || 0,
-    url: resolvedUrl,
-    playable,
-    validated: true,
-    acao: matchedHlsAcao,
-    speedMs: matchedSpeedMs,
-  };
-}
 
 function buildUnvalidatedServerEntry(
   srv: PelixRawServerItem,
@@ -1040,40 +912,98 @@ export function getEffectiveServerSpeed(
   return baseSpeed + penalty;
 }
 
+export function getAudioLangPriority(
+  audioLangs?: string[] | null,
+  providerLanguages?: string[] | null,
+  providerId?: string | null,
+  baseDir?: string
+): number {
+  // 1. Ranking: usa primero audioLangs medido
+  if (Array.isArray(audioLangs) && audioLangs.length > 0) {
+    const measuredWithoutUnknown = audioLangs
+      .map((l) => l.toLowerCase().trim())
+      .filter((l) => l && l !== 'desconocido');
+
+    if (measuredWithoutUnknown.length > 0) {
+      if (measuredWithoutUnknown.some((l) => l === 'latino' || l === 'spa' || l === 'es-419')) {
+        return 1;
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+        return 2;
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'multi')) {
+        return 3;
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
+        return 4;
+      }
+    }
+  }
+
+  // 2. Si está vacío o es 'desconocido', cae al campo languages del proveedor (latino→1, es→2, multi→3, en→4)
+  // Requisito 4: Si langHintUnreliable está activo, la pista no se usa: va al grupo 3
+  let provCfg: ProviderConfig | null = null;
+  if (providerId) {
+    try {
+      provCfg = getProviderConfig(providerId, baseDir);
+      if (provCfg?.langHintUnreliable) {
+        return 3;
+      }
+    } catch (_) { }
+  }
+
+  let provLangs = Array.isArray(providerLanguages) ? providerLanguages : null;
+  if (!provLangs && provCfg && Array.isArray(provCfg.languages)) {
+    provLangs = provCfg.languages;
+  }
+
+  if (provLangs && provLangs.length > 0) {
+    const prov = provLangs.map((l) => l.toLowerCase().trim());
+  }
+
+  // 3. Solo si tampoco hay pista, grupo 3
+  return 3;
+}
+
+export function getLanguageGroupRank(audioLangs?: string[] | null, providerLanguages?: string[] | null, providerId?: string | null): number {
+  return getAudioLangPriority(audioLangs, providerLanguages, providerId);
+}
+
 export function sortServersBySpeedAndPenalties<T extends CachedServerMetadata | ResolvedServerEntry>(
   entries: T[],
   providerId: string,
   titleId: string
 ): T[] {
   return [...entries].sort((a, b) => {
+    // 1. Ranking por idioma: medido primero, fallback a languages de proveedor (latino→1, es→2, multi→3, en→4), sin pista→3
+    const langRankA = getAudioLangPriority(a.audioLangs, (a as any).providerLanguages, (a as any).providerId || providerId);
+    const langRankB = getAudioLangPriority(b.audioLangs, (b as any).providerLanguages, (b as any).providerId || providerId);
+    if (langRankA !== langRankB) {
+      return langRankA - langRankB;
+    }
+
+    // 2. Dentro de cada grupo: HLS antes que iframe
     const aIsHls = a.playable === 'hls';
     const bIsHls = b.playable === 'hls';
-
-    // 1. HLS antes que iframe
     if (aIsHls && !bIsHls) return -1;
     if (!aIsHls && bIsHls) return 1;
 
-    // 2. Si ambos son HLS:
+    // 3. Si ambos son HLS, validados primero
     if (aIsHls && bIsHls) {
       const aVal = Boolean((a as any).validated);
       const bVal = Boolean((b as any).validated);
       if (aVal && !bVal) return -1;
       if (!aVal && bVal) return 1;
-
-      // Entre hls validados: speedMs ascendente (+ penalización)
-      const speedA = getEffectiveServerSpeed(providerId, titleId, a);
-      const speedB = getEffectiveServerSpeed(providerId, titleId, b);
-      if (speedA !== speedB) {
-        return speedA - speedB;
-      }
-
-      // Popular solo como desempate
-      const popDiff = (Number(b.popular) || 0) - (Number(a.popular) || 0);
-      if (popDiff !== 0) return popDiff;
-      return (Number(b.picks) || 0) - (Number(a.picks) || 0);
     }
 
-    // 3. Si ambos son iframe (o ninguno HLS):
+    // 4. Dentro de cada grupo: por speedMs ascendente (+ penalización)
+    const speedA = getEffectiveServerSpeed(providerId, titleId, a);
+    const speedB = getEffectiveServerSpeed(providerId, titleId, b);
+    if (speedA !== speedB) {
+      return speedA - speedB;
+    }
+
+    // 5. Popular solo como desempate
     const popDiff = (Number(b.popular) || 0) - (Number(a.popular) || 0);
     if (popDiff !== 0) return popDiff;
     return (Number(b.picks) || 0) - (Number(a.picks) || 0);
@@ -1082,11 +1012,21 @@ export function sortServersBySpeedAndPenalties<T extends CachedServerMetadata | 
 
 function sortResolvedServerEntries(entries: ResolvedServerEntry[]): ResolvedServerEntry[] {
   return [...entries].sort((a, b) => {
+    const langRankA = getAudioLangPriority(a.audioLangs, (a as any).providerLanguages, (a as any).providerId);
+    const langRankB = getAudioLangPriority(b.audioLangs, (b as any).providerLanguages, (b as any).providerId);
+    if (langRankA !== langRankB) {
+      return langRankA - langRankB;
+    }
     if (a.validated !== b.validated) {
       return a.validated ? -1 : 1;
     }
     if (a.playable !== b.playable) {
       return a.playable === 'hls' ? -1 : 1;
+    }
+    const speedA = typeof a.speedMs === 'number' && a.speedMs > 0 ? a.speedMs : 999_999;
+    const speedB = typeof b.speedMs === 'number' && b.speedMs > 0 ? b.speedMs : 999_999;
+    if (speedA !== speedB) {
+      return speedA - speedB;
     }
     if (b.popular !== a.popular) {
       return b.popular - a.popular;
@@ -1103,6 +1043,7 @@ export interface ResolvePlayResult {
   playable: ServerPlayable;
   speedMs?: number | undefined;
   acao?: string | null | undefined;
+  audioLangs?: string[] | undefined;
   error?: string | undefined;
   servers?: (CachedServerMetadata | ResolvedServerEntry)[];
 }
@@ -1136,6 +1077,7 @@ async function acuñarServerEntry(
   speedMs: number;
   acao: string | null;
   validated: boolean;
+  audioLangs?: string[];
 }> {
   if ((srv as any).url && typeof (srv as any).speedMs === 'number' && (srv as any).speedMs > 0) {
     return {
@@ -1144,6 +1086,7 @@ async function acuñarServerEntry(
       speedMs: (srv as any).speedMs,
       acao: (srv as any).acao || null,
       validated: Boolean((srv as any).validated),
+      audioLangs: (srv as any).audioLangs || ['desconocido'],
     };
   }
 
@@ -1214,6 +1157,7 @@ async function acuñarServerEntry(
   let matchedHlsAcao: string | null = null;
   let matchedSpeedMs = 999_999;
   let isValidated = false;
+  let matchedAudioLangs: string[] = ['desconocido'];
 
   // 1. buildOrderedHlsCandidates: cdnUrl primero, streamUrl segundo
   const hlsCandidates = buildOrderedHlsCandidates(cdnUrl, streamUrl);
@@ -1232,6 +1176,7 @@ async function acuñarServerEntry(
       playable = 'hls';
       matchedHlsAcao = val.acao;
       matchedSpeedMs = val.speedMs;
+      matchedAudioLangs = val.audioLangs;
       isValidated = true;
       break;
     }
@@ -1259,6 +1204,7 @@ async function acuñarServerEntry(
     speedMs: matchedSpeedMs,
     acao: matchedHlsAcao,
     validated: isValidated,
+    audioLangs: matchedAudioLangs,
   };
 }
 
@@ -1368,6 +1314,7 @@ export async function resolveServerPlay(
     (target as any).speedMs = acuñado.speedMs;
     (target as any).acao = acuñado.acao;
     (target as any).validated = acuñado.validated;
+    (target as any).audioLangs = acuñado.audioLangs;
 
     const sortedServers = sortServersBySpeedAndPenalties(srvList, providerId, titleId);
     cached.value.servers = sortedServers;
@@ -1385,6 +1332,7 @@ export async function resolveServerPlay(
       playable: target.playable || 'iframe',
       speedMs: acuñado.speedMs,
       acao: acuñado.acao,
+      audioLangs: acuñado.audioLangs,
       servers: sortedServers,
     };
   }
@@ -1408,6 +1356,7 @@ export async function resolveServerPlay(
           (candidate as any).speedMs = res.speedMs;
           (candidate as any).acao = res.acao;
           (candidate as any).validated = res.validated;
+          (candidate as any).audioLangs = res.audioLangs;
         } catch (_) { }
       })
     );
@@ -1441,6 +1390,7 @@ export async function resolveServerPlay(
     (target as any).speedMs = acuñado.speedMs;
     (target as any).acao = acuñado.acao;
     (target as any).validated = acuñado.validated;
+    (target as any).audioLangs = acuñado.audioLangs;
   }
 
   console.log(
@@ -1455,6 +1405,7 @@ export async function resolveServerPlay(
     playable: target.playable || 'iframe',
     speedMs: (target as any).speedMs,
     acao: (target as any).acao || null,
+    audioLangs: (target as any).audioLangs,
     servers: sortedServers,
   };
 }
@@ -1502,6 +1453,7 @@ function normalizeToResolvedEntry(
       acao: s.acao,
       link: s.link,
       speedMs: s.speedMs,
+      audioLangs: s.audioLangs,
     };
   }
 
@@ -1517,6 +1469,7 @@ function normalizeToResolvedEntry(
     acao: null,
     link: s.link,
     speedMs: s.speedMs,
+    audioLangs: s.audioLangs,
   };
 }
 

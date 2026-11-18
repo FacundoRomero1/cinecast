@@ -21,6 +21,7 @@ export interface ResolvedServer {
   link?: string;
   acao?: string | null;
   speedMs?: number;
+  audioLangs?: string[];
 }
 
 export interface ResolveServersResult {
@@ -53,6 +54,7 @@ export interface ResolvePlayResult {
   playable: 'hls' | 'iframe';
   acao?: string | null;
   speedMs?: number;
+  audioLangs?: string[];
   error?: string;
   servers?: ResolvedServer[];
 }
@@ -112,6 +114,7 @@ export async function resolveServerPlay(
       playable: data.playable === 'hls' ? 'hls' : 'iframe',
       acao: data.acao ?? null,
       speedMs: typeof data.speedMs === 'number' ? data.speedMs : undefined,
+      audioLangs: Array.isArray(data.audioLangs) ? data.audioLangs : undefined,
       error: data.error,
       servers: Array.isArray(data.servers) ? data.servers : undefined,
     };

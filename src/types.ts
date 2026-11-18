@@ -26,6 +26,7 @@ export interface StreamServer {
   acao?: string | null;
   speedMs?: number;
   qualityScore?: number;
+  audioLangs?: string[];
   captions?: StreamCaption[];
 }
 
@@ -72,6 +73,7 @@ export interface Movie {
   id: string;
   tmdbId: number;
   title: string;
+  titleEs?: string;
   originalTitle?: string;
   spokenLanguages?: string[];
   overview: string;
@@ -117,6 +119,7 @@ export interface TVShow {
   id: string;
   tmdbId: number;
   title: string;
+  titleEs?: string;
   overview: string;
   posterPath: string;
   seasons: Season[];
@@ -132,6 +135,7 @@ export interface MediaItem {
   id: string;
   tmdbId?: number;
   title: string;
+  titleEs?: string;
   originalTitle?: string;
   type: MediaType;
   overview: string;

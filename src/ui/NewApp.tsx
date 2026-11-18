@@ -3,6 +3,7 @@ import {
   HashRouter,
   Routes,
   Route,
+  Navigate,
   useLocation,
   useNavigate,
   useParams,
@@ -271,7 +272,7 @@ const HomeView: React.FC<HomeViewProps> = ({
 
           <button
             type="button"
-            aria-label="Abrir Partidos en TV"
+            aria-label="Abrir Deportes en TV"
             onClick={() => {
               const isConnected = Boolean(
                 connectedScreenName &&
@@ -288,7 +289,7 @@ const HomeView: React.FC<HomeViewProps> = ({
             className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 transition border border-zinc-700/80 shadow"
           >
             <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>Partidos</span>
+            <span>Deportes</span>
           </button>
         </div>
       </div>
@@ -1256,6 +1257,7 @@ const ControlView: React.FC = () => {
         onOpenCastModal={() => navigate('/pantallas')}
         onOpenGuestModal={() => setIsGuestModalOpen(true)}
         onNavigateToCatalog={() => navigate('/explorar')}
+        onNavigateToPartidos={() => navigate('/deportes')}
       />
     </div>
   );
@@ -2090,7 +2092,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             </button>
           </div>
         </div>
-      ) : isPlayingLocally && activeMedia && activeHub === 'cinecast' && deviceRole === 'screen' ? (
+      ) : isPlayingLocally && activeMedia && (activeHub === 'cinecast' || activeHub === 'sports') && deviceRole === 'screen' ? (
         /* 9. Reproductor a pantalla completa sobre todo con las props de App.tsx L1158-1188 */
         <div
           className="contents"
@@ -2219,6 +2221,10 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                     />
                   </div>
                 }
+              />
+              <Route
+                path="/partidos"
+                element={<Navigate to="/deportes" replace />}
               />
               <Route
                 path="/canales"

@@ -1,5 +1,5 @@
-import React from 'react';
 import { Play, Star, Trash2, Tv } from 'lucide-react';
+import React from 'react';
 import type { CardItem } from '../providers/types';
 import { getPosterProxyUrl, type PosterWidth } from './liteMode';
 
@@ -26,6 +26,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({
 }) => {
   const isSeries =
     item.type === 'series' || item.category === 'series' || item.category === 'anime';
+  const displayTitle = item.titleEs || item.originalTitle || item.title;
   const posterSrc = getPosterProxyUrl(item.posterUrl, posterWidth);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -40,7 +41,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({
       data-card-id={item.id}
       role="button"
       tabIndex={0}
-      aria-label={`${item.title} (${item.year}), ${isSeries ? 'Serie' : 'Película'}, puntuación ${item.rating}`}
+      aria-label={`${displayTitle} (${item.year}), ${isSeries ? 'Serie' : 'Película'}, puntuación ${item.rating}`}
       onClick={() => onSelect(item)}
       onKeyDown={handleKeyDown}
       className={`group relative flex flex-col rounded-xl bg-zinc-900/80 border border-zinc-800/80 overflow-hidden cursor-pointer select-none transition-transform duration-200 hover:scale-[1.03] hover:border-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 min-h-[44px] min-w-[44px] touch-manipulation ${className}`}
@@ -49,14 +50,14 @@ export const TitleCard: React.FC<TitleCardProps> = ({
         {posterSrc ? (
           <img
             src={posterSrc}
-            alt={item.title}
+            alt={displayTitle}
             loading="lazy"
             decoding="async"
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center p-3 text-center text-xs text-zinc-400 font-medium">
-            {item.title}
+            {displayTitle}
           </div>
         )}
 
@@ -67,7 +68,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({
                 <button
                   type="button"
                   title="Reproducir"
-                  aria-label={`Reproducir ${item.title}`}
+                  aria-label={`Reproducir ${displayTitle}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     onPlay(item);
@@ -82,7 +83,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({
                 <button
                   type="button"
                   title={`Enviar a ${connectedScreenName || 'PC'}`}
-                  aria-label={`Enviar ${item.title} a ${connectedScreenName || 'PC'}`}
+                  aria-label={`Enviar ${displayTitle} a ${connectedScreenName || 'PC'}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     onCast(item);
@@ -98,7 +99,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({
               <button
                 type="button"
                 title="Quitar de Mi lista"
-                aria-label={`Quitar ${item.title} de Mi lista`}
+                aria-label={`Quitar ${displayTitle} de Mi lista`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemove(item);
@@ -113,8 +114,8 @@ export const TitleCard: React.FC<TitleCardProps> = ({
       </div>
 
       <div className="p-2.5 flex flex-col gap-1 bg-zinc-950/90 flex-1 justify-between">
-        <h3 className="text-xs sm:text-sm font-semibold text-zinc-100 truncate" title={item.title}>
-          {item.title}
+        <h3 className="text-xs sm:text-sm font-semibold text-zinc-100 truncate" title={displayTitle}>
+          {displayTitle}
         </h3>
 
         <div data-card-meta className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-zinc-400">
@@ -129,11 +130,10 @@ export const TitleCard: React.FC<TitleCardProps> = ({
 
           <span
             data-card-badge
-            className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0 ${
-              isSeries
-                ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
-                : 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30'
-            }`}
+            className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0 ${isSeries
+              ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
+              : 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30'
+              }`}
           >
             {isSeries ? 'SERIE' : 'PELÍCULA'}
           </span>

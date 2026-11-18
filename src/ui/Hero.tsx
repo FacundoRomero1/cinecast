@@ -1,5 +1,5 @@
-import React from 'react';
 import { Info, Play, Star, Tv } from 'lucide-react';
+import React from 'react';
 import type { CardItem } from '../providers/types';
 import { getPosterProxyUrl } from './liteMode';
 
@@ -24,21 +24,22 @@ export const Hero: React.FC<HeroProps> = ({
 
   const isSeries =
     item.type === 'series' || item.category === 'series' || item.category === 'anime';
+  const displayTitle = item.titleEs || item.originalTitle || item.title;
   const coverUrl = getPosterProxyUrl(item.backdropUrl || item.posterUrl, 342);
   const shortSynopsis =
     overview && overview.trim().length > 0
       ? overview
-      : `${item.title} (${item.year}) • ${item.genres.join(', ') || 'Destacado en CineCast'} • Calidad ${item.quality}`;
+      : `${displayTitle} (${item.year}) • ${item.genres.join(', ') || 'Destacado en CineCast'} • Calidad ${item.quality}`;
 
   return (
     <section
-      aria-label={`Destacado: ${item.title}`}
+      aria-label={`Destacado: ${displayTitle}`}
       className="relative w-full min-h-[380px] sm:min-h-[460px] rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800/80 mb-6 flex items-end"
     >
       {coverUrl && (
         <img
           src={coverUrl}
-          alt={item.title}
+          alt={displayTitle}
           className="absolute inset-0 w-full h-full object-cover object-center opacity-55"
         />
       )}
@@ -48,11 +49,10 @@ export const Hero: React.FC<HeroProps> = ({
       <div className="relative z-10 p-5 sm:p-8 md:p-10 max-w-2xl flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
           <span
-            className={`px-2 py-0.5 rounded uppercase tracking-wider ${
-              isSeries
-                ? 'bg-blue-600/90 text-white'
-                : 'bg-emerald-600/90 text-white'
-            }`}
+            className={`px-2 py-0.5 rounded uppercase tracking-wider ${isSeries
+              ? 'bg-blue-600/90 text-white'
+              : 'bg-emerald-600/90 text-white'
+              }`}
           >
             {isSeries ? 'SERIE' : 'PELÍCULA'}
           </span>
@@ -69,7 +69,7 @@ export const Hero: React.FC<HeroProps> = ({
         </div>
 
         <h1 className="text-2xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
-          {item.title}
+          {displayTitle}
         </h1>
 
         <p className="text-xs sm:text-sm text-zinc-300 line-clamp-3 leading-relaxed">

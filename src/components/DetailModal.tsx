@@ -1,26 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { MediaItem, Episode } from '../types';
 import {
-  Play,
-  Tv,
-  Plus,
   Check,
-  X,
-  ThumbsUp,
   Clock,
-  Film,
-  Sparkles,
   Dices,
-  Flame,
-  User,
-  Youtube,
+  Film,
   Layers,
-  ChevronRight,
-  Info,
+  Play,
+  Plus,
+  Sparkles,
+  ThumbsUp,
+  Tv,
+  User,
+  X,
+  Youtube
 } from 'lucide-react';
-import { createStyledPosterFallback } from '../utils/imageUtils';
-import { generateServersForMedia } from '../services/embedService';
+import React, { useEffect, useState } from 'react';
 import { deviceSync } from '../services/deviceSync';
+import { generateServersForMedia } from '../services/embedService';
+import { Episode, MediaItem } from '../types';
+import { createStyledPosterFallback } from '../utils/imageUtils';
 
 interface CastMember {
   name: string;
@@ -88,7 +85,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
       const next = !prev;
       try {
         localStorage.setItem('cinecast_marathon_mode', String(next));
-      } catch (_) {}
+      } catch (_) { }
       return next;
     });
   };
@@ -208,11 +205,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({
       servers: media.servers && media.servers.length > 0
         ? media.servers
         : generateServersForMedia({
-            tmdbId: media.tmdbId,
-            type: 'series',
-            season: targetSeason,
-            episode: targetEpisodeNum,
-          }),
+          tmdbId: media.tmdbId,
+          type: 'series',
+          season: targetSeason,
+          episode: targetEpisodeNum,
+        }),
     };
 
     const isRemoteDevice = deviceSync.getDeviceType() === 'remote';
@@ -239,7 +236,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
     }, 900);
   };
 
-  const effectiveTitle = detailedData?.title || media.title;
+  const effectiveTitle = detailedData?.titleEs || media.titleEs || media.originalTitle || detailedData?.title || media.title;
   const effectiveOriginalTitle = detailedData?.originalTitle || media.originalTitle;
   const effectiveOverview = detailedData?.overview || media.overview;
   const effectiveDirector = detailedData?.director || media.creatorOrDirector;
@@ -261,11 +258,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({
       servers: media.servers && media.servers.length > 0
         ? media.servers
         : generateServersForMedia({
-            tmdbId: media.tmdbId,
-            type: isSeries ? 'series' : 'movie',
-            season: targetEpisode?.seasonNumber || 1,
-            episode: targetEpisode?.episodeNumber || 1,
-          }),
+          tmdbId: media.tmdbId,
+          type: isSeries ? 'series' : 'movie',
+          season: targetEpisode?.seasonNumber || 1,
+          episode: targetEpisode?.episodeNumber || 1,
+        }),
     };
     onPlayLocal(enrichedMedia, targetEpisode || undefined);
     onClose();
@@ -280,11 +277,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({
       servers: media.servers && media.servers.length > 0
         ? media.servers
         : generateServersForMedia({
-            tmdbId: media.tmdbId,
-            type: isSeries ? 'series' : 'movie',
-            season: targetEpisode?.seasonNumber || 1,
-            episode: targetEpisode?.episodeNumber || 1,
-          }),
+          tmdbId: media.tmdbId,
+          type: isSeries ? 'series' : 'movie',
+          season: targetEpisode?.seasonNumber || 1,
+          episode: targetEpisode?.episodeNumber || 1,
+        }),
     };
     onCastToScreen(enrichedMedia, targetEpisode || undefined);
     onClose();
@@ -411,11 +408,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({
 
                     <button
                       onClick={() => onToggleMyList(media.id)}
-                      className={`p-3 rounded-2xl border transition ${
-                        isMyList
-                          ? 'bg-zinc-800 text-red-500 border-red-500/50'
-                          : 'bg-zinc-900/80 hover:bg-zinc-800 text-white border-zinc-700'
-                      }`}
+                      className={`p-3 rounded-2xl border transition ${isMyList
+                        ? 'bg-zinc-800 text-red-500 border-red-500/50'
+                        : 'bg-zinc-900/80 hover:bg-zinc-800 text-white border-zinc-700'
+                        }`}
                       title={isMyList ? 'En tu lista' : 'Agregar a mi lista'}
                     >
                       {isMyList ? <Check className="w-5 h-5 text-red-500" /> : <Plus className="w-5 h-5" />}
@@ -423,11 +419,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({
 
                     <button
                       onClick={() => setLiked(!liked)}
-                      className={`p-3 rounded-2xl border transition ${
-                        liked
-                          ? 'bg-zinc-800 text-red-500 border-red-500/50'
-                          : 'bg-zinc-900/80 hover:bg-zinc-800 text-white border-zinc-700'
-                      }`}
+                      className={`p-3 rounded-2xl border transition ${liked
+                        ? 'bg-zinc-800 text-red-500 border-red-500/50'
+                        : 'bg-zinc-900/80 hover:bg-zinc-800 text-white border-zinc-700'
+                        }`}
                       title="Me gusta"
                     >
                       <ThumbsUp className={`w-5 h-5 ${liked ? 'fill-current text-red-500' : ''}`} />
@@ -471,11 +466,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   <button
                     type="button"
                     onClick={toggleMarathonMode}
-                    className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 ${
-                      marathonMode
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 shadow-lg shadow-emerald-950/30'
-                        : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'
-                    }`}
+                    className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 ${marathonMode
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60 shadow-lg shadow-emerald-950/30'
+                      : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'
+                      }`}
                     title="Modo Maratón: Salta automáticamente de capítulo sin cuenta atrás y pasa de temporada"
                   >
                     <span>🏃</span>
@@ -589,11 +583,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                             });
                           }
                         }}
-                        className={`w-32 sm:w-36 shrink-0 rounded-2xl overflow-hidden bg-zinc-950 border transition transform ${
-                          isCurrent
-                            ? 'border-red-500 shadow-lg shadow-red-900/30 ring-2 ring-red-500/50'
-                            : 'border-zinc-800 hover:border-zinc-600 hover:scale-102 cursor-pointer'
-                        }`}
+                        className={`w-32 sm:w-36 shrink-0 rounded-2xl overflow-hidden bg-zinc-950 border transition transform ${isCurrent
+                          ? 'border-red-500 shadow-lg shadow-red-900/30 ring-2 ring-red-500/50'
+                          : 'border-zinc-800 hover:border-zinc-600 hover:scale-102 cursor-pointer'
+                          }`}
                       >
                         <div className="aspect-[2/3] relative bg-zinc-800">
                           {part.posterUrl ? (

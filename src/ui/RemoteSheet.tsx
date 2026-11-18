@@ -307,6 +307,12 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
                 handleClose();
                 if (onNavigateToCatalog) onNavigateToCatalog();
               }}
+              onNavigateToPartidos={() => {
+                handleClose();
+                if (typeof window !== 'undefined') {
+                  window.location.hash = '#/deportes';
+                }
+              }}
             />
           )}
         </div>

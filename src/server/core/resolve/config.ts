@@ -22,6 +22,8 @@ export interface ProviderConfig {
   breakerErrorPct: number;
   breakerWindow: number;
   breakerOpenMs: number;
+  needsBrowser?: boolean;
+  langHintUnreliable?: boolean;
   notes?: string;
   edgeUrl?: string;
 }

@@ -21,6 +21,7 @@ export interface CachedServerMetadata {
   cdn_url?: string | undefined;
   playable?: ServerPlayable | undefined;
   speedMs?: number | undefined;
+  audioLangs?: string[] | undefined;
 }
 
 export interface ResolvedServerEntry {
@@ -35,6 +36,7 @@ export interface ResolvedServerEntry {
   acao?: string | null | undefined;
   link?: string | undefined;
   speedMs?: number | undefined;
+  audioLangs?: string[] | undefined;
 }
 
 export interface CachedServerList {

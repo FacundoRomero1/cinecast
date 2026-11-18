@@ -1,8 +1,8 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import { extractTmdbId, type MediaServerEntry } from './tmdb.js';
 import { normalizeGenres } from './genres.js';
+import { extractTmdbId, type MediaServerEntry } from './tmdb.js';
 
 export const CATALOG_SCHEMA_VERSION = '4';
 
@@ -10,6 +10,7 @@ export interface CatalogItem {
   id: string;
   tmdbId: number;
   title: string;
+  titleEs?: string;
   originalTitle: string;
   originalLanguage: string;
   spokenLanguages: string[];
@@ -38,6 +39,8 @@ export interface CatalogCardItem {
   id: string;
   tmdbId: number;
   title: string;
+  titleEs?: string;
+  originalTitle?: string;
   posterUrl: string;
   backdropUrl: string;
   year: number;
@@ -53,6 +56,7 @@ export interface RawCatalogEntry {
   id?: string;
   tmdbId?: number | string;
   title?: string;
+  titleEs?: string;
   originalTitle?: string;
   originalLanguage?: string;
   spokenLanguages?: string[];
@@ -119,7 +123,7 @@ export function resolveCatalogDbPath(baseDir: string, userDataPath?: string): st
       try {
         fs.mkdirSync(targetDir, { recursive: true });
         fs.copyFileSync(sourceDb, targetDb);
-      } catch (_) {}
+      } catch (_) { }
     }
     return targetDb;
   }
@@ -210,6 +214,7 @@ export function normalizeRawCatalogEntry(m: RawCatalogEntry, currentYear: number
     id: m.id || `tmdb-${category}-${tmdbId}`,
     tmdbId,
     title: m.title || 'Sin Título',
+    titleEs: m.titleEs || m.title || m.originalTitle || 'Sin Título',
     originalTitle: m.originalTitle || m.title || 'Sin Título',
     originalLanguage: origLang,
     spokenLanguages: m.spokenLanguages || (origLang === 'es' ? ['es'] : ['es', origLang]),
@@ -478,7 +483,7 @@ export function rebuildCatalogDatabase(
   } catch (err) {
     try {
       db.exec('ROLLBACK;');
-    } catch {}
+    } catch { }
     throw err;
   }
 }

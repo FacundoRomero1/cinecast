@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { TMDB_URL, getTmdbKey, extractTmdbId } from '../tmdb.js';
-import { loadServerCatalogFromDisk, type CatalogItem } from './catalog.js';
-import { isCatalogMemoryEngine } from '../catalogSchema.js';
 import { findCatalogItemInDb, openCatalogDb } from '../catalogDb.js';
+import { isCatalogMemoryEngine } from '../catalogSchema.js';
+import { TMDB_URL, extractTmdbId, getTmdbKey } from '../tmdb.js';
+import { loadServerCatalogFromDisk, type CatalogItem } from './catalog.js';
 
 export interface TmdbDetailOptions {
   baseDir?: string | undefined;
@@ -183,7 +183,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
 
   try {
     fs.mkdirSync(mediaCacheDir, { recursive: true });
-  } catch (_) {}
+  } catch (_) { }
 
   function loadServerCatalog(): CatalogItem[] {
     return loadServerCatalogFromDisk(baseDir, options.getCatalogCache, options.setCatalogCache);
@@ -207,12 +207,12 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
           res.json(cached);
           return;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     try {
       const apiKey = getTmdbKey();
-      const detailUrl = `${TMDB_URL}/${cleanType}/${tmdbId}?api_key=${apiKey}&language=es-MX&append_to_response=credits,videos,recommendations`;
+      const detailUrl = `${TMDB_URL}/${cleanType}/${tmdbId}?api_key=${apiKey}&language=es-AR&append_to_response=credits,videos,recommendations`;
       const tmdbRes = await fetch(detailUrl, { signal: AbortSignal.timeout(7000) });
       if (!tmdbRes.ok) {
         let cat: CatalogItem | null = null;
@@ -220,7 +220,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
           try {
             const opened = openCatalogDb(baseDir, options.userDataPath);
             if (opened) cat = findCatalogItemInDb(opened.db, tmdbId, id);
-          } catch {}
+          } catch { }
         }
         if (!cat) {
           cat = loadServerCatalog().find((m) => String(m.tmdbId) === tmdbId || m.id === id) || null;
@@ -282,7 +282,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
       if (d.belongs_to_collection && d.belongs_to_collection.id) {
         try {
           const collRes = await fetch(
-            `${TMDB_URL}/collection/${d.belongs_to_collection.id}?api_key=${apiKey}&language=es-MX`
+            `${TMDB_URL}/collection/${d.belongs_to_collection.id}?api_key=${apiKey}&language=es-AR`
           );
           if (collRes.ok) {
             const collData = (await collRes.json()) as TmdbCollectionResponse;
@@ -305,7 +305,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
               })),
             };
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Recomendaciones inteligentes (filtro >= 6.0, género/década, 6 a 20 items)
@@ -379,19 +379,20 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
       const seasons =
         cleanType === 'tv'
           ? (d.seasons || [])
-              .filter((s) => (s.season_number ?? 0) > 0)
-              .map((s) => ({
-                seasonNumber: s.season_number ?? 1,
-                name: s.name || `Temporada ${s.season_number ?? 1}`,
-                episodeCount: s.episode_count || 10,
-                posterUrl: s.poster_path ? `https://image.tmdb.org/t/p/w300${s.poster_path}` : null,
-              }))
+            .filter((s) => (s.season_number ?? 0) > 0)
+            .map((s) => ({
+              seasonNumber: s.season_number ?? 1,
+              name: s.name || `Temporada ${s.season_number ?? 1}`,
+              episodeCount: s.episode_count || 10,
+              posterUrl: s.poster_path ? `https://image.tmdb.org/t/p/w300${s.poster_path}` : null,
+            }))
           : [];
 
       const payload = {
         id: `tmdb-${type}-${tmdbId}`,
         tmdbId: Number(tmdbId),
         title,
+        titleEs: title,
         originalTitle: origTitle,
         overview: d.overview || 'Sinopsis no disponible en español.',
         releaseDate,
@@ -411,7 +412,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
         type: cleanType === 'tv' ? 'series' : 'movie',
       };
 
-      fs.writeFile(cacheFile, JSON.stringify(payload), () => {});
+      fs.writeFile(cacheFile, JSON.stringify(payload), () => { });
       res.setHeader('Cache-Control', 'public, max-age=3600');
       res.json(payload);
     } catch (err) {
@@ -444,12 +445,12 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
         };
         res.json(normalized);
         return;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     try {
       const apiKey = getTmdbKey();
-      const url = `${TMDB_URL}/tv/${tmdbId}/season/${sNum}?api_key=${apiKey}&language=es-MX`;
+      const url = `${TMDB_URL}/tv/${tmdbId}/season/${sNum}?api_key=${apiKey}&language=es-AR`;
       const epRes = await fetch(url, { signal: AbortSignal.timeout(6000) });
       if (!epRes.ok) {
         res.status(404).json({ error: 'Temporada no encontrada' });
@@ -460,7 +461,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
       const episodes = formatSeasonEpisodes(data.episodes || [], sNum);
 
       const result = { seasonNumber: sNum, episodes };
-      fs.writeFile(cacheFile, JSON.stringify(result), () => {});
+      fs.writeFile(cacheFile, JSON.stringify(result), () => { });
       res.setHeader('Cache-Control', 'public, max-age=86400');
       res.json(result);
     } catch (err) {
@@ -483,12 +484,12 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
         const cached: unknown = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
         res.json(cached);
         return;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     try {
       const apiKey = getTmdbKey();
-      const url = `${TMDB_URL}/tv/${tmdbId}?api_key=${apiKey}&language=es-MX`;
+      const url = `${TMDB_URL}/tv/${tmdbId}?api_key=${apiKey}&language=es-AR`;
       const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
       if (!r.ok) {
         res.status(404).json({ error: 'Serie no encontrada en TMDB' });
@@ -516,7 +517,7 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
         seasons,
       };
 
-      fs.writeFile(cacheFile, JSON.stringify(result), () => {});
+      fs.writeFile(cacheFile, JSON.stringify(result), () => { });
       res.setHeader('Cache-Control', 'public, max-age=86400');
       res.json(result);
     } catch (err) {

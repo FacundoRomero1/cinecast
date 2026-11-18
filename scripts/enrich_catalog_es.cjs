@@ -46,15 +46,15 @@ async function main() {
   const endpoints = [];
   // Películas populares y mejor valoradas (es-MX)
   for (let p = 1; p <= 40; p++) {
-    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-MX&sort_by=popularity.desc&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-MX&sort_by=vote_count.desc&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-MX&with_original_language=es&page=${p}`);
+    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=popularity.desc&page=${p}`);
+    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=vote_count.desc&page=${p}`);
+    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=es&page=${p}`);
   }
   // Series y anime (es-MX)
   for (let p = 1; p <= 30; p++) {
-    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&sort_by=popularity.desc&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&with_genres=16&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&with_original_language=es&page=${p}`);
+    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=popularity.desc&page=${p}`);
+    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_genres=16&page=${p}`);
+    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=es&page=${p}`);
   }
 
   const batchSize = 10;
@@ -85,12 +85,16 @@ async function main() {
     const tmdbInfo = tmdbMap.get(tmdbId);
 
     if (tmdbInfo) {
-      if (tmdbInfo.title) item.title = tmdbInfo.title;
+      if (tmdbInfo.title) {
+        item.title = tmdbInfo.title;
+        item.titleEs = tmdbInfo.title;
+      }
       item.originalTitle = tmdbInfo.originalTitle;
       item.originalLanguage = tmdbInfo.originalLanguage;
       enriched++;
     } else {
       // Reglas heurísticas de alta precisión
+      item.titleEs = item.titleEs || item.title;
       if (item.category === 'anime' || item.genres?.includes('Anime')) {
         item.originalLanguage = 'ja';
         item.originalTitle = item.title;

@@ -4,6 +4,30 @@ import path from 'path';
 export const SPORTS_M3U_URL = 'https://iptv-org.github.io/iptv/categories/sports.m3u';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
 
+let deadUrlsSet: Set<string> | null = null;
+export function getDeadSportsUrls(): Set<string> {
+  if (deadUrlsSet) return deadUrlsSet;
+  deadUrlsSet = new Set<string>();
+  try {
+    const candidates = [
+      path.join(process.cwd(), 'src', 'data', 'deadSportsChannels.json'),
+      path.join(process.cwd(), 'data', 'deadSportsChannels.json'),
+      path.join(__dirname, '..', '..', 'data', 'deadSportsChannels.json'),
+      path.join(__dirname, 'deadSportsChannels.json'),
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (Array.isArray(d.deadUrls)) {
+          d.deadUrls.forEach((u: string) => deadUrlsSet!.add(u));
+        }
+        break;
+      }
+    }
+  } catch (_) {}
+  return deadUrlsSet;
+}
+
 export interface ParsedSportsChannel {
   id: string;
   name: string;
@@ -247,6 +271,9 @@ export async function getOrFetchSportsChannels(
       if (now - stats.mtimeMs < CACHE_TTL_MS) {
         const parsed = JSON.parse(fs.readFileSync(diskCacheFile, 'utf8')) as SportsChannelsPayload;
         if (parsed && Array.isArray(parsed.channels) && parsed.channels.length > 0) {
+          const deadSet = getDeadSportsUrls();
+          parsed.channels = parsed.channels.filter((c) => !deadSet.has(c.streamUrl));
+          parsed.total = parsed.channels.length;
           inMemoryChannelsCache = parsed;
           lastCacheTime = stats.mtimeMs;
           if (validate) {
@@ -266,7 +293,9 @@ export async function getOrFetchSportsChannels(
     }
 
     const text = await res.text();
-    const channels = parseSportsM3u(text);
+    let channels = parseSportsM3u(text);
+    const deadSet = getDeadSportsUrls();
+    channels = channels.filter((c) => !deadSet.has(c.streamUrl));
 
     // Priorizar canales hispanos/latinoamericanos al frente (AR, MX, ES, CO, CL, UY, PE, US, INT)
     const priorityCountries = ['AR', 'MX', 'ES', 'CO', 'CL', 'UY', 'PE', 'VE', 'CR', 'EC'];

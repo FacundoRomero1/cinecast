@@ -271,7 +271,7 @@ export async function buildCuratedHome(params: BuildHomeParams): Promise<HomeRow
   }
 
   // ── FILA 1: Tendencias esta semana (TMDB /trending/all/week) ──────────────
-  const trendingUrl = `${TMDB_URL}/trending/all/week?api_key=${apiKey}&language=es-MX`;
+  const trendingUrl = `${TMDB_URL}/trending/all/week?api_key=${apiKey}&language=es-AR`;
   const trendingData = await fetchTmdbCached<{ results?: Array<{ id: number; title?: string; name?: string; popularity?: number }> }>(
     trendingUrl,
     'trending_week',
@@ -345,7 +345,7 @@ export async function buildCuratedHome(params: BuildHomeParams): Promise<HomeRow
     if (!tmdbId) continue;
 
     const mediaType = targetItem.type === 'movie' ? 'movie' : 'tv';
-    const recUrl = `${TMDB_URL}/${mediaType}/${tmdbId}/recommendations?api_key=${apiKey}&language=es-MX`;
+    const recUrl = `${TMDB_URL}/${mediaType}/${tmdbId}/recommendations?api_key=${apiKey}&language=es-AR`;
     const recData = await fetchTmdbCached<{ results?: Array<{ id: number; title?: string; name?: string }> }>(
       recUrl,
       `rec_${mediaType}_${tmdbId}`,

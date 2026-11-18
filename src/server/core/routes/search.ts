@@ -158,9 +158,9 @@ export function createSearchRouter(options: SearchOptions): Router {
     for (const term of searchTerms) {
       try {
         const endpoints = [
-          `${TMDB_URL}/search/multi?api_key=${apiKey}&language=es-MX&query=${encodeURIComponent(term)}&include_adult=false`,
-          `${TMDB_URL}/search/tv?api_key=${apiKey}&language=es-MX&query=${encodeURIComponent(term)}&include_adult=false`,
-          `${TMDB_URL}/search/movie?api_key=${apiKey}&language=es-MX&query=${encodeURIComponent(term)}&include_adult=false`,
+          `${TMDB_URL}/search/multi?api_key=${apiKey}&language=es-AR&query=${encodeURIComponent(term)}&include_adult=false`,
+          `${TMDB_URL}/search/tv?api_key=${apiKey}&language=es-AR&query=${encodeURIComponent(term)}&include_adult=false`,
+          `${TMDB_URL}/search/movie?api_key=${apiKey}&language=es-AR&query=${encodeURIComponent(term)}&include_adult=false`,
         ];
 
         const responses = await Promise.allSettled(
@@ -205,6 +205,7 @@ export function createSearchRouter(options: SearchOptions): Router {
               id: `tmdb-${isTV ? 'series' : 'movie'}-${item.id}`,
               tmdbId: Number(item.id),
               title,
+              titleEs: title,
               originalTitle: item.original_title || item.original_name || title,
               originalLanguage: item.original_language || 'es',
               spokenLanguages: ['es'],

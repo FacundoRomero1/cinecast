@@ -1,7 +1,7 @@
+import { ExternalLink, Film, Star, Tv, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { X, Star, ExternalLink, Film, Tv } from 'lucide-react';
-import type { CardItem, MediaDetailItem } from '../providers/types';
 import { localCatalogProvider } from '../providers/localCatalogProvider';
+import type { CardItem, MediaDetailItem } from '../providers/types';
 
 export interface TitleSheetProps {
   item: CardItem | null;
@@ -45,18 +45,20 @@ export const TitleSheet: React.FC<TitleSheetProps> = ({
 
   const isSeries =
     item.type === 'series' || item.category === 'series' || item.category === 'anime';
+  const displayTitle =
+    detail?.titleEs || item.titleEs || detail?.originalTitle || (item as any).originalTitle || item.title;
   const synopsis =
     detail?.overview && detail.overview.trim().length > 0
       ? detail.overview
       : loading
-      ? 'Cargando sinopsis y detalles...'
-      : 'Sin descripción disponible para este título.';
+        ? 'Cargando sinopsis y detalles...'
+        : 'Sin descripción disponible para este título.';
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Ficha de ${item.title}`}
+      aria-label={`Ficha de ${displayTitle}`}
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
       onClick={onClose}
     >
@@ -68,7 +70,7 @@ export const TitleSheet: React.FC<TitleSheetProps> = ({
           {(item.backdropUrl || item.posterUrl) && (
             <img
               src={item.backdropUrl || item.posterUrl}
-              alt={item.title}
+              alt={displayTitle}
               className="w-full h-full object-cover opacity-60"
             />
           )}
@@ -87,9 +89,8 @@ export const TitleSheet: React.FC<TitleSheetProps> = ({
           <div className="absolute bottom-4 left-5 right-5 flex flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
               <span
-                className={`px-2 py-0.5 rounded inline-flex items-center gap-1 uppercase ${
-                  isSeries ? 'bg-blue-600 text-white' : 'bg-emerald-600 text-white'
-                }`}
+                className={`px-2 py-0.5 rounded inline-flex items-center gap-1 uppercase ${isSeries ? 'bg-blue-600 text-white' : 'bg-emerald-600 text-white'
+                  }`}
               >
                 {isSeries ? <Tv className="w-3 h-3" /> : <Film className="w-3 h-3" />}
                 {isSeries ? 'SERIE' : 'PELÍCULA'}
@@ -101,7 +102,7 @@ export const TitleSheet: React.FC<TitleSheetProps> = ({
               </span>
               <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">{item.quality}</span>
             </div>
-            <h2 className="text-xl sm:text-2xl font-extrabold text-white">{item.title}</h2>
+            <h2 className="text-xl sm:text-2xl font-extrabold text-white">{displayTitle}</h2>
           </div>
         </div>
 

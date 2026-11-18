@@ -4,7 +4,8 @@ export interface AnimeServer {
   name: string;
   url: string;
   type: 'hls' | 'iframe';
-  language: 'latino' | 'sub';
+  language: 'latino' | 'sub' | 'es';
+  audioLangs?: string[];
   qualityScore?: number;
 }
 

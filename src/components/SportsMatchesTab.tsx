@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Calendar, Clock, Tv, RefreshCw, Trophy, Play, Video, Film, Radio, Sparkles } from 'lucide-react';
+import { Calendar, Clock, Tv, RefreshCw, Trophy, Play, Video, Film, Radio, Sparkles, AlertCircle } from 'lucide-react';
 import { MediaItem } from '../types';
 
 export interface TudeporteChannel {
@@ -582,34 +582,43 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChanne
                     {/* Footer: Canales de Transmisión Limpios */}
                     <div className="mt-4 pt-3 border-t border-zinc-800/80">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Tv className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                          {m.channels.map((ch, idx) => {
-                            const isHls = ch.link.includes('.m3u8');
-                            return (
-                              <button
-                                key={`${ch.link}_${idx}`}
-                                onClick={() => handlePlayLiveChannel(m, ch)}
-                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
-                                  isHls
-                                    ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-600/60 shadow-emerald-950/40'
-                                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700/70'
-                                }`}
-                                title={
-                                  isHls
-                                    ? `Reproducir señal Full HD (HLS Directo) de ${ch.name}`
-                                    : `Reproducir señal limpia de ${ch.name} (${ch.server})`
-                                }
-                              >
-                                {isHls && <Sparkles className="w-2.5 h-2.5 text-emerald-400" />}
-                                <span>{ch.name}</span>
-                                <Play className="w-2.5 h-2.5 fill-current text-red-500" />
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {m.channels.filter((c) => c.link && c.link.startsWith('http')).length < 3 ? (
+                          <div className="flex items-center gap-1.5 text-zinc-500 text-xs italic font-semibold py-1">
+                            <AlertCircle className="w-3.5 h-3.5 text-zinc-600" />
+                            <span>Sin señal disponible</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Tv className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                            {m.channels
+                              .filter((c) => c.link && c.link.startsWith('http'))
+                              .map((ch, idx) => {
+                                const isHls = ch.link.includes('.m3u8');
+                                return (
+                                  <button
+                                    key={`${ch.link}_${idx}`}
+                                    onClick={() => handlePlayLiveChannel(m, ch)}
+                                    className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
+                                      isHls
+                                        ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-600/60 shadow-emerald-950/40'
+                                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700/70'
+                                    }`}
+                                    title={
+                                      isHls
+                                        ? `Reproducir señal Full HD (HLS Directo) de ${ch.name}`
+                                        : `Reproducir señal limpia de ${ch.name} (${ch.server})`
+                                    }
+                                  >
+                                    {isHls && <Sparkles className="w-2.5 h-2.5 text-emerald-400" />}
+                                    <span>{ch.name}</span>
+                                    <Play className="w-2.5 h-2.5 fill-current text-red-500" />
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        )}
 
-                        {isLive && m.channels.length > 0 && (
+                        {isLive && m.channels.filter((c) => c.link && c.link.startsWith('http')).length >= 3 && (
                           <button
                             onClick={() => handlePlayLiveChannel(m, m.channels[0])}
                             className={`px-3 py-1 rounded-xl text-white text-xs font-bold transition flex items-center gap-1 shadow-md ${

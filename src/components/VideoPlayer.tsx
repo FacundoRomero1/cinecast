@@ -470,10 +470,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Tarea A: Extracción robusta de TMDB ID que soporta tmdb-series-1418_s1_e15, slugs y números
   const tmdbIdToUse = useMemo(() => {
+    if (
+      media.category === 'live_tv' ||
+      media.type === 'live_tv' ||
+      String(media.id).startsWith('sport_') ||
+      String(media.id).startsWith('match_') ||
+      String(media.id).startsWith('channel_') ||
+      String(media.id).startsWith('live_')
+    ) {
+      return 0;
+    }
     const direct = Number((media as any).tmdbId);
     if (Number.isFinite(direct) && direct > 0) return direct;
     return extractTmdbId(media.id);
-  }, [media.id, (media as any).tmdbId]);
+  }, [media.id, media.category, media.type, (media as any).tmdbId]);
 
   // Tarea B: Origen único de verdad para temporada y episodio con sincronización
   const [selectedSeason, setSelectedSeason] = useState<number>(episode ? episode.seasonNumber : 1);
@@ -563,13 +573,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [media, tmdbIdToUse, isSeriesOrAnime]);
 
   const availableServers: StreamServer[] = useMemo(() => {
+    // 0. Si es contenido en vivo (deportes, IPTV, etc.): usar servidores directos de la señal
+    const isLive = media.category === 'live_tv' || media.type === 'live_tv' || tmdbIdToUse <= 0;
+    if (isLive) {
+      if (episode?.servers?.length) return episode.servers;
+      if (media.servers?.length) return media.servers;
+      if (currentVideoUrl) {
+        return [{
+          name: media.title || 'Señal en Directo',
+          url: currentVideoUrl,
+          type: currentVideoUrl.includes('.m3u8') ? 'hls' : 'iframe',
+          language: 'En Vivo',
+        }];
+      }
+    }
+
     const isAnime = media.category === 'anime' || resolveType === 'anime';
-    // 0. Si resolveService o Direct HLS ya resolvió servidores para este título con TMDB
+    // 1. Si resolveService o Direct HLS ya resolvió servidores para este título con TMDB
     if (tmdbIdToUse > 0 && resolvedServers !== null && resolvedServers.length > 0) {
       return deduplicateServers(resolvedServers);
     }
 
-    // 1. Para series o anime con TMDB: regenerar siempre con la temporada y episodio seleccionados
+    // 2. Para series o anime con TMDB: regenerar siempre con la temporada y episodio seleccionados
     // para evitar que los servidores cacheados del episodio inicial en media.servers congelen la URL en el episodio 1.
     if (isSeriesOrAnime && tmdbIdToUse > 0) {
       return generateServersForMedia({
@@ -581,11 +606,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       });
     }
 
-    // 2. Servidores explícitos (IPTV, en vivo o provistos por el llamador)
+    // 3. Servidores explícitos (IPTV, en vivo o provistos por el llamador)
     if (episode?.servers?.length) return episode.servers;
     if (media.servers?.length) return media.servers;
 
-    // 3. Pelis por TMDB: generar los espejos
+    // 4. Pelis por TMDB: generar los espejos
     if (tmdbIdToUse > 0) {
       return generateServersForMedia({
         tmdbId: tmdbIdToUse,

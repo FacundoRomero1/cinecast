@@ -14,6 +14,8 @@ import {
   Play,
   QrCode,
   Radio,
+  RefreshCw,
+  Search,
   Server,
   SkipBack,
   SkipForward,
@@ -28,7 +30,7 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { deviceSync } from '../services/deviceSync';
-import { generateServersForMedia } from '../services/embedService';
+import { formatAudioLangLabel, generateServersForMedia } from '../services/embedService';
 import type { Episode, MediaItem, PlaybackState, RemoteCommand } from '../types';
 import { createStyledPosterFallback } from '../utils/imageUtils';
 import { PadSection } from './PadSection';
@@ -46,6 +48,7 @@ export interface RemotePanelProps {
   onOpenGuestModal?: () => void;
   onNavigateToCatalog?: () => void;
   onOpenBigPad?: (mode?: 'pad' | 'cruceta') => void;
+  onNavigateToPartidos?: () => void;
 }
 
 function formatTime(seconds: number = 0): string {
@@ -72,7 +75,180 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   onOpenGuestModal,
   onNavigateToCatalog,
   onOpenBigPad,
+  onNavigateToPartidos,
 }) => {
+  const [activeMainTab, setActiveMainTab] = useState<'control' | 'sports'>('control');
+  const [sportsMatches, setSportsMatches] = useState<any[]>([]);
+  const [sportsChannels, setSportsChannels] = useState<any[]>([]);
+  const [loadingSports, setLoadingSports] = useState<boolean>(false);
+  const [sportsSearch, setSportsSearch] = useState<string>('');
+  const [onlyLive, setOnlyLive] = useState<boolean>(false);
+
+  const fetchSportsData = async () => {
+    setLoadingSports(true);
+    try {
+      const [matchesRes, channelsRes] = await Promise.allSettled([
+        fetch('/api/sports/matches'),
+        fetch('/api/sports/channels'),
+      ]);
+      if (matchesRes.status === 'fulfilled' && matchesRes.value.ok) {
+        const data = await matchesRes.value.json();
+        if (Array.isArray(data?.matches)) {
+          setSportsMatches(data.matches);
+        }
+      }
+      if (channelsRes.status === 'fulfilled' && channelsRes.value.ok) {
+        const chData = await channelsRes.value.json();
+        if (Array.isArray(chData?.channels)) {
+          setSportsChannels(chData.channels);
+        }
+      }
+    } catch (e) {
+      console.warn('[RemotePanel] Error cargando deportes:', e);
+    } finally {
+      setLoadingSports(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeMainTab === 'sports') {
+      fetchSportsData();
+    }
+  }, [activeMainTab]);
+
+  const handlePlayMatchChannel = (match: any, explicitChannel?: string) => {
+    const channelName = explicitChannel || match.channels?.[0] || 'ESPN';
+    const matchedCh = sportsChannels.find((c: any) =>
+      c.name?.toLowerCase().includes(channelName.toLowerCase()) ||
+      channelName.toLowerCase().includes(c.name?.toLowerCase())
+    );
+    const verifiedFallback = 'https://amg26268-amg26268c14-freelivesports-emea-10267.playouts.now.amagi.tv/ts-us-e2-n2/playlist/amg26268-sportsstudio-tycsports-freelivesportsemea/playlist.m3u8';
+    const streamUrl = (matchedCh?.streamUrl && matchedCh.streamUrl.startsWith('http') && !matchedCh.streamUrl.includes('45.134.141.161'))
+      ? matchedCh.streamUrl
+      : verifiedFallback;
+
+    const matchMedia: MediaItem = {
+      id: `match_${match.id}_${Date.now()}`,
+      title: `${match.homeTeam?.name || 'Local'} vs ${match.awayTeam?.name || 'Visitante'}`,
+      originalTitle: match.name,
+      type: 'movie',
+      category: 'live_tv',
+      overview: `${match.league || 'Deportes'} - Transmisión en vivo por ${channelName}. Marcador: ${match.homeTeam?.score || '-'} - ${match.awayTeam?.score || '-'}.`,
+      year: new Date().getFullYear(),
+      ratingBadge: match.isLive ? 'EN VIVO' : 'DEPORTES',
+      matchScore: 99,
+      qualityBadge: 'HD 1080p',
+      posterUrl: match.homeTeam?.logo || match.awayTeam?.logo || 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=800',
+      backdropUrl: match.awayTeam?.logo || match.homeTeam?.logo || 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=1600',
+      servers: [
+        {
+          name: `${channelName} (En Vivo)`,
+          url: streamUrl,
+          type: streamUrl.includes('.m3u8') ? 'hls' : 'iframe',
+          language: 'En Vivo',
+        }
+      ],
+      videoUrl: streamUrl,
+    };
+
+    // 1. Manda comando play con el canal al dispositivo pantalla
+    onSendCommand({
+      action: 'play',
+      payload: {
+        hub: 'sports',
+        channel: {
+          id: matchedCh?.id || `ch_${Date.now()}`,
+          name: matchedCh?.name || channelName,
+          streamUrl,
+          logo: matchedCh?.logo || '',
+          country: matchedCh?.country || 'AR',
+        },
+        match: {
+          id: match.id,
+          name: `${match.homeTeam?.name} vs ${match.awayTeam?.name}`,
+          league: match.league,
+          homeScore: match.homeTeam?.score,
+          awayScore: match.awayTeam?.score,
+          status: match.status,
+          homeLogo: match.homeTeam?.logo,
+          awayLogo: match.awayTeam?.logo,
+        },
+        media: matchMedia,
+        streamUrl,
+      },
+    });
+
+    // 2. Navega a la sección de deportes
+    if (onNavigateToPartidos) {
+      onNavigateToPartidos();
+    }
+    if (typeof window !== 'undefined') {
+      window.location.hash = '#/deportes';
+    }
+  };
+
+  const filteredMatches = useMemo(() => {
+    return sportsMatches.filter((m) => {
+      if (onlyLive && !m.isLive) return false;
+      if (!sportsSearch.trim()) return true;
+      const q = sportsSearch.toLowerCase().trim();
+      const homeName = m.homeTeam?.name?.toLowerCase() || '';
+      const awayName = m.awayTeam?.name?.toLowerCase() || '';
+      const league = m.league?.toLowerCase() || '';
+      return homeName.includes(q) || awayName.includes(q) || league.includes(q);
+    });
+  }, [sportsMatches, onlyLive, sportsSearch]);
+
+  const handlePlayDirectChannel = (channel: any) => {
+    const streamUrl = channel.streamUrl || 'http://45.134.141.161:2200/ARG/ESPN_Premium_Argentina_HD/tracks-v1a1/mono.m3u8';
+    const matchMedia: MediaItem = {
+      id: `channel_${channel.id || Date.now()}`,
+      title: channel.name,
+      originalTitle: channel.name,
+      type: 'movie',
+      category: 'live_tv',
+      overview: `Canal deportivo en vivo: ${channel.name}`,
+      year: new Date().getFullYear(),
+      ratingBadge: 'EN VIVO',
+      matchScore: 99,
+      qualityBadge: 'HD 1080p',
+      posterUrl: channel.logo || 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=800',
+      backdropUrl: channel.logo || 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=1600',
+      servers: [
+        {
+          name: `${channel.name} (Directo)`,
+          url: streamUrl,
+          type: streamUrl.includes('.m3u8') ? 'hls' : 'iframe',
+          language: 'En Vivo',
+        }
+      ],
+      videoUrl: streamUrl,
+    };
+
+    onSendCommand({
+      action: 'play',
+      payload: {
+        hub: 'sports',
+        channel: {
+          id: channel.id || `ch_${Date.now()}`,
+          name: channel.name,
+          streamUrl,
+          logo: channel.logo || '',
+          country: channel.country || 'AR',
+        },
+        media: matchMedia,
+        streamUrl,
+      },
+    });
+
+    if (onNavigateToPartidos) {
+      onNavigateToPartidos();
+    }
+    if (typeof window !== 'undefined') {
+      window.location.hash = '#/deportes';
+    }
+  };
+
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isChaptersOpen, setIsChaptersOpen] = useState(false);
   const [isServersOpen, setIsServersOpen] = useState(false);
@@ -646,12 +822,12 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
               : connStatus.isUnstable
                 ? 'bg-amber-500'
                 : isWithoutData
-                ? 'bg-amber-500 animate-pulse'
-                : !isConnected || connStatus.state === 'disconnected'
-                  ? 'bg-rose-500'
-                  : connStatus.state === 'reconnecting' || isScreenReconnecting
-                    ? 'bg-amber-500 animate-pulse'
-                    : 'bg-emerald-500'
+                  ? 'bg-amber-500 animate-pulse'
+                  : !isConnected || connStatus.state === 'disconnected'
+                    ? 'bg-rose-500'
+                    : connStatus.state === 'reconnecting' || isScreenReconnecting
+                      ? 'bg-amber-500 animate-pulse'
+                      : 'bg-emerald-500'
               }`}
           />
           <div className="min-w-0">
@@ -660,16 +836,16 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
                 {connStatus.state === 'otra-pestana'
                   ? 'La app está abierta en otra pestaña'
                   : isWithoutData
-                  ? 'Sin datos'
-                  : connStatus.isUnstable
-                    ? `Conexión inestable (code=${connStatus.closeCode ?? 1006}, wasClean=${String(Boolean(connStatus.wasClean))})`
-                    : !isConnected || connStatus.state === 'disconnected'
-                      ? 'Sin conexión'
-                      : connStatus.state === 'reconnecting' || isScreenReconnecting
-                        ? 'Reconectando...'
-                        : connStatus.latencyMs > 0
-                          ? `${connStatus.latencyMs} ms`
-                          : 'Conectado'}
+                    ? 'Sin datos'
+                    : connStatus.isUnstable
+                      ? `Conexión inestable (code=${connStatus.closeCode ?? 1006}, wasClean=${String(Boolean(connStatus.wasClean))})`
+                      : !isConnected || connStatus.state === 'disconnected'
+                        ? 'Sin conexión'
+                        : connStatus.state === 'reconnecting' || isScreenReconnecting
+                          ? 'Reconectando...'
+                          : connStatus.latencyMs > 0
+                            ? `${connStatus.latencyMs} ms`
+                            : 'Conectado'}
               </p>
               {lastCommandFeedback && (
                 <span
@@ -704,1019 +880,1304 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         </button>
       </section>
 
-      {/* 2. Fila 'Ir a' fija con accesos rápidos (altura mínima 44 px) */}
-      <nav
-        aria-label="Accesos rápidos Ir a"
-        className="p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 grid grid-cols-4 gap-1.5 shadow-md"
-      >
+      {/* Selector de Pestaña Principal: Control Remoto | Deportes */}
+      <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md">
         <button
           type="button"
-          onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'cinecast' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${activeHub === 'cinecast' && !isStandby
-            ? 'bg-red-600 text-white shadow'
-            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+          onClick={() => setActiveMainTab('control')}
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition ${activeMainTab === 'control'
+            ? 'bg-zinc-800 text-white border border-zinc-700 shadow'
+            : 'text-zinc-400 hover:text-zinc-200'
             }`}
         >
-          <Film className="w-4 h-4" />
-          <span className="text-[11px]">Inicio</span>
+          <Gamepad2 className="w-4 h-4 text-red-500" />
+          <span>Control Remoto</span>
         </button>
-
         <button
           type="button"
-          onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'youtube' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${isYouTube
-            ? 'bg-red-600 text-white shadow'
-            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
-            }`}
-        >
-          <Youtube className="w-4 h-4 text-red-400" />
-          <span className="text-[11px]">YouTube</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'spotify' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${isSpotify
-            ? 'bg-emerald-600 text-white shadow'
-            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
-            }`}
-        >
-          <Music className="w-4 h-4 text-emerald-400" />
-          <span className="text-[11px]">Spotify</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'sports' } })}
-          className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${activeHub === 'sports'
+          onClick={() => {
+            setActiveMainTab('sports');
+            onSendCommand({ action: 'switchHub', payload: { hub: 'sports' } });
+          }}
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition ${activeMainTab === 'sports'
             ? 'bg-blue-600 text-white shadow'
-            : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+            : 'text-zinc-400 hover:text-zinc-200'
             }`}
         >
           <Trophy className="w-4 h-4 text-amber-400" />
-          <span className="text-[11px]">Partidos</span>
+          <span>Deportes</span>
+          {sportsMatches.filter((m) => m.isLive).length > 0 && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+          )}
         </button>
-      </nav>
+      </div>
 
-      {/* Botones de navegación Pad y Cruceta (>= 44px cada uno) */}
-      <section aria-label="Control Pad y Cruceta" className="space-y-3">
-        <div className="grid grid-cols-2 gap-2">
-          {/* Botón Pad */}
-          <button
-            type="button"
-            aria-label="Pad"
-            onClick={() => {
-              if (onOpenBigPad) {
-                onOpenBigPad('pad');
-              } else {
-                setPadMode((prev) => (prev === 'touchpad' ? null : 'touchpad'));
-              }
-            }}
-            className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${padMode === 'touchpad'
-              ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
-              : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
-              }`}
+      {activeMainTab === 'control' ? (
+        <>
+          {/* 2. Fila 'Ir a' fija con accesos rápidos (altura mínima 44 px) */}
+          <nav
+            aria-label="Accesos rápidos Ir a"
+            className="p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 grid grid-cols-4 gap-1.5 shadow-md"
           >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow shrink-0">
-                <MousePointer className="w-4 h-4" />
-              </div>
-              <div className="text-left">
-                <span className="block text-white text-xs sm:text-sm font-extrabold">
-                  Pad
-                </span>
-                <span className="block text-[10px] text-zinc-400 font-normal leading-tight">
-                  Táctil, clic, scroll
-                </span>
-              </div>
-            </div>
-          </button>
-
-          {/* Botón Cruceta */}
-          <button
-            type="button"
-            aria-label="Cruceta"
-            onClick={() => {
-              if (onOpenBigPad) {
-                onOpenBigPad('cruceta');
-              } else {
-                setPadMode((prev) => (prev === 'cruceta' ? null : 'cruceta'));
-              }
-            }}
-            className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${padMode === 'cruceta'
-              ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
-              : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
-              }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow shrink-0">
-                <Gamepad2 className="w-4 h-4" />
-              </div>
-              <div className="text-left">
-                <span className="block text-white text-xs sm:text-sm font-extrabold">
-                  Cruceta
-                </span>
-                <span className="block text-[10px] text-zinc-400 font-normal leading-tight">
-                  Flechas, OK, Atrás
-                </span>
-              </div>
-            </div>
-          </button>
-        </div>
-
-        {padMode && (
-          <div className="p-3.5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-xl">
-            <PadSection onSendCommand={onSendCommand} mode={padMode} hideModeSelector />
-          </div>
-        )}
-      </section>
-
-      {/* 3. Tarjeta de reproducción activa según el estado */}
-      {isYouTube || isSpotify ? (
-        /* Estado YouTube / Spotify */
-        <section
-          aria-label="Reproducción externa"
-          className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-lg text-center space-y-4"
-        >
-          <div className="w-12 h-12 mx-auto rounded-full bg-zinc-800 flex items-center justify-center">
-            {isYouTube ? (
-              <Youtube className="w-6 h-6 text-red-500" />
-            ) : (
-              <Music className="w-6 h-6 text-emerald-400" />
-            )}
-          </div>
-          <div>
-            <h3 className="text-base font-extrabold text-white">
-              Reproduciendo en {isYouTube ? 'YouTube' : 'Spotify'} de la TV
-            </h3>
-            <p className="text-xs text-zinc-400 mt-1">
-              La pantalla está sintonizada en {isYouTube ? 'YouTube TV' : 'Spotify Web Player'}.
-            </p>
-          </div>
-
-          {/* (a) Control de volumen en Hub: silencio, -10, barra / porcentaje, +10 */}
-          <div className="p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800 space-y-3 text-left">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
-              Volumen de la TV
-            </span>
-            <div className="flex items-center gap-2.5">
-              <button
-                type="button"
-                aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
-                onClick={() => onSendCommand({ action: 'toggleMute' })}
-                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
-              >
-                {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5" />}
-              </button>
-
-              <button
-                type="button"
-                aria-label="Bajar volumen 10%"
-                onClick={() =>
-                  onSendCommand({
-                    action: 'setVolume',
-                    payload: Math.max(0, currentVolume - 10),
-                  })
-                }
-                className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-extrabold text-zinc-200 transition"
-              >
-                -10
-              </button>
-
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={isMuted ? 0 : currentVolume}
-                onPointerDown={() => {
-                  setIsDraggingVolume(true);
-                  setDragVolume(currentVolume);
-                }}
-                onPointerUp={() => {
-                  setIsDraggingVolume(false);
-                  setLastVolumeReleasedAt(Date.now());
-                }}
-                onPointerCancel={() => {
-                  setIsDraggingVolume(false);
-                  setLastVolumeReleasedAt(Date.now());
-                }}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setDragVolume(val);
-                  onSendCommand({ action: 'setVolume', payload: val });
-                }}
-                aria-label="Control de volumen"
-                className="flex-1 accent-red-600 h-2 bg-zinc-700 rounded-lg cursor-pointer"
-              />
-
-              <button
-                type="button"
-                aria-label="Subir volumen 10%"
-                onClick={() =>
-                  onSendCommand({
-                    action: 'setVolume',
-                    payload: Math.min(100, currentVolume + 10),
-                  })
-                }
-                className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-extrabold text-zinc-200 transition"
-              >
-                +10
-              </button>
-
-              <span className="text-xs font-mono font-bold text-zinc-200 w-9 text-right shrink-0">
-                {isMuted ? '0%' : `${currentVolume}%`}
-              </span>
-            </div>
-
-            {/* Botón opcional Volumen del sistema (Windows) */}
-            <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-500">
-              <span>Volumen de sistema (Windows):</span>
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onSendCommand({ action: 'setVolume', payload: { systemVolume: 'down' } } as any)}
-                  className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 hover:bg-zinc-800"
-                >
-                  Bajar (Win)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSendCommand({ action: 'setVolume', payload: { systemVolume: 'up' } } as any)}
-                  className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 hover:bg-zinc-800"
-                >
-                  Subir (Win)
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* (b) Pantalla completa y (d) Volver a películas */}
-          <div className="flex gap-2.5 pt-1">
-            <button
-              type="button"
-              aria-label="Pantalla completa en hub"
-              onClick={() => onSendCommand({ action: 'toggleHubFullscreen' })}
-              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold text-xs transition border border-zinc-700 shadow flex items-center justify-center gap-2"
-            >
-              <Maximize2 className="w-4 h-4 text-emerald-400" />
-              <span>Pantalla completa</span>
-            </button>
-
             <button
               type="button"
               onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'cinecast' } })}
-              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs transition shadow-lg shadow-red-950/40 flex items-center justify-center gap-2"
+              className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${activeHub === 'cinecast' && !isStandby
+                ? 'bg-red-600 text-white shadow'
+                : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+                }`}
             >
               <Film className="w-4 h-4" />
-              <span>Volver a películas</span>
+              <span className="text-[11px]">Inicio</span>
             </button>
-          </div>
-        </section>
-      ) : !title || isStandby ? (
-        /* Estado Reposo / Libre */
-        <section
-          aria-label="Pantalla en reposo"
-          className="p-6 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-lg text-center space-y-4"
-        >
-          <div className="w-12 h-12 mx-auto rounded-full bg-zinc-800/80 flex items-center justify-center text-zinc-400">
-            <Tv className="w-6 h-6" />
-          </div>
-          <div>
-            <h3 className="text-base font-extrabold text-white">Pantalla en reposo</h3>
-            <p className="text-xs text-zinc-400 mt-1">
-              No hay reproducción activa. Elegí una película o serie para comenzar.
-            </p>
-          </div>
 
-          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'youtube' } })}
+              className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${isYouTube
+                ? 'bg-red-600 text-white shadow'
+                : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+                }`}
+            >
+              <Youtube className="w-4 h-4 text-red-400" />
+              <span className="text-[11px]">YouTube</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'spotify' } })}
+              className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${isSpotify
+                ? 'bg-emerald-600 text-white shadow'
+                : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+                }`}
+            >
+              <Music className="w-4 h-4 text-emerald-400" />
+              <span className="text-[11px]">Spotify</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
-                if (onNavigateToCatalog) {
-                  onNavigateToCatalog();
-                } else {
-                  window.location.hash = '#/explorar';
-                }
+                setActiveMainTab('sports');
+                onSendCommand({ action: 'switchHub', payload: { hub: 'sports' } });
               }}
-              className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition shadow"
+              className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${activeHub === 'sports' || activeMainTab === 'sports'
+                ? 'bg-blue-600 text-white shadow'
+                : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300'
+                }`}
             >
-              Explorar catálogo
+              <Trophy className="w-4 h-4 text-amber-400" />
+              <span className="text-[11px]">Deportes</span>
             </button>
-            <button
-              type="button"
-              onClick={() => onSendCommand({ action: 'wakeScreen' })}
-              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs border border-zinc-700 transition"
-            >
-              Despertar pantalla
-            </button>
-          </div>
-        </section>
-      ) : (
-        /* Estado Reproduciendo Catálogo */
-        <section
-          aria-label="Reproducción de catálogo"
-          className="p-4 sm:p-5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-xl space-y-4"
-        >
-          {/* Carátula + Título + T/E */}
-          <div className="flex gap-3.5 items-center">
-            <div className="w-14 h-20 rounded-xl overflow-hidden bg-zinc-800 border border-zinc-700/80 shrink-0">
-              <img
-                src={posterUrl}
-                alt={title}
-                onError={(e) => {
-                  e.currentTarget.src = createStyledPosterFallback(title, 'movie');
-                }}
-                className="w-full h-full object-cover"
-              />
-            </div>
-            <div className="min-w-0 flex-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-red-400">
-                En pantalla
-              </span>
-              <h2 className="text-sm sm:text-base font-extrabold text-white truncate">
-                {title}
-              </h2>
-              {seasonNum && episodeNum && (
-                <p className="text-xs font-semibold text-zinc-300 truncate mt-0.5">
-                  T{seasonNum}:E{episodeNum} {episodeTitle ? `· ${episodeTitle}` : ''}
-                </p>
-              )}
-              {playbackState?.loadedUrl && (
-                <p className="text-[10px] font-mono text-zinc-400 truncate mt-0.5" data-testid="remote-loaded-url">
-                  {playbackState.loadedUrl}
-                  {playbackState.loadedSeason && playbackState.loadedEpisode ? (
-                    <span className="text-zinc-300 ml-1">
-                      (T{playbackState.loadedSeason}:E{playbackState.loadedEpisode})
-                    </span>
-                  ) : null}
-                </p>
-              )}
-              {playbackState?.providerEpisodeMismatchWarning && (
-                <p className="text-[10px] font-semibold text-amber-400 mt-0.5 flex items-center gap-1" data-testid="remote-provider-warning">
-                  <span>⚠️</span> El proveedor podría no respetar el episodio pedido
-                </p>
-              )}
-            </div>
-          </div>
+          </nav>
 
-          {/* Control táctil deslizable (role="slider") con pista de 8px y área táctil de 44px */}
-          <div className="space-y-1.5 pt-1">
-            {playbackState?.resume?.status === 'cargando' && (
-              <div className="p-2 rounded-xl bg-blue-950/80 border border-blue-600/60 text-center text-xs text-blue-200 font-semibold animate-pulse">
-                Cargando el reproductor…
+          {/* Botones de navegación Pad y Cruceta (>= 44px cada uno) */}
+          <section aria-label="Control Pad y Cruceta" className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              {/* Botón Pad */}
+              <button
+                type="button"
+                aria-label="Pad"
+                onClick={() => {
+                  if (onOpenBigPad) {
+                    onOpenBigPad('pad');
+                  } else {
+                    setPadMode((prev) => (prev === 'touchpad' ? null : 'touchpad'));
+                  }
+                }}
+                className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${padMode === 'touchpad'
+                  ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
+                  : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+                  }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow shrink-0">
+                    <MousePointer className="w-4 h-4" />
+                  </div>
+                  <div className="text-left">
+                    <span className="block text-white text-xs sm:text-sm font-extrabold">
+                      Pad
+                    </span>
+                    <span className="block text-[10px] text-zinc-400 font-normal leading-tight">
+                      Táctil, clic, scroll
+                    </span>
+                  </div>
+                </div>
+              </button>
+
+              {/* Botón Cruceta */}
+              <button
+                type="button"
+                aria-label="Cruceta"
+                onClick={() => {
+                  if (onOpenBigPad) {
+                    onOpenBigPad('cruceta');
+                  } else {
+                    setPadMode((prev) => (prev === 'cruceta' ? null : 'cruceta'));
+                  }
+                }}
+                className={`min-h-[48px] px-3.5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm transition flex items-center justify-between border shadow-md ${padMode === 'cruceta'
+                  ? 'bg-zinc-800 text-white border-zinc-700 shadow-lg'
+                  : 'bg-zinc-900/90 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+                  }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-red-600/90 text-white flex items-center justify-center shadow shrink-0">
+                    <Gamepad2 className="w-4 h-4" />
+                  </div>
+                  <div className="text-left">
+                    <span className="block text-white text-xs sm:text-sm font-extrabold">
+                      Cruceta
+                    </span>
+                    <span className="block text-[10px] text-zinc-400 font-normal leading-tight">
+                      Flechas, OK, Atrás
+                    </span>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {padMode && (
+              <div className="p-3.5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-xl">
+                <PadSection onSendCommand={onSendCommand} mode={padMode} hideModeSelector />
               </div>
             )}
-            {playbackState?.resume && (playbackState.resume.status === 'esperando' || playbackState.resume.status === 'reanudando') && (
-              <div className="p-2 rounded-xl bg-blue-950/80 border border-blue-600/60 text-center text-xs text-blue-200 font-semibold animate-pulse">
-                Reanudando en {formatTime(playbackState.resume.objetivo)}…
+          </section>
+
+          {/* 3. Tarjeta de reproducción activa según el estado */}
+          {isYouTube || isSpotify ? (
+            /* Estado YouTube / Spotify */
+            <section
+              aria-label="Reproducción externa"
+              className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-lg text-center space-y-4"
+            >
+              <div className="w-12 h-12 mx-auto rounded-full bg-zinc-800 flex items-center justify-center">
+                {isYouTube ? (
+                  <Youtube className="w-6 h-6 text-red-500" />
+                ) : (
+                  <Music className="w-6 h-6 text-emerald-400" />
+                )}
               </div>
-            )}
-            {(playbackState?.serverTimeout || (playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason?.includes('tardó demasiado'))) && (
-              <div className="p-2 rounded-xl bg-red-950/80 border border-red-600/60 text-center text-xs text-red-200 font-semibold">
-                El servidor tardó demasiado. Probá otro servidor
+              <div>
+                <h3 className="text-base font-extrabold text-white">
+                  Reproduciendo en {isYouTube ? 'YouTube' : 'Spotify'} de la TV
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  La pantalla está sintonizada en {isYouTube ? 'YouTube TV' : 'Spotify Web Player'}.
+                </p>
               </div>
-            )}
-            {!playbackState?.serverTimeout && !(playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason?.includes('tardó demasiado')) && (playbackState?.seekUnsupported || (playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason === 'seek-unsupported')) && (
-              <div className="p-2 rounded-xl bg-amber-950/80 border border-amber-600/60 text-center text-xs text-amber-200 font-semibold">
-                Este servidor no permite saltar en el video · No se pudo reanudar, usá la barra
+
+              {/* (a) Control de volumen en Hub: silencio, -10, barra / porcentaje, +10 */}
+              <div className="p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800 space-y-3 text-left">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                  Volumen de la TV
+                </span>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
+                    onClick={() => onSendCommand({ action: 'toggleMute' })}
+                    className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
+                  >
+                    {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    aria-label="Bajar volumen 10%"
+                    onClick={() =>
+                      onSendCommand({
+                        action: 'setVolume',
+                        payload: Math.max(0, currentVolume - 10),
+                      })
+                    }
+                    className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-extrabold text-zinc-200 transition"
+                  >
+                    -10
+                  </button>
+
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={isMuted ? 0 : currentVolume}
+                    onPointerDown={() => {
+                      setIsDraggingVolume(true);
+                      setDragVolume(currentVolume);
+                    }}
+                    onPointerUp={() => {
+                      setIsDraggingVolume(false);
+                      setLastVolumeReleasedAt(Date.now());
+                    }}
+                    onPointerCancel={() => {
+                      setIsDraggingVolume(false);
+                      setLastVolumeReleasedAt(Date.now());
+                    }}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setDragVolume(val);
+                      onSendCommand({ action: 'setVolume', payload: val });
+                    }}
+                    aria-label="Control de volumen"
+                    className="flex-1 accent-red-600 h-2 bg-zinc-700 rounded-lg cursor-pointer"
+                  />
+
+                  <button
+                    type="button"
+                    aria-label="Subir volumen 10%"
+                    onClick={() =>
+                      onSendCommand({
+                        action: 'setVolume',
+                        payload: Math.min(100, currentVolume + 10),
+                      })
+                    }
+                    className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-extrabold text-zinc-200 transition"
+                  >
+                    +10
+                  </button>
+
+                  <span className="text-xs font-mono font-bold text-zinc-200 w-9 text-right shrink-0">
+                    {isMuted ? '0%' : `${currentVolume}%`}
+                  </span>
+                </div>
+
+                {/* Botón opcional Volumen del sistema (Windows) */}
+                <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>Volumen de sistema (Windows):</span>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onSendCommand({ action: 'setVolume', payload: { systemVolume: 'down' } } as any)}
+                      className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 hover:bg-zinc-800"
+                    >
+                      Bajar (Win)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSendCommand({ action: 'setVolume', payload: { systemVolume: 'up' } } as any)}
+                      className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 hover:bg-zinc-800"
+                    >
+                      Subir (Win)
+                    </button>
+                  </div>
+                </div>
               </div>
-            )}
-            {!playbackState?.seekUnsupported && (
-              <>
-                <div
-                  role="slider"
-                  aria-label="Posición de reproducción"
-                  aria-valuenow={Math.round(displayTime)}
-                  aria-valuemin={0}
-                  aria-valuemax={effectiveDuration}
-                  aria-valuetext={`${formatTime(displayTime)} de ${isDurationValid ? formatTime(effectiveDuration) : 'desconocida'}`}
-                  aria-disabled={!isDurationValid}
-                  tabIndex={isDurationValid ? 0 : -1}
-                  onKeyDown={(e) => {
-                    if (!isDurationValid) return;
-                    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-                      e.preventDefault();
-                      const next = Math.max(0, displayTime - 5);
-                      setLastSeekReleasedAt(Date.now());
-                      setLastSeekTime(next);
-                      onSendCommand({ action: 'seek', payload: next });
-                    } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
-                      e.preventDefault();
-                      const next = Math.min(effectiveDuration, displayTime + 5);
-                      setLastSeekReleasedAt(Date.now());
-                      setLastSeekTime(next);
-                      onSendCommand({ action: 'seek', payload: next });
+
+              {/* (b) Pantalla completa y (d) Volver a películas */}
+              <div className="flex gap-2.5 pt-1">
+                <button
+                  type="button"
+                  aria-label="Pantalla completa en hub"
+                  onClick={() => onSendCommand({ action: 'toggleHubFullscreen' })}
+                  className="flex-1 min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold text-xs transition border border-zinc-700 shadow flex items-center justify-center gap-2"
+                >
+                  <Maximize2 className="w-4 h-4 text-emerald-400" />
+                  <span>Pantalla completa</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onSendCommand({ action: 'switchHub', payload: { hub: 'cinecast' } })}
+                  className="flex-1 min-h-[48px] px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs transition shadow-lg shadow-red-950/40 flex items-center justify-center gap-2"
+                >
+                  <Film className="w-4 h-4" />
+                  <span>Volver a películas</span>
+                </button>
+              </div>
+            </section>
+          ) : !title || isStandby ? (
+            /* Estado Reposo / Libre */
+            <section
+              aria-label="Pantalla en reposo"
+              className="p-6 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-lg text-center space-y-4"
+            >
+              <div className="w-12 h-12 mx-auto rounded-full bg-zinc-800/80 flex items-center justify-center text-zinc-400">
+                <Tv className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-white">Pantalla en reposo</h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  No hay reproducción activa. Elegí una película o serie para comenzar.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onNavigateToCatalog) {
+                      onNavigateToCatalog();
+                    } else {
+                      window.location.hash = '#/explorar';
                     }
                   }}
-                  onPointerDown={handleSliderPointerDown}
-                  onPointerMove={handleSliderPointerMove}
-                  onPointerUp={handleSliderPointerUp}
-                  onPointerCancel={handleSliderPointerCancel}
-                  onClick={handleSliderClick}
-                  className={`w-full min-h-[44px] flex items-center relative select-none touch-none ${isDurationValid ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'
-                    }`}
+                  className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition shadow"
                 >
-                  {/* Pista visible de 8px */}
-                  <div
-                    ref={sliderTrackRef}
-                    className="w-full h-[8px] rounded-full bg-zinc-800 relative overflow-visible"
-                  >
-                    {/* Barra de progreso */}
-                    <div
-                      className="h-full bg-red-600 rounded-full"
-                      style={{ width: `${displayPercent}%` }}
-                    />
+                  Explorar catálogo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSendCommand({ action: 'wakeScreen' })}
+                  className="min-h-[44px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs border border-zinc-700 transition"
+                >
+                  Despertar pantalla
+                </button>
+              </div>
+            </section>
+          ) : (
+            /* Estado Reproduciendo Catálogo */
+            <section
+              aria-label="Reproducción de catálogo"
+              className="p-4 sm:p-5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-xl space-y-4"
+            >
+              {/* Carátula + Título + T/E */}
+              <div className="flex gap-3.5 items-center">
+                <div className="w-14 h-20 rounded-xl overflow-hidden bg-zinc-800 border border-zinc-700/80 shrink-0">
+                  <img
+                    src={posterUrl}
+                    alt={title}
+                    onError={(e) => {
+                      e.currentTarget.src = createStyledPosterFallback(title, 'movie');
+                    }}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-red-400">
+                    En pantalla
+                  </span>
+                  <h2 className="text-sm sm:text-base font-extrabold text-white truncate">
+                    {title}
+                  </h2>
+                  {seasonNum && episodeNum && (
+                    <p className="text-xs font-semibold text-zinc-300 truncate mt-0.5">
+                      T{seasonNum}:E{episodeNum} {episodeTitle ? `· ${episodeTitle}` : ''}
+                    </p>
+                  )}
+                  {playbackState?.loadedUrl && (
+                    <p className="text-[10px] font-mono text-zinc-400 truncate mt-0.5" data-testid="remote-loaded-url">
+                      {playbackState.loadedUrl}
+                      {playbackState.loadedSeason && playbackState.loadedEpisode ? (
+                        <span className="text-zinc-300 ml-1">
+                          (T{playbackState.loadedSeason}:E{playbackState.loadedEpisode})
+                        </span>
+                      ) : null}
+                    </p>
+                  )}
+                  {playbackState?.providerEpisodeMismatchWarning && (
+                    <p className="text-[10px] font-semibold text-amber-400 mt-0.5 flex items-center gap-1" data-testid="remote-provider-warning">
+                      <span>⚠️</span> El proveedor podría no respetar el episodio pedido
+                    </p>
+                  )}
+                </div>
+              </div>
 
-                    {/* Pulgar accesible (thumb) con hora destino flotante */}
-                    {isDurationValid && (
+              {/* Control táctil deslizable (role="slider") con pista de 8px y área táctil de 44px */}
+              <div className="space-y-1.5 pt-1">
+                {playbackState?.resume?.status === 'cargando' && (
+                  <div className="p-2 rounded-xl bg-blue-950/80 border border-blue-600/60 text-center text-xs text-blue-200 font-semibold animate-pulse">
+                    Cargando el reproductor…
+                  </div>
+                )}
+                {playbackState?.resume && (playbackState.resume.status === 'esperando' || playbackState.resume.status === 'reanudando') && (
+                  <div className="p-2 rounded-xl bg-blue-950/80 border border-blue-600/60 text-center text-xs text-blue-200 font-semibold animate-pulse">
+                    Reanudando en {formatTime(playbackState.resume.objetivo)}…
+                  </div>
+                )}
+                {(playbackState?.serverTimeout || (playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason?.includes('tardó demasiado'))) && (
+                  <div className="p-2 rounded-xl bg-red-950/80 border border-red-600/60 text-center text-xs text-red-200 font-semibold">
+                    El servidor tardó demasiado. Probá otro servidor
+                  </div>
+                )}
+                {!playbackState?.serverTimeout && !(playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason?.includes('tardó demasiado')) && (playbackState?.seekUnsupported || (playbackState?.resume?.status === 'fallo' && playbackState.resume.errorReason === 'seek-unsupported')) && (
+                  <div className="p-2 rounded-xl bg-amber-950/80 border border-amber-600/60 text-center text-xs text-amber-200 font-semibold">
+                    Este servidor no permite saltar en el video · No se pudo reanudar, usá la barra
+                  </div>
+                )}
+                {!playbackState?.seekUnsupported && (
+                  <>
+                    <div
+                      role="slider"
+                      aria-label="Posición de reproducción"
+                      aria-valuenow={Math.round(displayTime)}
+                      aria-valuemin={0}
+                      aria-valuemax={effectiveDuration}
+                      aria-valuetext={`${formatTime(displayTime)} de ${isDurationValid ? formatTime(effectiveDuration) : 'desconocida'}`}
+                      aria-disabled={!isDurationValid}
+                      tabIndex={isDurationValid ? 0 : -1}
+                      onKeyDown={(e) => {
+                        if (!isDurationValid) return;
+                        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          const next = Math.max(0, displayTime - 5);
+                          setLastSeekReleasedAt(Date.now());
+                          setLastSeekTime(next);
+                          onSendCommand({ action: 'seek', payload: next });
+                        } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          const next = Math.min(effectiveDuration, displayTime + 5);
+                          setLastSeekReleasedAt(Date.now());
+                          setLastSeekTime(next);
+                          onSendCommand({ action: 'seek', payload: next });
+                        }
+                      }}
+                      onPointerDown={handleSliderPointerDown}
+                      onPointerMove={handleSliderPointerMove}
+                      onPointerUp={handleSliderPointerUp}
+                      onPointerCancel={handleSliderPointerCancel}
+                      onClick={handleSliderClick}
+                      className={`w-full min-h-[44px] flex items-center relative select-none touch-none ${isDurationValid ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'
+                        }`}
+                    >
+                      {/* Pista visible de 8px */}
                       <div
-                        className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white border-2 border-red-600 shadow-md flex items-center justify-center transition-transform active:scale-125"
-                        style={{ left: `${displayPercent}%` }}
+                        ref={sliderTrackRef}
+                        className="w-full h-[8px] rounded-full bg-zinc-800 relative overflow-visible"
                       >
-                        {isDraggingSlider && (
-                          <div className="absolute -top-11 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-lg bg-zinc-950 text-white font-extrabold text-sm border border-zinc-700 shadow-2xl pointer-events-none whitespace-nowrap z-30">
-                            {formatTime(dragTime)}
+                        {/* Barra de progreso */}
+                        <div
+                          className="h-full bg-red-600 rounded-full"
+                          style={{ width: `${displayPercent}%` }}
+                        />
+
+                        {/* Pulgar accesible (thumb) con hora destino flotante */}
+                        {isDurationValid && (
+                          <div
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white border-2 border-red-600 shadow-md flex items-center justify-center transition-transform active:scale-125"
+                            style={{ left: `${displayPercent}%` }}
+                          >
+                            {isDraggingSlider && (
+                              <div className="absolute -top-11 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-lg bg-zinc-950 text-white font-extrabold text-sm border border-zinc-700 shadow-2xl pointer-events-none whitespace-nowrap z-30">
+                                {formatTime(dragTime)}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
+                    </div>
+
+                    {/* Tiempos transcurrido / total y nota discreta si no hay duración */}
+                    <div className="flex justify-between items-center text-[11px] font-mono text-zinc-400">
+                      <span>{(playbackState?.estimated || playbackState?.seekUnsupported || playbackState?.resume?.status === 'fallo') ? '~' : ''}{formatTime(displayTime)}</span>
+                      {!isDurationValid && (
+                        <span className="text-[10px] text-zinc-500 italic">
+                          Transmisión en vivo o duración desconocida
+                        </span>
+                      )}
+                      <span>{isDurationValid ? formatTime(effectiveDuration) : '--:--'}</span>
+                    </div>
+
+                    {/* 4 botones de salto rápido: -10s, +10s, -60s, +60s (mínimo 44px de alto) */}
+                    <div className="grid grid-cols-4 gap-2 pt-1">
+                      <button
+                        type="button"
+                        aria-label="Salto rápido -60s"
+                        onClick={() => onSendCommand({ action: 'seekRelative', payload: -60 })}
+                        className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
+                      >
+                        -60s
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Salto rápido -10s"
+                        onClick={() => onSendCommand({ action: 'seekRelative', payload: -10 })}
+                        className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
+                      >
+                        -10s
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Salto rápido +10s"
+                        onClick={() => onSendCommand({ action: 'seekRelative', payload: 10 })}
+                        className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
+                      >
+                        +10s
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Salto rápido +60s"
+                        onClick={() => onSendCommand({ action: 'seekRelative', payload: 60 })}
+                        className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
+                      >
+                        +60s
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Fila de controles principales (Cap Ant, play/pause, Cap Sig) */}
+              <div className="flex items-center justify-center gap-2 sm:gap-3 pt-1">
+                {isEpisodic && (
+                  <button
+                    type="button"
+                    aria-label="Capítulo anterior"
+                    disabled={!hasPrevEpisode}
+                    title={hasPrevEpisode ? 'Capítulo anterior' : 'Primer capítulo'}
+                    onClick={() => onSendCommand({ action: 'prevEpisode' })}
+                    className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${hasPrevEpisode
+                      ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
+                      : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
+                      }`}
+                  >
+                    <SkipBack className="w-5 h-5" />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+                  onClick={() => {
+                    const next = !isPlaying;
+                    setOptimisticPlaying({ value: next, ts: Date.now() });
+                    onSendCommand({ action: next ? 'play' : 'pause' });
+                  }}
+                  className="min-w-[58px] min-h-[58px] rounded-2xl bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition active:scale-95 shadow-lg shadow-red-950/50 cursor-pointer"
+                >
+                  {isPlaying ? (
+                    <Pause className="w-6 h-6 fill-current" />
+                  ) : (
+                    <Play className="w-6 h-6 fill-current ml-0.5" />
+                  )}
+                </button>
+
+                {isEpisodic && (
+                  <button
+                    type="button"
+                    aria-label="Capítulo siguiente"
+                    disabled={!hasNextEpisode}
+                    title={hasNextEpisode ? 'Capítulo siguiente' : 'Último capítulo'}
+                    onClick={() => onSendCommand({ action: 'nextEpisode' })}
+                    className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${hasNextEpisode
+                      ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
+                      : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
+                      }`}
+                  >
+                    <SkipForward className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Botón Saltar intro (exclusivo con hasIntroTimings) */}
+              {isEpisodic && hasIntroTimings && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    aria-label="Saltar intro"
+                    onClick={() => onSendCommand({ action: 'skipIntro' })}
+                    className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer"
+                  >
+                    <FastForward className="w-4 h-4 fill-current" />
+                    <span>Saltar intro</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Fila secundaria: Volumen + Subtítulos + Pantalla Completa */}
+              <div className="p-3 rounded-xl bg-zinc-850/80 border border-zinc-800 space-y-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
+                    onClick={() => onSendCommand({ action: 'toggleMute' })}
+                    className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
+                  >
+                    {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5" />}
+                  </button>
+
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={isMuted ? 0 : currentVolume}
+                    onPointerDown={() => {
+                      setIsDraggingVolume(true);
+                      setDragVolume(currentVolume);
+                    }}
+                    onPointerUp={() => {
+                      setIsDraggingVolume(false);
+                      setLastVolumeReleasedAt(Date.now());
+                    }}
+                    onPointerCancel={() => {
+                      setIsDraggingVolume(false);
+                      setLastVolumeReleasedAt(Date.now());
+                    }}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setDragVolume(val);
+                      onSendCommand({ action: 'setVolume', payload: val });
+                    }}
+                    aria-label="Control de volumen"
+                    className="flex-1 accent-red-600 h-2 bg-zinc-700 rounded-lg cursor-pointer"
+                  />
+
+                  <span className="text-xs font-mono text-zinc-300 w-8 text-right shrink-0">
+                    {isMuted ? '0%' : `${currentVolume}%`}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => onSendCommand({ action: 'toggleSubtitles' })}
+                    className={`min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${subsEnabled
+                      ? 'bg-red-600 text-white shadow'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                      }`}
+                  >
+                    <Subtitles className="w-4 h-4" />
+                    <span>Subtítulos {subsEnabled ? 'ON' : 'OFF'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    aria-label="Pantalla completa"
+                    onClick={() => onSendCommand({ action: 'toggleFullscreen' })}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                    <span>Completa</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Selector de servidores (Parte 3) */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setIsServersOpen((p) => !p)}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 flex items-center justify-between text-xs font-bold text-zinc-200 transition"
+                >
+                  <div className="flex items-center gap-2">
+                    <Server className="w-4 h-4 text-emerald-400" />
+                    <span>Servidores ({effectiveServersList.length})</span>
+                    {serversExhausted && (
+                      <span className="px-2 py-0.5 rounded-full bg-red-600/80 text-[10px] text-white">
+                        Falló servidor
+                      </span>
                     )}
                   </div>
-                </div>
+                  {isServersOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
 
-                {/* Tiempos transcurrido / total y nota discreta si no hay duración */}
-                <div className="flex justify-between items-center text-[11px] font-mono text-zinc-400">
-                  <span>{(playbackState?.estimated || playbackState?.seekUnsupported || playbackState?.resume?.status === 'fallo') ? '~' : ''}{formatTime(displayTime)}</span>
-                  {!isDurationValid && (
-                    <span className="text-[10px] text-zinc-500 italic">
-                      Transmisión en vivo o duración desconocida
-                    </span>
-                  )}
-                  <span>{isDurationValid ? formatTime(effectiveDuration) : '--:--'}</span>
-                </div>
-
-                {/* 4 botones de salto rápido: -10s, +10s, -60s, +60s (mínimo 44px de alto) */}
-                <div className="grid grid-cols-4 gap-2 pt-1">
-                  <button
-                    type="button"
-                    aria-label="Salto rápido -60s"
-                    onClick={() => onSendCommand({ action: 'seekRelative', payload: -60 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
-                  >
-                    -60s
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Salto rápido -10s"
-                    onClick={() => onSendCommand({ action: 'seekRelative', payload: -10 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
-                  >
-                    -10s
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Salto rápido +10s"
-                    onClick={() => onSendCommand({ action: 'seekRelative', payload: 10 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
-                  >
-                    +10s
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Salto rápido +60s"
-                    onClick={() => onSendCommand({ action: 'seekRelative', payload: 60 })}
-                    className="min-h-[44px] rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-mono font-bold text-xs flex items-center justify-center transition active:scale-95 cursor-pointer"
-                  >
-                    +60s
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Fila de controles principales (Cap Ant, play/pause, Cap Sig) */}
-          <div className="flex items-center justify-center gap-2 sm:gap-3 pt-1">
-            {isEpisodic && (
-              <button
-                type="button"
-                aria-label="Capítulo anterior"
-                disabled={!hasPrevEpisode}
-                title={hasPrevEpisode ? 'Capítulo anterior' : 'Primer capítulo'}
-                onClick={() => onSendCommand({ action: 'prevEpisode' })}
-                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${hasPrevEpisode
-                  ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
-                  : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
-                  }`}
-              >
-                <SkipBack className="w-5 h-5" />
-              </button>
-            )}
-
-            <button
-              type="button"
-              aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
-              onClick={() => {
-                const next = !isPlaying;
-                setOptimisticPlaying({ value: next, ts: Date.now() });
-                onSendCommand({ action: next ? 'play' : 'pause' });
-              }}
-              className="min-w-[58px] min-h-[58px] rounded-2xl bg-red-600 hover:bg-red-500 text-white flex items-center justify-center transition active:scale-95 shadow-lg shadow-red-950/50 cursor-pointer"
-            >
-              {isPlaying ? (
-                <Pause className="w-6 h-6 fill-current" />
-              ) : (
-                <Play className="w-6 h-6 fill-current ml-0.5" />
-              )}
-            </button>
-
-            {isEpisodic && (
-              <button
-                type="button"
-                aria-label="Capítulo siguiente"
-                disabled={!hasNextEpisode}
-                title={hasNextEpisode ? 'Capítulo siguiente' : 'Último capítulo'}
-                onClick={() => onSendCommand({ action: 'nextEpisode' })}
-                className={`min-w-[44px] min-h-[48px] rounded-2xl flex items-center justify-center transition active:scale-95 shadow border ${hasNextEpisode
-                  ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700/80 cursor-pointer'
-                  : 'bg-zinc-900/60 text-zinc-600 border-zinc-800/60 cursor-not-allowed opacity-40'
-                  }`}
-              >
-                <SkipForward className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-
-          {/* Botón Saltar intro (exclusivo con hasIntroTimings) */}
-          {isEpisodic && hasIntroTimings && (
-            <div className="pt-1">
-              <button
-                type="button"
-                aria-label="Saltar intro"
-                onClick={() => onSendCommand({ action: 'skipIntro' })}
-                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98 cursor-pointer"
-              >
-                <FastForward className="w-4 h-4 fill-current" />
-                <span>Saltar intro</span>
-              </button>
-            </div>
-          )}
-
-          {/* Fila secundaria: Volumen + Subtítulos + Pantalla Completa */}
-          <div className="p-3 rounded-xl bg-zinc-850/80 border border-zinc-800 space-y-3">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                aria-label={isMuted ? 'Activar sonido' : 'Silenciar'}
-                onClick={() => onSendCommand({ action: 'toggleMute' })}
-                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition"
-              >
-                {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5" />}
-              </button>
-
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={isMuted ? 0 : currentVolume}
-                onPointerDown={() => {
-                  setIsDraggingVolume(true);
-                  setDragVolume(currentVolume);
-                }}
-                onPointerUp={() => {
-                  setIsDraggingVolume(false);
-                  setLastVolumeReleasedAt(Date.now());
-                }}
-                onPointerCancel={() => {
-                  setIsDraggingVolume(false);
-                  setLastVolumeReleasedAt(Date.now());
-                }}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setDragVolume(val);
-                  onSendCommand({ action: 'setVolume', payload: val });
-                }}
-                aria-label="Control de volumen"
-                className="flex-1 accent-red-600 h-2 bg-zinc-700 rounded-lg cursor-pointer"
-              />
-
-              <span className="text-xs font-mono text-zinc-300 w-8 text-right shrink-0">
-                {isMuted ? '0%' : `${currentVolume}%`}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => onSendCommand({ action: 'toggleSubtitles' })}
-                className={`min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${subsEnabled
-                  ? 'bg-red-600 text-white shadow'
-                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
-                  }`}
-              >
-                <Subtitles className="w-4 h-4" />
-                <span>Subtítulos {subsEnabled ? 'ON' : 'OFF'}</span>
-              </button>
-
-              <button
-                type="button"
-                aria-label="Pantalla completa"
-                onClick={() => onSendCommand({ action: 'toggleFullscreen' })}
-                className="min-h-[44px] px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition flex items-center justify-center gap-1.5"
-              >
-                <Maximize2 className="w-4 h-4" />
-                <span>Completa</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Selector de servidores (Parte 3) */}
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => setIsServersOpen((p) => !p)}
-              className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 flex items-center justify-between text-xs font-bold text-zinc-200 transition"
-            >
-              <div className="flex items-center gap-2">
-                <Server className="w-4 h-4 text-emerald-400" />
-                <span>Servidores ({effectiveServersList.length})</span>
-                {serversExhausted && (
-                  <span className="px-2 py-0.5 rounded-full bg-red-600/80 text-[10px] text-white">
-                    Falló servidor
-                  </span>
-                )}
-              </div>
-              {isServersOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </button>
-
-            {isServersOpen && (
-              <div className="p-2 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-1.5 max-h-48 overflow-y-auto">
-                {effectiveServersList.length === 0 ? (
-                  <p className="text-xs text-zinc-500 p-2 text-center">No hay servidores listados</p>
-                ) : (
-                  effectiveServersList.map((srv, idx) => {
-                    const isActive = playbackState?.activeServerName
-                      ? srv.name.toLowerCase() === playbackState.activeServerName.toLowerCase()
-                      : idx === activeServerIdx;
-                    return (
-                      <button
-                        key={`${srv.name}-${idx}`}
-                        type="button"
-                        onClick={() =>
-                          onSendCommand({
-                            action: 'selectServer',
-                            payload: { index: idx, name: srv.name, url: (srv as any).url },
-                          })
-                        }
-                        className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-bold transition flex items-center justify-between ${isActive
-                          ? 'bg-red-600 text-white shadow'
-                          : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
-                          }`}
-                      >
-                        <span className="truncate">{srv.name || `Servidor ${idx + 1}`}</span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {srv.language && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/40 text-zinc-300">
-                              {srv.language}
-                            </span>
-                          )}
-                          {isActive && <span className="text-[10px] font-extrabold">ACTIVO</span>}
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Selector de capítulos (Parte 2: con selector de temporada y jumpToEpisode) */}
-          {isEpisodic && (
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => setIsChaptersOpen((p) => !p)}
-                className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 flex items-center justify-between text-xs font-bold text-zinc-200 transition"
-              >
-                <div className="flex items-center gap-2">
-                  <ListVideo className="w-4 h-4 text-red-400" />
-                  <span>
-                    Capítulos {episodes.length > 0 ? `(${episodes.length})` : ''}
-                  </span>
-                </div>
-                {isChaptersOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-
-              {isChaptersOpen && (
-                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-2.5">
-                  {/* Selector de temporadas */}
-                  <div className="flex items-center gap-2">
-                    <label htmlFor="remote-season-select" className="text-xs font-bold text-zinc-400 shrink-0">
-                      Temporada:
-                    </label>
-                    <select
-                      id="remote-season-select"
-                      aria-label="Elegir temporada"
-                      value={selectedSeason}
-                      onChange={(e) => setSelectedSeason(Number(e.target.value))}
-                      className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-xs font-bold focus:outline-none focus:border-red-500 cursor-pointer"
-                    >
-                      {(seasons.length > 0
-                        ? seasons
-                        : [{ seasonNumber: selectedSeason, name: `Temporada ${selectedSeason}` }]
-                      ).map((s) => (
-                        <option key={s.seasonNumber} value={s.seasonNumber}>
-                          {s.name || `Temporada ${s.seasonNumber}`}
-                        </option>
-                      ))}
-                    </select>
+                {isServersOpen && (
+                  <div className="p-2 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-1.5 max-h-48 overflow-y-auto">
+                    {effectiveServersList.length === 0 ? (
+                      <p className="text-xs text-zinc-500 p-2 text-center">No hay servidores listados</p>
+                    ) : (
+                      effectiveServersList.map((srv, idx) => {
+                        const isActive = playbackState?.activeServerName
+                          ? srv.name.toLowerCase() === playbackState.activeServerName.toLowerCase()
+                          : idx === activeServerIdx;
+                        return (
+                          <button
+                            key={`${srv.name}-${idx}`}
+                            type="button"
+                            onClick={() =>
+                              onSendCommand({
+                                action: 'selectServer',
+                                payload: { index: idx, name: srv.name, url: (srv as any).url },
+                              })
+                            }
+                            className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-bold transition flex items-center justify-between ${isActive
+                              ? 'bg-red-600 text-white shadow'
+                              : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
+                              }`}
+                          >
+                            <span className="truncate">{srv.name || `Servidor ${idx + 1}`}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {(() => {
+                                const measured = (srv as any).audioLangs ? formatAudioLangLabel((srv as any).audioLangs) : null;
+                                const hint = srv.language && !srv.language.includes('🇲🇽') && !srv.language.includes('🇪🇸') ? srv.language : null;
+                                const label = measured || hint;
+                                if (!label || label === 'Desconocido') return null;
+                                return (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/40 text-zinc-300">
+                                    {label}
+                                  </span>
+                                );
+                              })()}
+                              {isActive && <span className="text-[10px] font-extrabold">ACTIVO</span>}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
                   </div>
+                )}
+              </div>
 
-                  {/* Estado de carga */}
-                  {isLoadingEpisodes && (
-                    <div className="p-4 text-center text-xs text-zinc-400 animate-pulse">
-                      Cargando capítulos de la temporada {selectedSeason}...
+              {/* Selector de capítulos (Parte 2: con selector de temporada y jumpToEpisode) */}
+              {isEpisodic && (
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsChaptersOpen((p) => !p)}
+                    className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 flex items-center justify-between text-xs font-bold text-zinc-200 transition"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ListVideo className="w-4 h-4 text-red-400" />
+                      <span>
+                        Capítulos {episodes.length > 0 ? `(${episodes.length})` : ''}
+                      </span>
                     </div>
-                  )}
+                    {isChaptersOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
 
-                  {/* Estado de error */}
-                  {!isLoadingEpisodes && episodesError && (
-                    <div className="p-3 text-center text-xs text-red-400 bg-red-950/40 rounded-xl border border-red-900/50 flex flex-col items-center gap-1.5">
-                      <span>{episodesError}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          delete episodesCacheRef.current[selectedSeason];
-                          setSelectedSeason((prev) => prev);
-                        }}
-                        className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold"
-                      >
-                        Reintentar
-                      </button>
-                    </div>
-                  )}
+                  {isChaptersOpen && (
+                    <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-2.5">
+                      {/* Selector de temporadas */}
+                      <div className="flex items-center gap-2">
+                        <label htmlFor="remote-season-select" className="text-xs font-bold text-zinc-400 shrink-0">
+                          Temporada:
+                        </label>
+                        <select
+                          id="remote-season-select"
+                          aria-label="Elegir temporada"
+                          value={selectedSeason}
+                          onChange={(e) => setSelectedSeason(Number(e.target.value))}
+                          className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-xs font-bold focus:outline-none focus:border-red-500 cursor-pointer"
+                        >
+                          {(seasons.length > 0
+                            ? seasons
+                            : [{ seasonNumber: selectedSeason, name: `Temporada ${selectedSeason}` }]
+                          ).map((s) => (
+                            <option key={s.seasonNumber} value={s.seasonNumber}>
+                              {s.name || `Temporada ${s.seasonNumber}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                  {/* Lista de episodios */}
-                  {!isLoadingEpisodes && !episodesError && (
-                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                      {episodes.length === 0 ? (
-                        <p className="text-xs text-zinc-500 p-2 text-center">
-                          No hay capítulos para la temporada {selectedSeason}
-                        </p>
-                      ) : (
-                        episodes.map((ep, idx) => {
-                          const isCurrent =
-                            selectedSeason === seasonNum && ep.episode === episodeNum;
-                          return (
-                            <button
-                              key={`ch-${ep.season}-${ep.episode}-${idx}`}
-                              type="button"
-                              onClick={() =>
-                                onSendCommand({
-                                  action: 'jumpToEpisode',
-                                  payload: { season: selectedSeason, episode: ep.episode },
-                                })
-                              }
-                              className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-semibold transition flex items-center justify-between ${isCurrent
-                                ? 'bg-red-600 text-white font-bold shadow'
-                                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
-                                }`}
-                            >
-                              <span className="truncate">
-                                E{ep.episode}: {ep.title}
-                              </span>
-                              {isCurrent && (
-                                <span className="text-[10px] font-bold uppercase tracking-wider shrink-0 bg-white/20 px-2 py-0.5 rounded">
-                                  Viendo
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })
+                      {/* Estado de carga */}
+                      {isLoadingEpisodes && (
+                        <div className="p-4 text-center text-xs text-zinc-400 animate-pulse">
+                          Cargando capítulos de la temporada {selectedSeason}...
+                        </div>
+                      )}
+
+                      {/* Estado de error */}
+                      {!isLoadingEpisodes && episodesError && (
+                        <div className="p-3 text-center text-xs text-red-400 bg-red-950/40 rounded-xl border border-red-900/50 flex flex-col items-center gap-1.5">
+                          <span>{episodesError}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              delete episodesCacheRef.current[selectedSeason];
+                              setSelectedSeason((prev) => prev);
+                            }}
+                            className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold"
+                          >
+                            Reintentar
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Lista de episodios */}
+                      {!isLoadingEpisodes && !episodesError && (
+                        <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                          {episodes.length === 0 ? (
+                            <p className="text-xs text-zinc-500 p-2 text-center">
+                              No hay capítulos para la temporada {selectedSeason}
+                            </p>
+                          ) : (
+                            episodes.map((ep, idx) => {
+                              const isCurrent =
+                                selectedSeason === seasonNum && ep.episode === episodeNum;
+                              return (
+                                <button
+                                  key={`ch-${ep.season}-${ep.episode}-${idx}`}
+                                  type="button"
+                                  onClick={() =>
+                                    onSendCommand({
+                                      action: 'jumpToEpisode',
+                                      payload: { season: selectedSeason, episode: ep.episode },
+                                    })
+                                  }
+                                  className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-left text-xs font-semibold transition flex items-center justify-between ${isCurrent
+                                    ? 'bg-red-600 text-white font-bold shadow'
+                                    : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800'
+                                    }`}
+                                >
+                                  <span className="truncate">
+                                    E{ep.episode}: {ep.title}
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider shrink-0 bg-white/20 px-2 py-0.5 rounded">
+                                      Viendo
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
               )}
+            </section>
+          )}
+
+          {/* 4. Toggles / automatización: SOLO Modo Maratón visible */}
+          <section
+            aria-label="Automatización de reproducción"
+            className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md space-y-2.5"
+          >
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+              Automatización de reproducción
+            </span>
+
+            {/* Modo Maratón */}
+            <div className="flex items-center justify-between min-h-[44px] gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-zinc-200">Modo Maratón</span>
+                  <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-red-600/30 text-red-400 border border-red-500/30">
+                    Recomendado
+                  </span>
+                </div>
+                <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
+                  Pasa solo al siguiente capítulo y salta lo que pueda
+                </p>
+              </div>
+              <Switch
+                checked={Boolean(playbackState?.marathon)}
+                ariaLabel="Alternar Modo Maratón"
+                onChange={(enabled) =>
+                  onSendCommand({
+                    action: 'setMarathon',
+                    payload: { enabled },
+                  })
+                }
+              />
+            </div>
+
+            {/* Saltar intro automático (oculto en UI) */}
+            <div className="hidden">
+              <Switch
+                checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
+                ariaLabel="Alternar salto de intro automático"
+                onChange={(autoSkipIntro) =>
+                  onSendCommand({
+                    action: 'setPlaybackSettings',
+                    payload: { autoSkipIntro },
+                  })
+                }
+              />
+            </div>
+
+            {/* Siguiente capítulo automático (oculto en UI) */}
+            <div className="hidden">
+              <Switch
+                checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
+                ariaLabel="Alternar reproducción automática del siguiente capítulo"
+                onChange={(autoPlayNext) =>
+                  onSendCommand({
+                    action: 'setPlaybackSettings',
+                    payload: { autoPlayNext },
+                  })
+                }
+              />
+            </div>
+          </section>
+
+          {/* 5. Sección 'Más' plegada por defecto (acordeón accesible) */}
+          <section
+            aria-label="Opciones avanzadas"
+            className="rounded-2xl bg-zinc-900/90 border border-zinc-800 overflow-hidden shadow-md"
+          >
+            <button
+              type="button"
+              onClick={() => setIsMoreOpen((p) => !p)}
+              className="w-full min-h-[48px] px-4 py-3 flex items-center justify-between text-xs font-bold text-zinc-200 hover:bg-zinc-850 transition gap-2"
+            >
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-zinc-400" />
+                <span>Más ajustes y funciones</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  data-testid="sleep-timer-status"
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'
+                    }`}
+                >
+                  {sleepTimerStatusLabel}
+                </span>
+                {isMoreOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </div>
+            </button>
+
+            {isMoreOpen && (
+              <div className="p-3 pt-0 border-t border-zinc-800/80 space-y-2">
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAudioSheetOpen(true)}
+                    className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center gap-2 transition"
+                  >
+                    <Sliders className="w-4 h-4 text-purple-400" />
+                    <span>Opciones de audio</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onOpenGuestModal}
+                    className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center justify-center gap-2 transition"
+                  >
+                    <QrCode className="w-4 h-4 text-emerald-400" />
+                    <span>Invitar celular (QR)</span>
+                  </button>
+
+                  {/* Botones ocultados sin eliminar código ni comandos */}
+                  <button
+                    type="button"
+                    onClick={() => onSendCommand({ action: 'skipIntro' })}
+                    className="hidden"
+                    aria-hidden="true"
+                  >
+                    <SkipForward className="w-4 h-4" />
+                    <span>Saltar intro</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleTestSignal}
+                    className="hidden"
+                    aria-hidden="true"
+                  >
+                    <Wifi className="w-4 h-4" />
+                    <span>Probar señal</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onOpenCastModal}
+                    className="hidden"
+                    aria-hidden="true"
+                  >
+                    <Radio className="w-4 h-4" />
+                    <span>Sala</span>
+                  </button>
+                </div>
+
+                {/* Temporizador de reposo (reemplaza Reposo TV clásico) */}
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2 mt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-zinc-200 block">Temporizador de reposo</span>
+                        <span
+                          data-testid="sleep-timer-status-detail"
+                          className={`text-[11px] font-semibold block truncate ${playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
+                            ? 'text-amber-300'
+                            : 'text-zinc-400'
+                            }`}
+                        >
+                          {sleepTimerStatusLabel}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onSendCommand({ action: 'setStandby' })}
+                      className="text-[11px] text-zinc-400 hover:text-white underline shrink-0"
+                    >
+                      Reposo ahora
+                    </button>
+                  </div>
+
+                  {/* Opciones de temporizador: Apagado, 15, 30, 45, 60, 90, 120 min, "Al terminar el capítulo" */}
+                  <div className="grid grid-cols-4 gap-1.5 pt-1">
+                    {[
+                      { mode: 'off', label: 'Apagado' },
+                      { mode: '15', label: '15 min', minutes: 15 },
+                      { mode: '30', label: '30 min', minutes: 30 },
+                      { mode: '45', label: '45 min', minutes: 45 },
+                      { mode: '60', label: '60 min', minutes: 60 },
+                      { mode: '90', label: '90 min', minutes: 90 },
+                      { mode: '120', label: '120 min', minutes: 120 },
+                      { mode: 'chapter', label: 'Al terminar capítulo' },
+                    ].map((opt) => {
+                      const isSelected = (playbackState?.sleepTimer?.mode || 'off') === opt.mode;
+                      return (
+                        <button
+                          key={opt.mode}
+                          type="button"
+                          onClick={() => {
+                            if (opt.mode !== 'off') {
+                              try {
+                                localStorage.setItem(
+                                  'cinecast_sleep_timer_last_v1',
+                                  JSON.stringify({ mode: opt.mode, minutes: opt.minutes, updatedAt: Date.now() })
+                                );
+                              } catch (_) { }
+                            }
+                            onSendCommand({
+                              action: 'setSleepTimer',
+                              payload: { mode: opt.mode, minutes: opt.minutes },
+                            });
+                          }}
+                          className={`min-h-[36px] px-1.5 py-1 rounded-lg text-[10px] font-bold border transition text-center ${isSelected
+                            ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
+                            : 'bg-zinc-900 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
+                            }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        </>
+      ) : (
+        /* Pestaña Deportes del Control Remoto */
+        <section aria-label="Pestaña Deportes" className="space-y-4">
+          {/* Header con Buscador y Filtros */}
+          <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-400" />
+                <h2 className="text-sm font-extrabold text-white">Partidos & Transmisiones</h2>
+              </div>
+              <button
+                type="button"
+                onClick={fetchSportsData}
+                disabled={loadingSports}
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-300 border border-zinc-700 transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingSports ? 'animate-spin text-amber-400' : 'text-zinc-400'}`} />
+                <span>Actualizar</span>
+              </button>
+            </div>
+
+            {/* Buscador */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={sportsSearch}
+                onChange={(e) => setSportsSearch(e.target.value)}
+                placeholder="Buscar equipo o torneo (ej. River, Real Madrid)..."
+                className="w-full min-h-[42px] pl-9 pr-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 transition"
+              />
+              {sportsSearch && (
+                <button
+                  type="button"
+                  onClick={() => setSportsSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-white"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Filtros rápidos */}
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={() => setOnlyLive(!onlyLive)}
+                className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-2 ${onlyLive
+                  ? 'bg-red-950/70 border-red-500 text-red-200'
+                  : 'bg-zinc-800/80 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+                  }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${onlyLive ? 'bg-red-500 animate-pulse' : 'bg-zinc-500'}`} />
+                <span>Solo en vivo</span>
+              </button>
+              <span className="text-[11px] text-zinc-400 font-medium">
+                {filteredMatches.length} {filteredMatches.length === 1 ? 'partido' : 'partidos'}
+              </span>
+            </div>
+          </div>
+
+          {/* Estado de carga */}
+          {loadingSports && sportsMatches.length === 0 && (
+            <div className="p-8 text-center bg-zinc-900/60 rounded-2xl border border-zinc-800 space-y-3">
+              <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
+              <p className="text-xs text-zinc-300 font-bold">Cargando partidos de /api/sports/matches...</p>
+            </div>
+          )}
+
+          {/* Lista de Partidos */}
+          <div className="space-y-3">
+            {filteredMatches.map((m: any) => {
+              const homeScore = m.homeTeam?.score !== undefined && m.homeTeam?.score !== null ? m.homeTeam.score : '-';
+              const awayScore = m.awayTeam?.score !== undefined && m.awayTeam?.score !== null ? m.awayTeam.score : '-';
+              const matchRawChannels: string[] = Array.isArray(m.channels) && m.channels.length > 0 ? m.channels : ['ESPN', 'Fox Sports', 'TyC Sports'];
+              const aliveChannels = matchRawChannels.filter((chName: string) => {
+                const norm = String(chName).toLowerCase();
+                return sportsChannels.some((sc: any) =>
+                  sc.name?.toLowerCase().includes(norm) || norm.includes(sc.name?.toLowerCase())
+                );
+              });
+
+              return (
+                <div
+                  key={m.id || `${m.homeTeam?.name}-${m.awayTeam?.name}`}
+                  className="p-3.5 rounded-2xl bg-zinc-900/95 border border-zinc-800 shadow-md hover:border-zinc-700 transition space-y-3"
+                >
+                  {/* Encabezado del partido: Torneo y Estado */}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-[10px] font-black uppercase text-zinc-300 tracking-wider truncate max-w-[60%]">
+                      {m.league || 'Fútbol'}
+                    </span>
+                    {m.isLive ? (
+                      <span className="px-2 py-0.5 rounded-full bg-red-600/90 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                        <span>{m.statusText || 'En Vivo'}</span>
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-zinc-400 font-semibold flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-zinc-500" />
+                        <span>{m.statusText || m.time || 'Programado'}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Equipos y Marcador */}
+                  <div className="grid grid-cols-[1fr,auto,1fr] items-center gap-3 py-1">
+                    {/* Local */}
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {m.homeTeam?.logo ? (
+                        <img
+                          src={m.homeTeam.logo}
+                          alt={m.homeTeam.name}
+                          className="w-7 h-7 object-contain shrink-0"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-400 shrink-0">
+                          {m.homeTeam?.name?.slice(0, 2).toUpperCase() || 'L'}
+                        </div>
+                      )}
+                      <span className="text-xs sm:text-sm font-extrabold text-white truncate">
+                        {m.homeTeam?.name || 'Local'}
+                      </span>
+                    </div>
+
+                    {/* Marcador / VS */}
+                    <div className="px-2 py-1 rounded-xl bg-zinc-950 border border-zinc-800 font-mono text-sm font-black text-amber-400 text-center min-w-[50px]">
+                      {m.isLive || (homeScore !== '-' && awayScore !== '-')
+                        ? `${homeScore} - ${awayScore}`
+                        : 'VS'}
+                    </div>
+
+                    {/* Visitante */}
+                    <div className="flex items-center justify-end gap-2.5 min-w-0">
+                      <span className="text-xs sm:text-sm font-extrabold text-white truncate text-right">
+                        {m.awayTeam?.name || 'Visitante'}
+                      </span>
+                      {m.awayTeam?.logo ? (
+                        <img
+                          src={m.awayTeam.logo}
+                          alt={m.awayTeam.name}
+                          className="w-7 h-7 object-contain shrink-0"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-400 shrink-0">
+                          {m.awayTeam?.name?.slice(0, 2).toUpperCase() || 'V'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Botones de Sintonización de Canales */}
+                  <div className="pt-2 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+                      Transmiten:
+                    </span>
+                    {aliveChannels.length < 3 ? (
+                      <span className="text-xs font-semibold text-zinc-500 italic bg-zinc-800/50 px-2.5 py-1 rounded-lg border border-zinc-800">
+                        Sin señal disponible
+                      </span>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {aliveChannels.map((ch: string) => (
+                          <button
+                            key={ch}
+                            type="button"
+                            onClick={() => handlePlayMatchChannel(m, ch)}
+                            className="min-h-[38px] px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition"
+                            title={`Reproducir en pantalla por ${ch}`}
+                          >
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                            <span>{ch}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {filteredMatches.length === 0 && !loadingSports && (
+              <div className="p-8 text-center bg-zinc-900/60 rounded-2xl border border-zinc-800 space-y-2">
+                <Trophy className="w-8 h-8 text-zinc-600 mx-auto" />
+                <p className="text-xs text-zinc-400 font-bold">No se encontraron partidos con los filtros seleccionados.</p>
+                {onlyLive && (
+                  <button
+                    type="button"
+                    onClick={() => setOnlyLive(false)}
+                    className="text-xs text-blue-400 hover:underline font-bold"
+                  >
+                    Ver todos los partidos programados
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Canales de TV Deportiva directos */}
+          {sportsChannels.length > 0 && (
+            <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md space-y-3">
+              <div className="flex items-center gap-2">
+                <Tv className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-xs font-black uppercase text-zinc-300 tracking-wider">
+                  Canales Deportivos en Vivo
+                </h3>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {sportsChannels
+                  .filter((c: any) => {
+                    const n = c.name?.toLowerCase() || '';
+                    return n.includes('espn') || n.includes('fox') || n.includes('tnt') || n.includes('tyc') || n.includes('dsports') || n.includes('deport');
+                  })
+                  .slice(0, 12)
+                  .map((ch: any) => (
+                    <button
+                      key={ch.id || ch.name}
+                      type="button"
+                      onClick={() => handlePlayDirectChannel(ch)}
+                      className="min-h-[44px] p-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-left flex items-center gap-2 transition active:scale-95"
+                    >
+                      <div className="w-7 h-7 rounded-lg bg-zinc-950 flex items-center justify-center text-blue-400 shrink-0 font-bold text-xs">
+                        <Radio className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="block text-xs font-bold text-white truncate">{ch.name}</span>
+                        <span className="block text-[10px] text-emerald-400 font-semibold truncate">En Vivo • HLS</span>
+                      </div>
+                    </button>
+                  ))}
+              </div>
             </div>
           )}
         </section>
       )}
-
-      {/* 4. Toggles / automatización: SOLO Modo Maratón visible */}
-      <section
-        aria-label="Automatización de reproducción"
-        className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md space-y-2.5"
-      >
-        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-          Automatización de reproducción
-        </span>
-
-        {/* Modo Maratón */}
-        <div className="flex items-center justify-between min-h-[44px] gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold text-zinc-200">Modo Maratón</span>
-              <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-red-600/30 text-red-400 border border-red-500/30">
-                Recomendado
-              </span>
-            </div>
-            <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-              Pasa solo al siguiente capítulo y salta lo que pueda
-            </p>
-          </div>
-          <Switch
-            checked={Boolean(playbackState?.marathon)}
-            ariaLabel="Alternar Modo Maratón"
-            onChange={(enabled) =>
-              onSendCommand({
-                action: 'setMarathon',
-                payload: { enabled },
-              })
-            }
-          />
-        </div>
-
-        {/* Saltar intro automático (oculto en UI) */}
-        <div className="hidden">
-          <Switch
-            checked={Boolean(playbackState?.playbackSettings?.autoSkipIntro)}
-            ariaLabel="Alternar salto de intro automático"
-            onChange={(autoSkipIntro) =>
-              onSendCommand({
-                action: 'setPlaybackSettings',
-                payload: { autoSkipIntro },
-              })
-            }
-          />
-        </div>
-
-        {/* Siguiente capítulo automático (oculto en UI) */}
-        <div className="hidden">
-          <Switch
-            checked={playbackState?.playbackSettings?.autoPlayNext ?? true}
-            ariaLabel="Alternar reproducción automática del siguiente capítulo"
-            onChange={(autoPlayNext) =>
-              onSendCommand({
-                action: 'setPlaybackSettings',
-                payload: { autoPlayNext },
-              })
-            }
-          />
-        </div>
-      </section>
-
-      {/* 5. Sección 'Más' plegada por defecto (acordeón accesible) */}
-      <section
-        aria-label="Opciones avanzadas"
-        className="rounded-2xl bg-zinc-900/90 border border-zinc-800 overflow-hidden shadow-md"
-      >
-        <button
-          type="button"
-          onClick={() => setIsMoreOpen((p) => !p)}
-          className="w-full min-h-[48px] px-4 py-3 flex items-center justify-between text-xs font-bold text-zinc-200 hover:bg-zinc-850 transition gap-2"
-        >
-          <div className="flex items-center gap-2">
-            <Sliders className="w-4 h-4 text-zinc-400" />
-            <span>Más ajustes y funciones</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span
-              data-testid="sleep-timer-status"
-              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'
-                }`}
-            >
-              {sleepTimerStatusLabel}
-            </span>
-            {isMoreOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </div>
-        </button>
-
-        {isMoreOpen && (
-          <div className="p-3 pt-0 border-t border-zinc-800/80 space-y-2">
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setIsAudioSheetOpen(true)}
-                className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center gap-2 transition"
-              >
-                <Sliders className="w-4 h-4 text-purple-400" />
-                <span>Opciones de audio</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onOpenGuestModal}
-                className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center justify-center gap-2 transition"
-              >
-                <QrCode className="w-4 h-4 text-emerald-400" />
-                <span>Invitar celular (QR)</span>
-              </button>
-
-              {/* Botones ocultados sin eliminar código ni comandos */}
-              <button
-                type="button"
-                onClick={() => onSendCommand({ action: 'skipIntro' })}
-                className="hidden"
-                aria-hidden="true"
-              >
-                <SkipForward className="w-4 h-4" />
-                <span>Saltar intro</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleTestSignal}
-                className="hidden"
-                aria-hidden="true"
-              >
-                <Wifi className="w-4 h-4" />
-                <span>Probar señal</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onOpenCastModal}
-                className="hidden"
-                aria-hidden="true"
-              >
-                <Radio className="w-4 h-4" />
-                <span>Sala</span>
-              </button>
-            </div>
-
-            {/* Temporizador de reposo (reemplaza Reposo TV clásico) */}
-            <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2 mt-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Clock className="w-4 h-4 text-amber-400 shrink-0" />
-                  <div className="min-w-0">
-                    <span className="text-xs font-bold text-zinc-200 block">Temporizador de reposo</span>
-                    <span
-                      data-testid="sleep-timer-status-detail"
-                      className={`text-[11px] font-semibold block truncate ${playbackState?.sleepTimer && playbackState.sleepTimer.mode !== 'off'
-                        ? 'text-amber-300'
-                        : 'text-zinc-400'
-                        }`}
-                    >
-                      {sleepTimerStatusLabel}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onSendCommand({ action: 'setStandby' })}
-                  className="text-[11px] text-zinc-400 hover:text-white underline shrink-0"
-                >
-                  Reposo ahora
-                </button>
-              </div>
-
-              {/* Opciones de temporizador: Apagado, 15, 30, 45, 60, 90, 120 min, "Al terminar el capítulo" */}
-              <div className="grid grid-cols-4 gap-1.5 pt-1">
-                {[
-                  { mode: 'off', label: 'Apagado' },
-                  { mode: '15', label: '15 min', minutes: 15 },
-                  { mode: '30', label: '30 min', minutes: 30 },
-                  { mode: '45', label: '45 min', minutes: 45 },
-                  { mode: '60', label: '60 min', minutes: 60 },
-                  { mode: '90', label: '90 min', minutes: 90 },
-                  { mode: '120', label: '120 min', minutes: 120 },
-                  { mode: 'chapter', label: 'Al terminar capítulo' },
-                ].map((opt) => {
-                  const isSelected = (playbackState?.sleepTimer?.mode || 'off') === opt.mode;
-                  return (
-                    <button
-                      key={opt.mode}
-                      type="button"
-                      onClick={() => {
-                        if (opt.mode !== 'off') {
-                          try {
-                            localStorage.setItem(
-                              'cinecast_sleep_timer_last_v1',
-                              JSON.stringify({ mode: opt.mode, minutes: opt.minutes, updatedAt: Date.now() })
-                            );
-                          } catch (_) { }
-                        }
-                        onSendCommand({
-                          action: 'setSleepTimer',
-                          payload: { mode: opt.mode, minutes: opt.minutes },
-                        });
-                      }}
-                      className={`min-h-[36px] px-1.5 py-1 rounded-lg text-[10px] font-bold border transition text-center ${isSelected
-                        ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
-                        : 'bg-zinc-900 hover:bg-zinc-850 text-zinc-300 border-zinc-800'
-                        }`}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
 
       {/* Modal / Panel de Opciones de Audio */}
       {isAudioSheetOpen && (

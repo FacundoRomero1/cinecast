@@ -364,7 +364,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const lastCommandTimeMapRef = useRef<Map<string, number>>(new Map());
 
   const hasActivePlayback = Boolean(
-    (isPlayingLocally && activeMedia && activeHub === 'cinecast') ||
+    (isPlayingLocally && activeMedia && (activeHub === 'cinecast' || activeHub === 'sports')) ||
     isSpotifyPlaying ||
     isYouTubePlaying
   );
@@ -1073,6 +1073,105 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'play': {
+        const payload = cmd.payload;
+        // Si el comando play incluye canal, partido o stream deportivo
+        if (payload && (payload.channel || payload.match || payload.media || (payload.hub === 'sports' && payload.streamUrl))) {
+          const channelName = typeof payload.channel === 'string'
+            ? payload.channel
+            : payload.channel?.name || payload.title || 'Canal Deportivo';
+          // Stream URL garantizada con fallback a señal viva verificada (TyC Sports oficial)
+          const fallbackAliveUrl = 'https://amg26268-amg26268c14-freelivesports-emea-10267.playouts.now.amagi.tv/ts-us-e2-n2/playlist/amg26268-sportsstudio-tycsports-freelivesportsemea/playlist.m3u8';
+          const rawStreamUrl = payload.streamUrl || (typeof payload.channel === 'object' ? payload.channel?.streamUrl : '') || payload.media?.videoUrl || '';
+          const streamUrl = (rawStreamUrl && rawStreamUrl.startsWith('http') && !rawStreamUrl.includes('45.134.141.161'))
+            ? rawStreamUrl
+            : fallbackAliveUrl;
+
+          const matchTitle = payload.match?.name || payload.title || channelName;
+
+          const channelObj = typeof payload.channel === 'object' && payload.channel ? {
+            ...payload.channel,
+            name: payload.channel.name || channelName,
+            streamUrl,
+          } : {
+            id: `ch_${Date.now()}`,
+            name: channelName,
+            streamUrl,
+            logo: '',
+            country: 'AR',
+          };
+
+          const media: MediaItem = payload.media ? {
+            ...payload.media,
+            videoUrl: streamUrl,
+            category: 'live_tv',
+            type: 'movie',
+            servers: [
+              {
+                name: `${channelName} (En Vivo)`,
+                url: streamUrl,
+                type: streamUrl.includes('.m3u8') ? 'hls' : 'iframe',
+                language: 'En Vivo',
+              },
+              ...(payload.media.servers || []).filter((s: any) => s.url !== streamUrl)
+            ],
+          } : {
+            id: `sport_${Date.now()}`,
+            title: payload.match ? `${matchTitle} (${channelName})` : channelName,
+            originalTitle: matchTitle,
+            type: 'movie',
+            category: 'live_tv',
+            overview: `Transmisión en directo transmitida por ${channelName}`,
+            year: new Date().getFullYear(),
+            ratingBadge: 'EN VIVO',
+            matchScore: 99,
+            qualityBadge: 'HD 1080p',
+            posterUrl: payload.match?.homeLogo || channelObj.logo || 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=800',
+            backdropUrl: payload.match?.awayLogo || channelObj.logo || 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=1600',
+            servers: [
+              {
+                name: `${channelName} (En Vivo)`,
+                url: streamUrl,
+                type: streamUrl.includes('.m3u8') ? 'hls' : 'iframe',
+                language: 'En Vivo',
+              }
+            ],
+            videoUrl: streamUrl,
+          };
+
+          setActiveHub('sports');
+          setIsScreenInStandby(false);
+          setActiveMedia(media);
+          setIsPlayingLocally(true);
+          triggerNotification(`📱 Reproduciendo en pantalla: ${media.title}`);
+
+          if (typeof window !== 'undefined') {
+            window.location.hash = '#/deportes';
+            if ((window as any).electronAPI) {
+              (window as any).electronAPI.focusWindow?.();
+            }
+          }
+
+          const stateUpdate: PlaybackState = {
+            mediaId: media.id,
+            episodeId: null,
+            mediaTitle: media.title,
+            mediaPoster: media.posterUrl || '',
+            mediaYear: media.year,
+            mediaItem: media,
+            isPlaying: true,
+            currentTime: 0,
+            duration: 0,
+            buffered: 0,
+            isStandby: false,
+            activeHub: 'sports',
+            servers: media.servers?.map((s) => ({ name: s.name, language: s.language })),
+            activeServerIndex: 0,
+          };
+          deviceSync.broadcastPlaybackState(stateUpdate);
+          setRemotePlaybackState(stateUpdate);
+          break;
+        }
+
         if (!(isPlayingLocally && activeHub === 'cinecast')) {
           window.electronAPI?.controlActiveMedia?.({ action: 'play' });
         }

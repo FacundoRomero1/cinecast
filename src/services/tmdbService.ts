@@ -1,5 +1,5 @@
-import { sampleMovies, createMovieServers, createSeriesServers } from '../data/mediaCatalog';
-import { Movie, MediaItem, StreamServer } from '../types';
+import { createMovieServers, createSeriesServers, sampleMovies } from '../data/mediaCatalog';
+import { MediaItem, Movie, StreamServer } from '../types';
 
 const TMDB_API_KEY =
   (import.meta as any).env?.VITE_TMDB_API_KEY ||
@@ -59,7 +59,7 @@ function saveTmdbCache(cache: Record<string, TMDBEnrichedData>) {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(TMDB_CACHE_KEY, JSON.stringify(cache));
-  } catch (_) {}
+  } catch (_) { }
 }
 
 export async function asyncPool<T, R>(
@@ -146,7 +146,7 @@ export const tmdbService = {
           return data.items;
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     try {
       // 2. Fallback estático a /data/catalog.json
@@ -307,7 +307,7 @@ export const tmdbService = {
       // 3. Buscar cualquier título legible en alfabeto latino
       const anyNonCjk = titles.find((t: any) => t.title && !hasCjkCharacters(t.title));
       if (anyNonCjk?.title) return anyNonCjk.title.trim();
-    } catch (_) {}
+    } catch (_) { }
 
     return currentTitle;
   },
@@ -321,7 +321,7 @@ export const tmdbService = {
       const responses = await asyncPool(4, pageNumbers, async (p) => {
         try {
           const res = await fetch(
-            `${TMDB_BASE_URL}/discover/tv?api_key=${key}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-MX${yearParam}&page=${p}`
+            `${TMDB_BASE_URL}/discover/tv?api_key=${key}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-AR${yearParam}&page=${p}`
           );
           if (!res.ok) return [];
           const data = await res.json();
@@ -367,7 +367,7 @@ export const tmdbService = {
     const key = this.getApiKey();
     try {
       const response = await fetch(
-        `${TMDB_BASE_URL}/trending/${type}/day?api_key=${key}&language=es-MX&page=${page}`
+        `${TMDB_BASE_URL}/trending/${type}/day?api_key=${key}&language=es-AR&page=${page}`
       );
       if (!response.ok) {
         throw new Error(`TMDB Trending HTTP ${response.status}`);
@@ -427,10 +427,10 @@ export const tmdbService = {
     try {
       // 2. Buscamos explícitamente por tipo en paralelo para evitar cruces
       const [movieRes, tvRes] = await Promise.all([
-        fetch(`${TMDB_BASE_URL}/search/movie?api_key=${key}&query=${encodeURIComponent(q)}&language=es-MX`)
+        fetch(`${TMDB_BASE_URL}/search/movie?api_key=${key}&query=${encodeURIComponent(q)}&language=es-AR`)
           .then((r) => (r.ok ? r.json() : { results: [] }))
           .catch(() => ({ results: [] })),
-        fetch(`${TMDB_BASE_URL}/search/tv?api_key=${key}&query=${encodeURIComponent(q)}&language=es-MX`)
+        fetch(`${TMDB_BASE_URL}/search/tv?api_key=${key}&query=${encodeURIComponent(q)}&language=es-AR`)
           .then((r) => (r.ok ? r.json() : { results: [] }))
           .catch(() => ({ results: [] })),
       ]);
@@ -485,7 +485,7 @@ export const tmdbService = {
     const key = this.getApiKey();
     try {
       const response = await fetch(
-        `${TMDB_BASE_URL}/search/multi?api_key=${key}&query=${encodeURIComponent(q)}&language=es-MX&page=${page}`
+        `${TMDB_BASE_URL}/search/multi?api_key=${key}&query=${encodeURIComponent(q)}&language=es-AR&page=${page}`
       );
       if (!response.ok) {
         throw new Error(`TMDB Search HTTP ${response.status}`);
@@ -546,7 +546,7 @@ export const tmdbService = {
         const response = await fetch(
           `${TMDB_BASE_URL}/search/${endpoint}?api_key=${key}&query=${encodeURIComponent(
             cleanTitle
-          )}${yearParam}&language=es-MX`
+          )}${yearParam}&language=es-AR`
         );
         if (response.ok) {
           const data = await response.json();
@@ -574,7 +574,7 @@ export const tmdbService = {
             return enriched;
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     // Fallback local
@@ -606,10 +606,8 @@ export const tmdbService = {
     const key = this.getApiKey();
     try {
       const response = await fetch(
-        `${TMDB_BASE_URL}/movie/${tmdbId}?api_key=${key}&language=es-MX&append_to_response=credits`
+        `${TMDB_BASE_URL}/movie/${tmdbId}?api_key=${key}&language=es-AR&append_to_response=credits`
       );
-      if (!response.ok) return null;
-      return response.json();
     } catch {
       return sampleMovies.find((m) => m.tmdbId === tmdbId) || null;
     }
@@ -627,27 +625,27 @@ export async function fetchMoreByCategory(category: string, page: number): Promi
   let forceType: 'movie' | 'series' | 'anime' | undefined = undefined;
 
   const movieEndpoints = [
-    `/movie/popular?api_key=${key}&language=es-MX&page=${page}`,
-    `/movie/now_playing?api_key=${key}&language=es-MX&page=${page}`,
-    `/movie/top_rated?api_key=${key}&language=es-MX&page=${page}`,
-    `/discover/movie?api_key=${key}&language=es-MX&sort_by=popularity.desc&with_genres=28&page=${page}`,
-    `/discover/movie?api_key=${key}&language=es-MX&sort_by=popularity.desc&with_genres=878&page=${page}`,
-    `/discover/movie?api_key=${key}&language=es-MX&sort_by=popularity.desc&with_genres=27&page=${page}`,
-    `/discover/movie?api_key=${key}&language=es-MX&sort_by=popularity.desc&with_genres=35&page=${page}`,
-    `/discover/movie?api_key=${key}&language=es-MX&sort_by=popularity.desc&with_genres=53&page=${page}`,
+    `/movie/popular?api_key=${key}&language=es-AR&page=${page}`,
+    `/movie/now_playing?api_key=${key}&language=es-AR&page=${page}`,
+    `/movie/top_rated?api_key=${key}&language=es-AR&page=${page}`,
+    `/discover/movie?api_key=${key}&language=es-AR&sort_by=popularity.desc&with_genres=28&page=${page}`,
+    `/discover/movie?api_key=${key}&language=es-AR&sort_by=popularity.desc&with_genres=878&page=${page}`,
+    `/discover/movie?api_key=${key}&language=es-AR&sort_by=popularity.desc&with_genres=27&page=${page}`,
+    `/discover/movie?api_key=${key}&language=es-AR&sort_by=popularity.desc&with_genres=35&page=${page}`,
+    `/discover/movie?api_key=${key}&language=es-AR&sort_by=popularity.desc&with_genres=53&page=${page}`,
   ];
 
   const seriesEndpoints = [
-    `/tv/popular?api_key=${key}&language=es-MX&page=${page}`,
-    `/tv/top_rated?api_key=${key}&language=es-MX&page=${page}`,
-    `/tv/on_the_air?api_key=${key}&language=es-MX&page=${page}`,
+    `/tv/popular?api_key=${key}&language=es-AR&page=${page}`,
+    `/tv/top_rated?api_key=${key}&language=es-AR&page=${page}`,
+    `/tv/on_the_air?api_key=${key}&language=es-AR&page=${page}`,
   ];
 
   const allEndpoints = [
-    `/trending/all/day?api_key=${key}&language=es-MX&page=${page}`,
-    `/trending/all/week?api_key=${key}&language=es-MX&page=${page}`,
-    `/movie/now_playing?api_key=${key}&language=es-MX&page=${page}`,
-    `/tv/popular?api_key=${key}&language=es-MX&page=${page}`,
+    `/trending/all/day?api_key=${key}&language=es-AR&page=${page}`,
+    `/trending/all/week?api_key=${key}&language=es-AR&page=${page}`,
+    `/movie/now_playing?api_key=${key}&language=es-AR&page=${page}`,
+    `/tv/popular?api_key=${key}&language=es-AR&page=${page}`,
   ];
 
   if (cat === 'movies' || cat === 'movie') {
@@ -658,7 +656,7 @@ export async function fetchMoreByCategory(category: string, page: number): Promi
     endpoint = seriesEndpoints[(page - 1) % seriesEndpoints.length];
   } else if (cat === 'anime') {
     forceType = 'anime';
-    endpoint = `/discover/tv?api_key=${key}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-MX&page=${page}`;
+    endpoint = `/discover/tv?api_key=${key}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-AR&page=${page}`;
   } else {
     endpoint = allEndpoints[(page - 1) % allEndpoints.length];
   }
@@ -680,6 +678,8 @@ export async function fetchMoreByCategory(category: string, page: number): Promi
           id: movie.id,
           tmdbId: movie.tmdbId,
           title: movie.title,
+          titleEs: movie.title,
+          originalTitle: movie.originalTitle,
           type: isTV ? 'series' : 'movie',
           overview: movie.overview,
           year: movie.year || new Date().getFullYear(),

@@ -1,0 +1,137 @@
+[
+  {
+    "tmdbId": 46260,
+    "title": "Naruto",
+    "year": 2002,
+    "slug": "naruto",
+    "posterPath": "/oOkvQ1anSMvdYbUGGf7NAnfwHUt.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 31910,
+    "title": "Naruto Shippuden",
+    "year": 2007,
+    "slug": "naruto-shippuden",
+    "posterPath": "/ews8shcDbRG3tY33dF0jClNvgIK.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 12971,
+    "title": "Dragon Ball Z",
+    "year": 1989,
+    "slug": "dragon-ball-z",
+    "posterPath": "/ogH4r9HsimigseBNLzHn4uVNOxh.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 62715,
+    "title": "Dragon Ball Super",
+    "year": 2015,
+    "slug": "dragon-ball-super",
+    "posterPath": "/ruLBbIX15HrECgLJ3uZPo6X3YCN.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 30984,
+    "title": "Bleach",
+    "year": 2004,
+    "slug": "bleach",
+    "posterPath": "/rsv116o9M983WvInXztEiwc6WRD.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 13916,
+    "title": "Death Note",
+    "year": 2006,
+    "slug": "death-note",
+    "posterPath": "/z85wVUR32PrvHfope9Xbn0kD68u.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 85937,
+    "title": "Demon Slayer: Kimetsu no Yaiba",
+    "year": 2019,
+    "slug": "kimetsu-no-yaiba",
+    "posterPath": "/inXU5hvbDbitrYOgLrq2QjYqiJD.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 1429,
+    "title": "Attack on Titan",
+    "year": 2013,
+    "slug": "shingeki-no-kyojin",
+    "posterPath": "/2gcKRbdh7ozC3dIOiYNe87GB1o8.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 95479,
+    "title": "Jujutsu Kaisen",
+    "year": 2020,
+    "slug": "jujutsu-kaisen",
+    "posterPath": "/zKFkzRn1UyE11Jv9CJjVmvmQFvR.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 37854,
+    "title": "One Piece",
+    "year": 1999,
+    "slug": "one-piece",
+    "posterPath": "/8f33Q5AuM2G5ZqFeusbIqDjr3cI.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 60572,
+    "title": "Pokémon",
+    "year": 1997,
+    "slug": "pokemon",
+    "posterPath": "/w57GROjoeTJktLIlINOMYjMJmnZ.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 73223,
+    "title": "Black Clover",
+    "year": 2017,
+    "slug": "black-clover",
+    "posterPath": "/zObHoFAX6P7DirR2dybN3cVC1Ms.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 114410,
+    "title": "Chainsaw Man",
+    "year": 2022,
+    "slug": "chainsaw-man",
+    "posterPath": "/mIz0eKhzHuSPeRSePCyoCt9bKVp.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 61374,
+    "title": "Tokyo Ghoul",
+    "year": 2014,
+    "slug": "tokyo-ghoul",
+    "posterPath": "/wdjQBMBf9su8eiDxDMnXPFNvZls.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  },
+  {
+    "tmdbId": 46298,
+    "title": "Hunter × Hunter",
+    "year": 2011,
+    "slug": "hunter-x-hunter-2011",
+    "posterPath": "/43wEsSJxuV8SZuipKpolOsuGVRZ.jpg",
+    "matchedAt": "2026-11-17T18:00:00.000Z",
+    "matchMethod": "title_year_poster"
+  }
+]

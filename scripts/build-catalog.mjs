@@ -119,6 +119,8 @@ function convertTmdbItem(item, forceCategory) {
   const finalCategory = isAnime ? 'anime' : isTV ? 'series' : 'movie';
   const title = (item.title || item.name || item.english_title || item.original_title || '').trim();
   if (!title) return null;
+  const originalTitle = (item.original_title || item.original_name || title).trim();
+  const titleEs = (item.title || item.name || title).trim();
 
   const releaseDate = item.release_date || item.first_air_date || '2024-01-01';
   const year = parseInt(releaseDate.slice(0, 4), 10) || new Date().getFullYear();
@@ -152,6 +154,8 @@ function convertTmdbItem(item, forceCategory) {
     id: `tmdb-${finalCategory}-${tmdbId}`,
     tmdbId,
     title,
+    titleEs,
+    originalTitle,
     overview,
     posterPath: posterUrl,
     posterUrl,
@@ -204,11 +208,14 @@ async function main() {
       const prev = JSON.parse(fs.readFileSync(finalPath, 'utf8'));
       if (Array.isArray(prev)) {
         for (const item of prev) {
-          if (item && item.id) catalogMap.set(item.id, item);
+          if (item && item.id) {
+            item.titleEs = item.titleEs || item.title || item.originalTitle;
+            catalogMap.set(item.id, item);
+          }
         }
         console.log(`📁 Catálogo base previo cargado: ${catalogMap.size} títulos.`);
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // Construir lista de tareas paginadas
@@ -219,7 +226,7 @@ async function main() {
     for (const sortBy of ['popularity.desc', 'vote_count.desc', 'primary_release_date.desc']) {
       for (let page = 1; page <= 30; page++) {
         endpoints.push({
-          url: `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-${region}&region=${region}&sort_by=${sortBy}&vote_count.gte=5&page=${page}`,
+          url: `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&region=${region}&sort_by=${sortBy}&vote_count.gte=5&page=${page}`,
           category: 'movie',
         });
       }
@@ -230,7 +237,7 @@ async function main() {
   for (let year = 1990; year <= 2026; year += 2) {
     for (let page = 1; page <= 12; page++) {
       endpoints.push({
-        url: `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-MX&primary_release_year=${year}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
+        url: `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&primary_release_year=${year}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
         category: 'movie',
       });
     }
@@ -241,7 +248,7 @@ async function main() {
   for (const g of movieGenres) {
     for (let page = 1; page <= 25; page++) {
       endpoints.push({
-        url: `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-MX&with_genres=${g}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
+        url: `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&with_genres=${g}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
         category: 'movie',
       });
     }
@@ -252,7 +259,7 @@ async function main() {
   for (const g of tvGenres) {
     for (let page = 1; page <= 25; page++) {
       endpoints.push({
-        url: `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-MX&with_genres=${g}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
+        url: `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_genres=${g}&sort_by=popularity.desc&vote_count.gte=5&page=${page}`,
         category: 'series',
       });
     }
@@ -261,7 +268,7 @@ async function main() {
   // 5. Catálogo masivo de Anime (Japón, Animación)
   for (let page = 1; page <= 45; page++) {
     endpoints.push({
-      url: `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-MX&page=${page}`,
+      url: `${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_original_language=ja&with_genres=16&sort_by=popularity.desc&language=es-AR&page=${page}`,
       category: 'anime',
     });
   }
@@ -269,11 +276,11 @@ async function main() {
   // 6. Top Rated y Clásicos aclamados
   for (let page = 1; page <= 30; page++) {
     endpoints.push({
-      url: `${TMDB_BASE_URL}/movie/top_rated?api_key=${TMDB_API_KEY}&language=es-MX&page=${page}`,
+      url: `${TMDB_BASE_URL}/movie/top_rated?api_key=${TMDB_API_KEY}&language=es-AR&page=${page}`,
       category: 'movie',
     });
     endpoints.push({
-      url: `${TMDB_BASE_URL}/tv/top_rated?api_key=${TMDB_API_KEY}&language=es-MX&page=${page}`,
+      url: `${TMDB_BASE_URL}/tv/top_rated?api_key=${TMDB_API_KEY}&language=es-AR&page=${page}`,
       category: 'series',
     });
   }
@@ -316,6 +323,11 @@ async function main() {
   }
 
   const catalogList = Array.from(catalogMap.values());
+  for (const item of catalogList) {
+    if (!item.titleEs) {
+      item.titleEs = item.title || item.originalTitle;
+    }
+  }
   console.log(`\n✨ Total de películas y series listas: ${catalogList.length}`);
 
   // Guardar atómicamente en public/data/catalog.json

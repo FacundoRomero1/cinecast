@@ -1,5 +1,7 @@
 import animeLatinoMap from '../data/animeLatinoMap.json';
 import providersData from '../data/providers.json';
+import fuegocineSlugsData from '../data/fuegocineSlugs.json';
+import latanimeSlugsData from '../data/latanimeSlugs.json';
 import { StreamServer } from '../types';
 
 export interface ProviderConfig {
@@ -8,6 +10,7 @@ export interface ProviderConfig {
   enabled: boolean;
   priority: number;
   languages: string[];
+  langHintUnreliable?: boolean;
   urlMovie: string;
   urlTv: string;
   urlTvEpisode?: string;
@@ -37,10 +40,22 @@ export function buildProviderUrl(
 
   if (!template || typeof template !== 'string') return null;
 
-  const url = template
+  let url = template
     .replace(/\{tmdbId\}/g, String(tmdbId))
     .replace(/\{season\}/g, String(season))
     .replace(/\{episode\}/g, String(episode));
+
+  if (provider.id === 'fuegocine') {
+    const hit = (fuegocineSlugsData as any[]).find((s) => s.tmdbId === tmdbId);
+    if (hit) {
+      url = url.replace(/\{slug\}/g, hit.fuegoSlug).replace(/\{id\}/g, String(hit.fuegoId));
+    }
+  } else if (provider.id === 'latanime') {
+    const hit = (latanimeSlugsData as any[]).find((s) => s.tmdbId === tmdbId);
+    if (hit) {
+      url = url.replace(/\{slug\}/g, hit.slug);
+    }
+  }
 
   if (url.includes('{') || url.includes('}')) {
     return null;
@@ -49,44 +64,126 @@ export function buildProviderUrl(
   return url.trim();
 }
 
-export function rankProvidersByLanguage(providers: ProviderConfig[], type?: string): ProviderConfig[] {
-  // Para animes, priorizar proveedores de alta estabilidad (VidLink Pro, VidSrc SH, FrameX)
-  if (type === 'anime') {
-    const active = providers.filter((p) => p && p.enabled === true);
-    const animeOrder = ['vidlink.pro', 'vidsrc.sh', 'vidfast.pro', 'vidsrc.to', 'streamhg'];
-    return [...active].sort((a, b) => {
-      const idxA = animeOrder.indexOf(a.id);
-      const idxB = animeOrder.indexOf(b.id);
-      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-      if (idxA !== -1) return -1;
-      if (idxB !== -1) return 1;
-      return (b.priority || 0) - (a.priority || 0);
-    });
-  }
+export function getAudioLangPriority(
+  audioLangs?: string[] | null,
+  providerLanguages?: string[] | null,
+  langHintUnreliable?: boolean
+): number {
+  // 1. Usa primero audioLangs medido
+  if (Array.isArray(audioLangs) && audioLangs.length > 0) {
+    const measuredWithoutUnknown = audioLangs
+      .map((l) => l.toLowerCase().trim())
+      .filter((l) => l && l !== 'desconocido');
 
-  const bucket1: ProviderConfig[] = [];
-  const bucket2: ProviderConfig[] = [];
-  const bucket3: ProviderConfig[] = [];
-
-  for (const p of providers) {
-    if (!p || p.enabled !== true) continue;
-    const langs = Array.isArray(p.languages) ? p.languages : [];
-    if (langs.includes('es-419') || langs.includes('es')) {
-      bucket1.push(p);
-    } else if (langs.includes('multi')) {
-      bucket2.push(p);
-    } else {
-      bucket3.push(p);
+    if (measuredWithoutUnknown.length > 0) {
+      if (measuredWithoutUnknown.some((l) => l === 'latino' || l === 'spa' || l === 'es-419')) {
+        return 1;
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+        return 2;
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'multi')) {
+        return 3;
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
+        return 4;
+      }
     }
   }
 
-  const byPriorityDesc = (a: ProviderConfig, b: ProviderConfig) => (b.priority || 0) - (a.priority || 0);
+  // Requisito 4: Si langHintUnreliable está activo, la pista no se usa: va al grupo 3
+  if (langHintUnreliable === true) {
+    return 3;
+  }
 
-  bucket1.sort(byPriorityDesc);
-  bucket2.sort(byPriorityDesc);
-  bucket3.sort(byPriorityDesc);
+  // 2. Si está vacío o es 'desconocido', cae al campo languages del proveedor (latino→1, es→2, multi→3, en→4)
+  if (Array.isArray(providerLanguages) && providerLanguages.length > 0) {
+    const prov = providerLanguages.map((l) => l.toLowerCase().trim());
+    if (prov.some((l) => l === 'latino' || l === 'es-419')) {
+      return 1;
+    }
+    if (prov.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+      return 2;
+    }
+    if (prov.some((l) => l === 'multi')) {
+      return 3;
+    }
+    if (prov.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
+      return 4;
+    }
+  }
 
-  return [...bucket1, ...bucket2, ...bucket3];
+  // 3. Solo si tampoco hay pista, grupo 3
+  return 3;
+}
+
+export function formatAudioLangWithSource(
+  audioLangs?: string[] | null,
+  providerLanguages?: string[] | null,
+  langHintUnreliable?: boolean
+): string {
+  // 1. Medido
+  if (Array.isArray(audioLangs) && audioLangs.length > 0) {
+    const measuredWithoutUnknown = audioLangs
+      .map((l) => l.toLowerCase().trim())
+      .filter((l) => l && l !== 'desconocido');
+
+    if (measuredWithoutUnknown.length > 0) {
+      if (measuredWithoutUnknown.some((l) => l === 'latino' || l === 'spa' || l === 'es-419')) {
+        return 'Latino (medido)';
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+        return 'Castellano (medido)';
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
+        return 'Inglés (medido)';
+      }
+      return `${measuredWithoutUnknown[0]} (medido)`;
+    }
+  }
+
+  // Requisito 4: Si langHintUnreliable está activo, la pista no se usa para etiqueta: muestra "Multi"
+  if (langHintUnreliable === true) {
+    return 'Multi';
+  }
+
+  // 2. Por pista (campo languages del proveedor)
+  if (Array.isArray(providerLanguages) && providerLanguages.length > 0) {
+    const prov = providerLanguages.map((l) => l.toLowerCase().trim());
+    if (prov.some((l) => l === 'latino' || l === 'es-419')) {
+      return 'Latino (declarado)';
+    }
+    if (prov.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+      return 'Castellano (declarado)';
+    }
+    if (prov.some((l) => l === 'multi')) {
+      return 'Multi';
+    }
+    if (prov.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
+      return 'Inglés (declarado)';
+    }
+  }
+
+  // 3. Sin nada
+  return 'Multi';
+}
+
+export function formatAudioLangLabel(audioLangs?: string[] | null, providerLanguages?: string[] | null, langHintUnreliable?: boolean): string {
+  return formatAudioLangWithSource(audioLangs, providerLanguages, langHintUnreliable);
+}
+
+export function rankProvidersByLanguage(providers: ProviderConfig[], _type?: string): ProviderConfig[] {
+  const active = providers.filter((p) => p && p.enabled === true);
+
+  return [...active].sort((a, b) => {
+    // 1. Prioridad por idioma (latino→1, es→2, multi→3, en→4, sin pista→3)
+    const rankA = getAudioLangPriority(undefined, a.languages, a.langHintUnreliable);
+    const rankB = getAudioLangPriority(undefined, b.languages, b.langHintUnreliable);
+    if (rankA !== rankB) return rankA - rankB;
+
+    // 2. Desempate por prioridad declarada en providers.json
+    return (b.priority || 0) - (a.priority || 0);
+  });
 }
 
 export interface GenerateServersOptions {
@@ -139,48 +236,38 @@ export async function refreshProviderHealth(): Promise<void> {
   }
 }
 
-/** Servidor primario primero; luego servidores vivos del más rápido al más lento; sin datos al medio; caídos al final. */
-function applyProviderRanking(servers: StreamServer[], type?: string): StreamServer[] {
+/** Servidores ordenados por grupo de idioma (Latino→1, ES→2, Multi→3, EN→4), luego HLS antes que iframe, y desempate por salud/velocidad */
+function applyProviderRanking(servers: StreamServer[], _type?: string): StreamServer[] {
   const health = readProviderHealth();
-  if (!health) return [...servers];
 
-  // Si es anime, mantenemos servidores verificados y VidLink Pro / VidSrc SH al frente
-  if (type === 'anime') {
-    return [...servers];
-  }
+  return [...servers].sort((a, b) => {
+    // 1. Grupo de idioma (getAudioLangPriority: latino→1, es→2, multi→3, en→4)
+    const provA = (providersData as ProviderConfig[]).find((p) => p.name === a.name || p.id === (a as any).providerId);
+    const provB = (providersData as ProviderConfig[]).find((p) => p.name === b.name || p.id === (b as any).providerId);
+    const rankA = getAudioLangPriority(a.audioLangs, provA?.languages, provA?.langHintUnreliable);
+    const rankB = getAudioLangPriority(b.audioLangs, provB?.languages, provB?.langHintUnreliable);
+    if (rankA !== rankB) return rankA - rankB;
 
-  const primaryWasFirst = servers[0]?.name === PRIMARY_PROVIDER;
-  const slots: number[] = [];
-  const rankable: Array<{ s: StreamServer; i: number }> = [];
-  servers.forEach((s, i) => {
-    if (s.type === 'iframe' && (s.name === PRIMARY_PROVIDER || health[s.name])) {
-      slots.push(i);
-      rankable.push({ s, i });
+    // 2. HLS antes que iframe
+    const aIsHls = a.type === 'hls' || (a as any).playable === 'hls';
+    const bIsHls = b.type === 'hls' || (b as any).playable === 'hls';
+    if (aIsHls && !bIsHls) return -1;
+    if (!aIsHls && bIsHls) return 1;
+
+    // 3. Salud / speedMs si hay disponible en caché de salud
+    if (health) {
+      const hA = health[a.name];
+      const hB = health[b.name];
+      const scoreA = hA ? (hA.ok ? 1 + Math.min(hA.ms, 60000) / 100000 : 10) : 5;
+      const scoreB = hB ? (hB.ok ? 1 + Math.min(hB.ms, 60000) / 100000 : 10) : 5;
+      if (scoreA !== scoreB) return scoreA - scoreB;
     }
+
+    // 4. Prioridad declarada del proveedor
+    const prioA = provA?.priority ?? 0;
+    const prioB = provB?.priority ?? 0;
+    return prioB - prioA;
   });
-  if (rankable.length < 2) return [...servers];
-
-  const score = ({ s }: { s: StreamServer }) => {
-    if (s.name === PRIMARY_PROVIDER) return 0;
-    const h = health[s.name];
-    if (!h) return 5;
-    return h.ok ? 1 + Math.min(h.ms, 60000) / 100000 : 10;
-  };
-  rankable.sort((a, b) => score(a) - score(b) || a.i - b.i);
-
-  const result = [...servers];
-  slots.forEach((slot, k) => {
-    result[slot] = rankable[k].s;
-  });
-
-  if (primaryWasFirst && result[0]?.name !== PRIMARY_PROVIDER) {
-    const primaryIdx = result.findIndex((s) => s.name === PRIMARY_PROVIDER);
-    if (primaryIdx > 0) {
-      const [primary] = result.splice(primaryIdx, 1);
-      result.unshift(primary);
-    }
-  }
-  return result;
 }
 
 /**
@@ -269,7 +356,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
         url: `/api/stream/direct?tmdbId=${tmdbId}&type=${isTV ? 'tv' : 'movie'}&season=${season || 1}&episode=${episode || 1}`,
         type: 'hls',
         playable: 'hls',
-        language: '🌐 Multi (Sub ES)',
+        language: 'Multi',
         validated: true,
       };
       servers.push(directHlsServer);
@@ -291,19 +378,13 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
       };
     }
 
-    // Generación dinámica desde providers.json clasificado por preferencia de idioma (Bucket 1: Latino/ES, Bucket 2: Multi, Bucket 3: EN)
+    // Generación dinámica desde providers.json clasificado por preferencia de idioma (getAudioLangPriority: Latino→1, ES→2, Multi→3, EN→4)
     const rankedProviders = rankProvidersByLanguage(providersData as ProviderConfig[], type);
     for (const p of rankedProviders) {
       const url = buildProviderUrl(p, { tmdbId, type, season, episode });
       if (!url) continue;
 
-      const hasLatino = p.languages.includes('es-419') || p.languages.includes('es');
-      const isMulti = p.languages.includes('multi');
-      const langLabel = hasLatino
-        ? '🇲🇽 Latino / ES'
-        : isMulti
-          ? '🌐 Multi'
-          : 'Audio Original';
+      const langLabel = formatAudioLangWithSource(undefined, p.languages, p.langHintUnreliable);
 
       let referrer: string | undefined = undefined;
       if (p.requiresReferer) {
@@ -314,9 +395,10 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
 
       servers.push({
         name: p.name,
+        providerId: p.id,
         url,
         type: 'iframe',
-        language: type === 'anime' && !hasLatino ? 'Audio Original (Sub ES)' : langLabel,
+        language: langLabel,
         referrer,
       });
     }

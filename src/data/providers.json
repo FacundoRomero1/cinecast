@@ -4,6 +4,7 @@
     "name": "FrameX (Direct HLS)",
     "enabled": true,
     "priority": 10,
+    "langHintUnreliable": true,
     "languages": [
       "multi",
       "en",
@@ -29,6 +30,7 @@
     "name": "VidSrc SH (HD)",
     "enabled": true,
     "priority": 9,
+    "langHintUnreliable": true,
     "languages": [
       "multi",
       "en"
@@ -53,6 +55,7 @@
     "name": "VidFast (HD)",
     "enabled": true,
     "priority": 8,
+    "langHintUnreliable": true,
     "languages": [
       "multi",
       "en"
@@ -97,30 +100,6 @@
     "notes": "Bloquea iframes (generador embed en iframe), deshabilitado."
   },
   {
-    "id": "vidsrc.to",
-    "name": "VidSrc TO",
-    "enabled": true,
-    "priority": 6,
-    "languages": [
-      "multi",
-      "en"
-    ],
-    "urlMovie": "https://vidsrc.to/embed/movie/{tmdbId}",
-    "urlTv": "https://vidsrc.to/embed/tv/{tmdbId}",
-    "urlTvEpisode": "https://vidsrc.to/embed/tv/{tmdbId}/{season}/{episode}",
-    "requiresReferer": false,
-    "tlsLax": false,
-    "pendingMs": 0,
-    "softDeadlineMs": 4000,
-    "maxConcurrent": 5,
-    "swrTtlMs": 21600000,
-    "negativeTtlMs": 1800000,
-    "breakerErrorPct": 40,
-    "breakerWindow": 20,
-    "breakerOpenMs": 60000,
-    "notes": "Proveedor core verificado activo 2026-11-16."
-  },
-  {
     "id": "streamhg",
     "name": "StreamHG (HD)",
     "enabled": false,
@@ -152,6 +131,7 @@
     "name": "VidLink Pro",
     "enabled": true,
     "priority": 1,
+    "langHintUnreliable": true,
     "languages": [
       "en"
     ],
@@ -340,5 +320,52 @@
     "requiresReferer": false,
     "tlsLax": false,
     "notes": "Scraper nativo AnimeFLV"
+  },
+  {
+    "id": "animelatinohd",
+    "name": "AnimeLatinoHD",
+    "enabled": false,
+    "priority": 9,
+    "languages": [
+      "latino",
+      "es"
+    ],
+    "urlTvEpisode": "https://animelatinohd.com/ver/{slug}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "needsBrowser": false,
+    "notes": "Scraper nativo AnimeLatinoHD con servidores Delta y Epsilon (Filemoon/Byse). Solo tipo anime/series. Deshabilitado (enabled: false) hasta confirmación de probe."
+  },
+  {
+    "id": "fuegocine",
+    "name": "FuegoCine (Latino)",
+    "enabled": true,
+    "needsBrowser": false,
+    "priority": 8,
+    "langHintUnreliable": false,
+    "languages": [
+      "latino"
+    ],
+    "urlMovie": "https://fuegocine.com/movies/watch/{slug}/{id}",
+    "urlTv": "https://fuegocine.com/shows/details/{slug}/{id}",
+    "urlTvEpisode": "https://fuegocine.com/shows/watch/{slug}/{id}/{season}/{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "notes": "Agregador FuegoCine con reproductores AbyssPlayer, Unlimplay y Videro. Audio Latino verificado en probe (15/15)."
+  },
+  {
+    "id": "latanime",
+    "name": "Latanime",
+    "enabled": true,
+    "needsBrowser": false,
+    "priority": 11,
+    "langHintUnreliable": false,
+    "languages": [
+      "latino"
+    ],
+    "urlTvEpisode": "https://latanime.org/ver/{slug}-episodio-{episode}",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "notes": "Scraper nativo Latanime con desofuscación Base64 de Filemoon y espejos. Audio Latino verificado en probe (15/15)."
   }
 ]

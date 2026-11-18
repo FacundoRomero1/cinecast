@@ -3,6 +3,8 @@ import path from 'node:path';
 import { getServers as getAnimeAV1Servers } from './animeav1.js';
 import { getServers as getAnimeFLVServers } from './animeflv.js';
 import { getServers as getJKAnimeServers } from './jkanime.js';
+import { getServers as getAnimeLatinoServers } from './animelatinohd.js';
+import { getServers as getLatanimeServers } from './latanime.js';
 import type { AnimeServer, QualityScoreRecord } from './types.js';
 import { validateStreamDuration } from './validator.js';
 
@@ -87,11 +89,13 @@ export async function resolveAnimeServers(
 ): Promise<AnimeServer[]> {
   console.log(`[AnimeOrchestrator] Consultando fuentes de anime para "${title}" (tmdbId=${tmdbId}, ep=${episode}, runtime=${expectedRuntimeMinutes}m)...`);
 
-  // Consultar en paralelo a JKAnime, AnimeAV1 y AnimeFLV con Promise.allSettled
-  const [jkSettled, av1Settled, flvSettled] = await Promise.allSettled([
+  // Consultar en paralelo a JKAnime, AnimeAV1, AnimeFLV, AnimeLatinoHD y Latanime
+  const [jkSettled, av1Settled, flvSettled, latinoSettled, latanimeSettled] = await Promise.allSettled([
     getJKAnimeServers(title, episode),
     getAnimeAV1Servers(title, episode),
     getAnimeFLVServers(title, episode),
+    getAnimeLatinoServers(title, episode, tmdbId),
+    getLatanimeServers(title, episode, tmdbId),
   ]);
 
   const rawServers: AnimeServer[] = [];
@@ -104,6 +108,12 @@ export async function resolveAnimeServers(
   }
   if (flvSettled.status === 'fulfilled' && Array.isArray(flvSettled.value)) {
     rawServers.push(...flvSettled.value);
+  }
+  if (latinoSettled.status === 'fulfilled' && Array.isArray(latinoSettled.value)) {
+    rawServers.push(...latinoSettled.value);
+  }
+  if (latanimeSettled.status === 'fulfilled' && Array.isArray(latanimeSettled.value)) {
+    rawServers.push(...latanimeSettled.value);
   }
 
   // Recopilar todos los servidores encontrados y aplicar QualityScore

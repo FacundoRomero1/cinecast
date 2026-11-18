@@ -2,6 +2,8 @@ export interface CardItem {
   id: string;
   tmdbId: number;
   title: string;
+  titleEs?: string;
+  originalTitle?: string;
   posterUrl: string;
   backdropUrl: string;
   year: number;
@@ -79,6 +81,7 @@ export interface MediaDetailServer {
 }
 
 export interface MediaDetailItem extends CardItem {
+  titleEs?: string;
   originalTitle?: string;
   overview?: string;
   releaseDate?: string;
