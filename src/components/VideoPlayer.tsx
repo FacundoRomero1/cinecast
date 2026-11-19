@@ -556,6 +556,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isGhostExtracting, setIsGhostExtracting] = useState<boolean>(false);
   const [captchaRequired, setCaptchaRequired] = useState<boolean>(false);
   const [forceVisibleIframeForCaptcha, setForceVisibleIframeForCaptcha] = useState<boolean>(false);
+  const [showIframePlayBanner, setShowIframePlayBanner] = useState<boolean>(false);
   const animeAttemptCountRef = useRef<number>(0);
   const loadDirectStreamRef = useRef<() => void>(() => {});
   const autoAdvanceCountRef = useRef<number>(0);
@@ -2448,6 +2449,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [isIframeMode, activeEmbedUrl, iframeReloadKey]);
 
+  useEffect(() => {
+    if (!isIframeMode) {
+      setShowIframePlayBanner(false);
+      return;
+    }
+    setShowIframePlayBanner(false);
+    const timer = setTimeout(() => {
+      if (!firstFrameTimeRef.current && !hasStartedWatchingRef.current) {
+        setShowIframePlayBanner(true);
+      }
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [isIframeMode, activeEmbedUrl, iframeReloadKey]);
+
   const broadcastImmediate = useCallback((playingOverride?: boolean, extraOverrides?: Record<string, any>) => {
     if (!onBroadcastState) return;
     const time = (!isIframeMode && videoRef.current)
@@ -3763,6 +3778,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       </div>
 
+      {/* Franja fina para iframe si no arrancó en 6 s */}
+      {isIframeMode && showIframePlayBanner && !hasStartedWatchingRef.current && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-zinc-950/90 border border-zinc-700/80 backdrop-blur-md px-4 py-1.5 rounded-full shadow-lg flex items-center gap-2 animate-fadeIn">
+          <span className="text-xs text-zinc-300 font-medium">¿El reproductor no inició?</span>
+          <button
+            type="button"
+            onClick={() => {
+              togglePlay();
+              setShowIframePlayBanner(false);
+            }}
+            className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-full transition flex items-center gap-1 shadow cursor-pointer"
+          >
+            <Play className="w-3 h-3 fill-current" /> Iniciar reproducción
+          </button>
+        </div>
+      )}
+
       {/* BARRA INFERIOR FLOTANTE DE SERVIDORES (libera la barra superior para nunca tapar el embed) */}
       {availableServers.length > 1 && (
         <div
@@ -3808,7 +3840,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <div className={`absolute inset-0 z-30 flex flex-col justify-between p-6 sm:p-8 bg-gradient-to-t from-black/95 via-transparent to-transparent transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}>
           <div className="h-16" />
           <div className="flex items-center justify-center pointer-events-none">
-            {!isPlaying && (
+            {!isPlaying && !isIframeMode && (
               <button onClick={togglePlay}
                 className="p-6 rounded-full bg-red-600/90 hover:bg-red-600 text-white transition transform hover:scale-110 shadow-2xl pointer-events-auto backdrop-blur-md animate-pulse">
                 <Play className="w-12 h-12 fill-current translate-x-1" />
