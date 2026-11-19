@@ -644,12 +644,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const episodeKey = isSeriesOrAnime
       ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
       : `${media.id}_movie`;
-    // 0. Si hay servidores de prueba explícitos (ej. probe-marathon-launch con /__test/embed.html)
+    // 0. Si hay servidores de prueba explícitos en el episodio (ej. probe-marathon-launch con /__test/embed.html)
     if (episode?.servers?.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))) {
       return episode.servers;
-    }
-    if (media.servers?.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))) {
-      return media.servers;
     }
 
     // 1. Si resolveService o Direct HLS ya resolvió servidores para este título con TMDB
@@ -865,12 +862,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
-    const hasTestOrExplicitServers = Boolean(
-      (episode?.servers && episode.servers.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))) ||
-      (media.servers && media.servers.some((s) => typeof s.url === 'string' && s.url.includes('/__test/')))
+    const hasEpisodeTestServers = Boolean(
+      episode?.servers && episode.servers.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))
     );
-    if (hasTestOrExplicitServers) {
-      console.log(`[VideoPlayer] Servidores de prueba explícitos detectados en media/episode`);
+    if (hasEpisodeTestServers) {
+      console.log(`[VideoPlayer] Servidores de prueba explícitos detectados en episode`);
       setIsResolving(false);
       return;
     }
