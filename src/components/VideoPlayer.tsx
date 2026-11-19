@@ -601,6 +601,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const totalMs = Math.max(0, firstFrameTimeRef.current - mount);
       console.log(`[PlaybackTiming] PRIMER_FRAME source="${source}" totalMs=${totalMs} resolveMs=${resolveMs} frameMs=${frameMs} replacedAfterWatching=${replacedAfterWatchingCountRef.current}`);
     }
+
+    // P2.3: Solo persistir servidor tras frame confirmado (currentTime > 0, tiempo de reproducción real o HLS verificado)
+    if (
+      source.includes('currentTime') ||
+      source.includes('loadeddata') ||
+      source.includes('hls-') ||
+      source.includes('realstate-frame') ||
+      source.includes('video-timeupdate')
+    ) {
+      if (activeServerRef.current) {
+        persistSuccessServer(mediaRef.current, activeServerRef.current);
+      }
+    }
   }, []);
 
   const hasHlsFav = useMemo(() => {
@@ -950,10 +963,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
             resolvedServerRef.current = freshlyAcuñado;
 
-            // Persistir el servidor resuelto de mejor speedMs para la próxima apertura
-            persistSuccessServer(media, freshlyAcuñado, resolveType);
-            console.log(`[VideoPlayer] [FAV_PERSIST] Persistido servidor con mejor speedMs para la próxima: "${freshlyAcuñado.name}" (id=${freshlyAcuñado.id}, playable=${freshlyAcuñado.playable}, speedMs=${freshlyAcuñado.speedMs ?? 'N/A'})`);
-
             if (hasHlsFav) {
               console.log(`[VideoPlayer] [HLS DIRECTO] Montando <video> con favorito ("${freshlyAcuñado.name}", id=${freshlyAcuñado.id})`);
               setSelectedServerName(freshlyAcuñado.name);
@@ -1025,7 +1034,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             setIsResolving(false);
             setIsPlaying(true);
             setForceShowServerSelector(false);
-            persistSuccessServer(media, directSrv, resolveType);
             return;
           }
 
@@ -1678,7 +1686,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
     try {
       localStorage.setItem(PREFERRED_SERVER_STORAGE_KEY, srv.name);
-      persistSuccessServer(media, srv);
     } catch (_) { }
     const isLat = isLatinoServerMatch(srv);
     audioPrefs.setForMedia(mediaKey, srv.name, isLat ? 'latino' : 'sub', selectedSeason, selectedEpisode);
@@ -2882,6 +2889,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         setIsPlaying(realState.isPlaying);
 
+        if (realState.isPlaying && (realState.currentTime > 0.5 || (realState as any).readyState >= 2)) {
+          recordFirstFrame('iframe-realstate-frame');
+        }
+
         // Si el video está en play y avanza, descartar el cartel pegajoso de "Reanudando en..."
         if (realState.isPlaying && realState.currentTime > (lastRealTimeRef.current || 0) + 0.05) {
           normalAdvanceStreakRef.current = (normalAdvanceStreakRef.current || 0) + 1;
@@ -3181,7 +3192,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               }}
               onDomReady={() => {
                 recordFirstFrame('webview-dom-ready');
-                persistSuccessServer(media, activeServer);
                 window.electronAPI?.controlActiveMedia?.({
                   action: 'toggleSubtitles',
                   value: subtitlesEnabledRef.current,
@@ -3220,7 +3230,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 }
                 markAlgoReproduciendo('iframe-loaded');
                 recordFirstFrame('iframe-loaded');
-                persistSuccessServer(media, activeServer);
                 if (!isMovieMasterEmbed) {
                   const iframeEl = e.currentTarget;
                   setTimeout(() => {
@@ -3279,7 +3288,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             hlsSuccessCallbackRef.current?.('loadedmetadata');
             recordFirstFrame('loadedmetadata');
             console.log(`[VideoPlayer] loadedmetadata recibido para "${activeServer.name}" (id=${(activeServer as any).id})`);
-            persistSuccessServer(media, activeServer);
             if (videoRef.current) setDuration(videoRef.current.duration);
             globalAudioEngine.applySettings(audioSettings);
           }}
