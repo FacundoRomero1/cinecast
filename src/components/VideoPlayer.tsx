@@ -1517,8 +1517,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  // Limpieza de estados de error al cambiar de servidor activo
+  // Limpieza de estados de error y flags de seguridad al cambiar de servidor activo (P3.2)
   useEffect(() => {
+    setCaptchaRequired(false);
+    setIsGhostExtracting(false);
+    setForceVisibleIframeForCaptcha(false);
     setAllServersExhausted(false);
     setUnavailableWarning(false);
     setTvSignalDown(false);
@@ -1527,7 +1530,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(hlsErrorTimeoutRef.current);
       hlsErrorTimeoutRef.current = null;
     }
-  }, [activeServer, activeServerIndex]);
+  }, [activeServer, activeServerIndex, selectedServerName]);
 
   const activeEmbedUrl = useMemo(() => {
     if (!activeServer?.url) return '';
@@ -1725,6 +1728,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     activeServerIndexRef.current = index;
     setSelectedServerName(srv.name);
     setCaptchaRequired(false);
+    setIsGhostExtracting(false);
     setForceVisibleIframeForCaptcha(false);
     setDetectedTracks(null);
     setTvSignalDown(false);
