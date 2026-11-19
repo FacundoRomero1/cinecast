@@ -968,6 +968,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 console.log(`[VideoPlayer] [NO REEMPLAZAR] Preview activo: NO se reemplaza. Se mantiene preview y se usará favorito en la próxima.`);
               }
             }
+            setIsPlaying(true);
+            setForceShowServerSelector(false);
           } else {
             console.warn(`[VideoPlayer] Falló resolución en /api/resolve/play: ${playRes?.error || 'URL vacía'}.`);
             if (serversEpochRef.current === epoch) {
@@ -1021,6 +1023,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               return deduplicateServers(combined, episodeKey);
             });
             setIsResolving(false);
+            setIsPlaying(true);
+            setForceShowServerSelector(false);
             persistSuccessServer(media, directSrv, resolveType);
             return;
           }
@@ -1081,6 +1085,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               }
             }
             setIsResolving(false);
+            setIsPlaying(true);
+            setForceShowServerSelector(false);
             return;
           }
 
@@ -1735,6 +1741,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       loadedEpisode: cleanRoute.episode,
       providerEpisodeMismatchWarning: isIgnoreEp,
     });
+    setIsPlaying(true);
+    setForceShowServerSelector(false);
   }, [availableServers, onBroadcastState, mediaKey, selectedSeason, selectedEpisode]);
   handleSelectServerRef.current = handleSelectServer;
 
@@ -1859,7 +1867,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
-    if (autoAdvanceCountRef.current >= servers.length || servers.length <= 1) {
+    const hasValidatedLatino = servers.some((s: any) => isLatinoServerMatch(s) && (s.validated || s.playable === 'hls'));
+    const shouldShowSelector = hasValidatedLatino
+      ? servers.length === 0
+      : (autoAdvanceCountRef.current >= servers.length || servers.length <= 1);
+
+    if (shouldShowSelector) {
       console.warn(`[AutoAdvance] Todos los servidores disponibles probados (${servers.length}). Fin de la lista.`);
       setShowControls(true);
       setForceShowServerSelector(true);
