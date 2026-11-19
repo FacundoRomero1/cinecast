@@ -919,10 +919,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     previewFailedBeforePlayingRef.current = false;
     resolvedServerRef.current = null;
 
-    const resolveType = isSeriesOrAnime
-      ? (media.category === 'anime' ? 'anime' : 'series')
-      : 'movie';
-
     const directType = isSeriesOrAnime ? 'tv' : 'movie';
     const directUrl = `/api/stream/direct?tmdbId=${tmdbIdToUse}&type=${directType}&season=${selectedSeason}&episode=${selectedEpisode}`;
     const episodeKey = isSeriesOrAnime
