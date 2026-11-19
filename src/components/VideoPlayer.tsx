@@ -1275,11 +1275,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   availableServersRef.current = availableServers;
   if (typeof window !== 'undefined') {
     (window as any).__availableServers = availableServers;
+    (window as any).__activeServerIndex = activeServerIndex;
+    (window as any).__activeServerName = activeServer?.name;
     (window as any).__videoPlayerState = {
       selectedSeason,
       selectedEpisode,
       currentTitle,
       availableServers,
+      activeServerIndex,
+      activeServerName: activeServer?.name,
+      activeServerUrl: activeServer?.url,
     };
   }
   activeServerIndexRef.current = activeServerIndex;
@@ -1405,6 +1410,51 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       unsubCaptcha?.();
     };
   }, []);
+
+  // ── Bloque 3: P3.1 — Watchdog de estados de espera (> 20s) ──
+  useEffect(() => {
+    if (!isGhostExtracting && !captchaRequired && !isResolving) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      console.warn('[VideoPlayer] [WATCHDOG] Estado de espera excedió 20s (isGhostExtracting / captchaRequired / isResolving). Liberando estados...');
+      setIsResolving(false);
+      setIsGhostExtracting(false);
+      setCaptchaRequired(false);
+      setForceVisibleIframeForCaptcha(false);
+      window.electronAPI?.stopGhostExtraction?.();
+
+      const servers = availableServersRef.current || [];
+      const currentIdx = activeServerIndexRef.current;
+      const currentSrv = servers[currentIdx];
+      const currentId = (currentSrv as any)?.id ?? currentSrv?.name ?? 'desconocido';
+
+      if (tmdbIdToUse > 0 && currentId) {
+        reportServerPlaybackPenalty({
+          providerId: (currentSrv as any)?.providerId || 'vidlink.pro',
+          tmdbId: tmdbIdToUse,
+          type: resolveType,
+          serverId: currentId,
+          penaltyMs: 15000,
+          reason: 'Timeout de estado de espera (>20s)',
+        });
+        console.log(`[VideoPlayer] [PENALIZACIÓN] Servidor "${currentSrv?.name}" (id=${currentId}) penalizado por timeout de espera (>20s)`);
+      }
+
+      if (servers.length <= 1 || autoAdvanceCountRef.current >= servers.length) {
+        console.warn(`[VideoPlayer] [WATCHDOG] No quedan servidores tras timeout de espera (>20s). Mostrando selector.`);
+        setShowControls(true);
+        setForceShowServerSelector(true);
+        setAllServersExhausted(true);
+        triggerSignalToast('Tiempo de espera agotado (>20s). Ningún servidor respondió.');
+      } else {
+        advanceToNextServerRef.current?.('Timeout de estado de espera (>20s)');
+      }
+    }, 20000);
+
+    return () => clearTimeout(timer);
+  }, [isGhostExtracting, captchaRequired, isResolving, videoSrc, iframeReloadKey, tmdbIdToUse, resolveType, triggerSignalToast]);
 
   // TAREA 6: Timeout de 12 segundos para la verificación de audio en embed
   const [audioCheckTimedOut, setAudioCheckTimedOut] = useState<boolean>(false);
@@ -1808,7 +1858,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
-    if (captchaRequired) {
+    if (captchaRequired && !lowerReason.includes('timeout')) {
       console.log(`[AutoAdvance] Pausado por verificación de seguridad / Captcha en curso.`);
       return;
     }
@@ -1883,22 +1933,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       console.warn(`[AutoAdvance] Todos los servidores disponibles probados (${servers.length}). Fin de la lista.`);
       setShowControls(true);
       setForceShowServerSelector(true);
-      if (!isIframeMode && media.category !== 'live_tv') {
-        setAllServersExhausted(true);
-      }
+      setAllServersExhausted(true);
       return;
     }
 
     const nextIdx = (currentIdx + 1) % servers.length;
     const nextSrv = servers[nextIdx];
     const nextId = (nextSrv as any)?.id ?? nextSrv?.name ?? 'desconocido';
+    activeServerIndexRef.current = nextIdx;
     autoAdvanceCountRef.current += 1;
 
     console.log(`[AutoAdvance] Avance #${autoAdvanceCountRef.current} al servidor id="${nextId}" (${nextSrv?.name})`);
 
     triggerSignalToast(`Avance #${autoAdvanceCountRef.current}: Conectando a ${nextSrv.name}...`);
 
-    if (tmdbIdToUse > 0) {
+    if (tmdbIdToUse > 0 && !nextSrv.url) {
       console.log(`[AutoAdvance] Acuñando servidor id="${nextId}" (${nextSrv?.name}) en /api/resolve/play...`);
       resolveServerPlay({
         providerId: (nextSrv as any)?.providerId || 'vidlink.pro',
@@ -1966,8 +2015,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const isHls = activeServer.type === 'hls' || Boolean(videoSrc && videoSrc.includes('.m3u8'));
 
-    // TAREA A & C: En modo HLS nativo, si ocurre un error, no mostrar cartel inmediatamente.
-    // Usar un setTimeout de 5 segundos. Si en 5 segundos currentTime > 0, ignorar el error.
+    // TAREA A & C: En modo HLS nativo, si ocurre un error, verificar si el video avanza
     if (isHls) {
       if (hlsErrorTimeoutRef.current) {
         clearTimeout(hlsErrorTimeoutRef.current);
@@ -1975,29 +2023,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       const v = videoRef.current;
-      if (v && v.currentTime > 0) {
-        console.log(`[VideoPlayer] Error HLS en video ignorado porque ya avanza (currentTime=${v.currentTime}s)`);
-        setAllServersExhausted(false);
-        setUnavailableWarning(false);
-        setTvSignalDown(false);
+      const isFatalVideoError = Boolean(v?.error) || errorStr.includes('fatal') || errorStr.includes('abort') || errorStr.includes('fallo');
+      if (isFatalVideoError) {
+        console.warn(`[VideoPlayer] Error HLS fatal en video: ${errorStr || v?.error?.message} -> rotando servidor`);
+        advanceToNextServer(`Fallo fatal de reproducción HLS (${errorStr || 'video error'})`);
         return;
       }
 
-      console.log('[VideoPlayer] Error en modo HLS nativo detectado: esperando 5s para verificar si el video avanza...');
+      const lastTime = v?.currentTime || 0;
+      console.log('[VideoPlayer] Error en modo HLS nativo detectado: esperando 3s para verificar si el video avanza...');
       hlsErrorTimeoutRef.current = setTimeout(() => {
         hlsErrorTimeoutRef.current = null;
         const currentV = videoRef.current;
-        if (currentV && currentV.currentTime > 0) {
-          console.log(`[VideoPlayer] Video HLS avanzó (currentTime=${currentV.currentTime}s) tras 5s: ignorando error y suprimiendo cartel.`);
+        if (currentV && currentV.currentTime > lastTime) {
+          console.log(`[VideoPlayer] Video HLS avanzó (currentTime=${currentV.currentTime}s > ${lastTime}s) tras 3s: ignorando error transitorio.`);
           setAllServersExhausted(false);
           setUnavailableWarning(false);
           setTvSignalDown(false);
           return;
         }
 
-        console.warn('[VideoPlayer] Video HLS no avanzó (currentTime === 0) tras 5s: rotando al siguiente servidor automáticamente...');
-        advanceToNextServer('Fallo de reproducción HLS nativo (timeout 5s sin avance)');
-      }, 5000);
+        console.warn('[VideoPlayer] Video HLS no avanzó tras 3s: rotando al siguiente servidor automáticamente...');
+        advanceToNextServer('Fallo de reproducción HLS nativo (timeout 3s sin avance)');
+      }, 3000);
       return;
     }
 
@@ -2326,9 +2374,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           hlsInstance.on(Hls.Events.FRAG_BUFFERED, () => {
             markHlsSuccess('FRAG_BUFFERED');
           });
-          // Requisito 3: Fallo en ERROR fatal
+          // Requisito 3: Fallo en ERROR fatal o fragmentos fallidos
           hlsInstance.on(Hls.Events.ERROR, (_e, data) => {
-            if (isCancelled || isHlsSettled) return;
+            if (isCancelled) return;
             console.log(`[VideoPlayer] HLS event error: type=${data.type} details=${data.details} fatal=${data.fatal}`);
             // En error de fragmento reintentar startLoad(), y si falla 3 veces marcar fallo
             if (data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR) {
@@ -2337,7 +2385,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               if (fragErrorCount >= 3) {
                 console.warn('[VideoPlayer] 3 fragmentos consecutivos fallidos -> rotando servidor');
                 fragErrorCount = 0;
-                markHlsFailure('3 errores de fragmento HLS');
+                hlsSuccessCallbackRef.current = null;
+                hlsInstance?.destroy();
+                advanceToNextServerRef.current('3 errores de fragmento HLS');
               } else {
                 hlsInstance?.startLoad();
               }
@@ -2349,7 +2399,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }
             if (!data.fatal) return;
             console.warn('[VideoPlayer] Error fatal en Hls.js stream:', data.type, data.details);
-            markHlsFailure(`error fatal de hls.js (${data.details})`);
+            hlsSuccessCallbackRef.current = null;
+            hlsInstance?.destroy();
+            advanceToNextServerRef.current(`error fatal de hls.js (${data.details})`);
           });
         } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
           videoRef.current.src = videoSrc;
@@ -3393,7 +3445,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {!isIframeMode && media?.category !== 'live_tv' && allServersExhausted && (!videoRef.current || videoRef.current.currentTime === 0) && (
+      {allServersExhausted && (!videoRef.current || videoRef.current.currentTime === 0) && (
         <div data-testid="all-servers-exhausted" className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-6 text-center z-50 animate-fadeIn">
           <div className="w-16 h-16 rounded-2xl bg-amber-950/80 border border-amber-700/80 flex items-center justify-center mb-4 text-3xl shadow-xl">
             ⚠️
