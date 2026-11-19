@@ -335,21 +335,29 @@ function isSubServerMatch(s?: StreamServer | null): boolean {
   );
 }
 
-function deduplicateServers(servers: StreamServer[], episodeKey?: string): StreamServer[] {
+function normalizeServerUrl(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return rawUrl.split('?')[0];
+  }
+}
+
+function deduplicateServers(servers: StreamServer[], episodeKey: string = ''): StreamServer[] {
   const uniqueMap = new Map<string, StreamServer>();
   for (const srv of servers) {
     if (!srv) continue;
     const provider = (srv as any).providerId || (srv as any).provider || '';
+    const normUrl = srv.url ? normalizeServerUrl(srv.url) : '';
     const key = srv.url
-      ? srv.url
-      : (srv as any).id
-      ? `${provider}_${(srv as any).id}`
-      : `${provider}_${srv.name}_${srv.type}`;
+      ? (episodeKey ? `${episodeKey}_${normUrl}` : normUrl)
+      : `${provider}_${episodeKey}_${srv.name}_${srv.type}`;
 
     if (!uniqueMap.has(key)) {
       uniqueMap.set(key, {
         ...srv,
-        id: (srv as any).id || `${provider}_${srv.name}_${srv.url || ''}`.replace(/\s+/g, '_'),
+        id: (srv as any).id || `${provider}_${srv.name}_${normUrl || ''}`.replace(/\s+/g, '_'),
       });
     } else {
       const existing = uniqueMap.get(key)!;
@@ -357,7 +365,7 @@ function deduplicateServers(servers: StreamServer[], episodeKey?: string): Strea
         uniqueMap.set(key, {
           ...existing,
           ...srv,
-          id: (srv as any).id || existing.id || `${provider}_${srv.name}_${srv.url || ''}`.replace(/\s+/g, '_'),
+          id: (srv as any).id || existing.id || `${provider}_${srv.name}_${normUrl || ''}`.replace(/\s+/g, '_'),
         });
       }
     }
@@ -617,9 +625,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const isAnime = media.category === 'anime' || resolveType === 'anime';
+    const episodeKey = isSeriesOrAnime
+      ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
+      : `${media.id}_movie`;
     // 1. Si resolveService o Direct HLS ya resolvió servidores para este título con TMDB
     if (tmdbIdToUse > 0 && resolvedServers !== null && resolvedServers.length > 0) {
-      return deduplicateServers(resolvedServers);
+      return deduplicateServers(resolvedServers, episodeKey);
     }
 
     // 2. Para series o anime con TMDB: regenerar siempre con la temporada y episodio seleccionados
@@ -1331,6 +1342,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         // Actualizar el servidor activo a HLS nativo
         setResolvedServers((prev) => {
           if (!prev) return prev;
+          const currentEpKey = isSeriesOrAnime
+            ? `${media.id}_s${selectedSeasonRef.current}_e${selectedEpisodeRef.current}`
+            : `${media.id}_movie`;
           const updated = prev.map((s) => {
             const isMatch = s.name === activeServerRef.current.name || (s as any).id === (activeServerRef.current as any).id;
             if (isMatch) {
@@ -1344,7 +1358,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }
             return s;
           });
-          return deduplicateServers(updated);
+          return deduplicateServers(updated, currentEpKey);
         });
       }
     });
@@ -1873,8 +1887,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             (nextSrv as any).playable = playRes.playable;
             (nextSrv as any).acao = playRes.acao;
             (nextSrv as any).validated = true;
+            const currentEpKey = isSeriesOrAnime
+              ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
+              : `${media.id}_movie`;
             setResolvedServers((prev) =>
-              prev ? deduplicateServers(prev.map((s) => (String((s as any).id) === String(nextId) ? { ...s, ...nextSrv } : s))) : prev
+              prev ? deduplicateServers(prev.map((s) => (String((s as any).id) === String(nextId) ? { ...s, ...nextSrv } : s)), currentEpKey) : prev
             );
             setIsResolving(false);
             handleSelectServer(nextIdx, { auto: true });
