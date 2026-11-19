@@ -76,16 +76,16 @@ export function getAudioLangPriority(
       .filter((l) => l && l !== 'desconocido');
 
     if (measuredWithoutUnknown.length > 0) {
-      if (measuredWithoutUnknown.some((l) => l === 'latino' || l === 'spa' || l === 'es-419')) {
+      if (measuredWithoutUnknown.some((l) => l === 'latino' || l === 'spa' || l === 'es-419' || l === 'lat')) {
         return 1;
       }
-      if (measuredWithoutUnknown.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+      if (measuredWithoutUnknown.some((l) => l === 'es' || l === 'castellano' || l === 'es-es' || l === 'esp')) {
         return 2;
       }
       if (measuredWithoutUnknown.some((l) => l === 'multi')) {
         return 3;
       }
-      if (measuredWithoutUnknown.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
+      if (measuredWithoutUnknown.some((l) => l === 'en' || l === 'eng' || l === 'original' || l === 'sub')) {
         return 4;
       }
     }
@@ -99,16 +99,16 @@ export function getAudioLangPriority(
   // 2. Si está vacío o es 'desconocido', cae al campo languages del proveedor (latino→1, es→2, multi→3, en→4)
   if (Array.isArray(providerLanguages) && providerLanguages.length > 0) {
     const prov = providerLanguages.map((l) => l.toLowerCase().trim());
-    if (prov.some((l) => l === 'latino' || l === 'es-419')) {
+    if (prov.some((l) => l === 'latino' || l === 'es-419' || l === 'lat')) {
       return 1;
     }
-    if (prov.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+    if (prov.some((l) => l === 'es' || l === 'castellano' || l === 'es-es' || l === 'esp')) {
       return 2;
     }
     if (prov.some((l) => l === 'multi')) {
       return 3;
     }
-    if (prov.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
+    if (prov.some((l) => l === 'en' || l === 'eng' || l === 'original' || l === 'sub')) {
       return 4;
     }
   }
@@ -177,8 +177,8 @@ export function rankProvidersByLanguage(providers: ProviderConfig[], _type?: str
 
   return [...active].sort((a, b) => {
     // 1. Prioridad por idioma (latino→1, es→2, multi→3, en→4, sin pista→3)
-    const rankA = getAudioLangPriority(undefined, a.languages, a.langHintUnreliable);
-    const rankB = getAudioLangPriority(undefined, b.languages, b.langHintUnreliable);
+    const rankA = a.id === 'moviemaster' ? 1 : getAudioLangPriority(undefined, a.languages, a.langHintUnreliable);
+    const rankB = b.id === 'moviemaster' ? 1 : getAudioLangPriority(undefined, b.languages, b.langHintUnreliable);
     if (rankA !== rankB) return rankA - rankB;
 
     // 2. Desempate por prioridad declarada en providers.json
@@ -244,8 +244,10 @@ function applyProviderRanking(servers: StreamServer[], _type?: string): StreamSe
     // 1. Grupo de idioma (getAudioLangPriority: latino→1, es→2, multi→3, en→4)
     const provA = (providersData as ProviderConfig[]).find((p) => p.name === a.name || p.id === (a as any).providerId);
     const provB = (providersData as ProviderConfig[]).find((p) => p.name === b.name || p.id === (b as any).providerId);
-    const rankA = getAudioLangPriority(a.audioLangs, provA?.languages, provA?.langHintUnreliable);
-    const rankB = getAudioLangPriority(b.audioLangs, provB?.languages, provB?.langHintUnreliable);
+    const isMovieMasterA = provA?.id === 'moviemaster' || (a as any).providerId === 'moviemaster' || a.name.toLowerCase().includes('moviemaster');
+    const isMovieMasterB = provB?.id === 'moviemaster' || (b as any).providerId === 'moviemaster' || b.name.toLowerCase().includes('moviemaster');
+    const rankA = isMovieMasterA ? 1 : getAudioLangPriority(a.audioLangs, provA?.languages, provA?.langHintUnreliable);
+    const rankB = isMovieMasterB ? 1 : getAudioLangPriority(b.audioLangs, provB?.languages, provB?.langHintUnreliable);
     if (rankA !== rankB) return rankA - rankB;
 
     // 2. HLS antes que iframe

@@ -4,5 +4,47 @@
     "failures": 21,
     "successes": 0,
     "lastUpdated": 1794880420840
+  },
+  "animeav1:134667:1": {
+    "score": 0,
+    "failures": 4,
+    "successes": 0,
+    "lastUpdated": 1794976141215
+  },
+  "animeav1:323937:2": {
+    "score": 0,
+    "failures": 3,
+    "successes": 0,
+    "lastUpdated": 1794989605574
+  },
+  "animeav1:270603:1": {
+    "score": 0,
+    "failures": 3,
+    "successes": 0,
+    "lastUpdated": 1794989794346
+  },
+  "animeav1:270603:7": {
+    "score": 0,
+    "failures": 11,
+    "successes": 0,
+    "lastUpdated": 1794990017737
+  },
+  "animeav1:270603:9": {
+    "score": 0,
+    "failures": 3,
+    "successes": 0,
+    "lastUpdated": 1794990065431
+  },
+  "animeav1:270603:8": {
+    "score": 0,
+    "failures": 4,
+    "successes": 0,
+    "lastUpdated": 1795010922185
+  },
+  "animeav1:270603:14": {
+    "score": 0,
+    "failures": 98,
+    "successes": 0,
+    "lastUpdated": 1795013632968
   }
 }

@@ -1,5 +1,31 @@
 [
   {
+    "id": "moviemaster",
+    "name": "MovieMaster (Latino)",
+    "enabled": true,
+    "priority": 15,
+    "langHintUnreliable": false,
+    "languages": [
+      "latino",
+      "es",
+      "es-419"
+    ],
+    "urlMovie": "https://api.moviemaster.lat/e/movie/{tmdbId}?lang=LAT&autoplay=1",
+    "urlTv": "https://api.moviemaster.lat/e/tv/{tmdbId}",
+    "urlTvEpisode": "https://api.moviemaster.lat/e/tv/{tmdbId}/{season}/{episode}?lang=LAT&autoplay=1",
+    "requiresReferer": false,
+    "tlsLax": false,
+    "pendingMs": 0,
+    "softDeadlineMs": 4000,
+    "maxConcurrent": 5,
+    "swrTtlMs": 21600000,
+    "negativeTtlMs": 1800000,
+    "breakerErrorPct": 40,
+    "breakerWindow": 20,
+    "breakerOpenMs": 60000,
+    "notes": "Proveedor TMDB nativo orientado a español latino (LAT/ESP/SUB) con alta prioridad."
+  },
+  {
     "id": "framextv",
     "name": "FrameX (Direct HLS)",
     "enabled": true,

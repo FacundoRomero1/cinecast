@@ -163,6 +163,7 @@ protocol.registerSchemesAsPrivileged([
 
 // Servidores embed conocidos que requieren Referer y Origin del propio host para evitar pantallas negras o 403
 const EMBED_HOSTS = [
+  'playlatinsrc.co',
   'framextv.tech',
   'api.framextv.tech',
   'cloudwindow-route.com',
@@ -359,6 +360,7 @@ const clickScript = `
 
 // Proveedores embed configurados en embedService.ts (para el chequeo de salud)
 const EMBED_PROVIDER_CHECKS = [
+  { name: 'MovieMaster (Latino)', url: 'https://api.moviemaster.lat/e/movie/603?lang=LAT&autoplay=1' },
   { name: 'FrameX (HD)', url: 'https://framextv.tech/embed/movie/550' },
   { name: 'VidLink Pro (Multi / Sub ES)', url: 'https://vidlink.pro/movie/550' },
   { name: 'VidEasy (Multi)', url: 'https://player.videasy.net/movie/550' },
@@ -853,7 +855,7 @@ function createWindow() {
   // =========================================================================
   customSession.webRequest.onHeadersReceived((details, callback) => {
     // TAREA D: El fix de CORS NUNCA se apaga en Modo Diagnóstico salvo que 'Sin fix CORS' (isNoCorsFix) esté activo
-    if (isNoCorsFix) {
+    if (isNoCorsFix || /moviemaster\.lat/i.test(details.url || '')) {
       return callback({ cancel: false, responseHeaders: details.responseHeaders });
     }
 
@@ -1021,7 +1023,7 @@ function createWindow() {
       try {
         const url = f.url || '';
         if (!url || url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1') || url.startsWith('file:')) continue;
-        if (/youtube\.com|google\.com|accounts\.google\.com|gstatic\.com|spotify\.com/i.test(url)) continue;
+        if (/youtube\.com|google\.com|accounts\.google\.com|gstatic\.com|spotify\.com|moviemaster\.lat/i.test(url)) continue;
         // TAREA F: No spoofear navigator.userAgentData en frames de challenges.cloudflare.com ni turnstile
         if (!/challenges\.cloudflare\.com|turnstile/i.test(url)) {
           await f.executeJavaScript(FP_SHIELD, false).catch(() => {});

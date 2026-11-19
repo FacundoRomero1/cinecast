@@ -959,6 +959,18 @@ export function getAudioLangPriority(
 
   if (provLangs && provLangs.length > 0) {
     const prov = provLangs.map((l) => l.toLowerCase().trim());
+    if (prov.some((l) => l === 'latino' || l === 'es-419' || l === 'lat')) {
+      return 1;
+    }
+    if (prov.some((l) => l === 'es' || l === 'castellano' || l === 'es-es' || l === 'esp')) {
+      return 2;
+    }
+    if (prov.some((l) => l === 'multi')) {
+      return 3;
+    }
+    if (prov.some((l) => l === 'en' || l === 'eng' || l === 'original' || l === 'sub')) {
+      return 4;
+    }
   }
 
   // 3. Solo si tampoco hay pista, grupo 3

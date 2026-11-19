@@ -309,6 +309,32 @@ function isEnglishCaption(lang?: string, label?: string): boolean {
   );
 }
 
+function isLatinoServerMatch(s?: StreamServer | null): boolean {
+  if (!s) return false;
+  const text = `${s.name || ''} ${s.language || ''} ${(s as any).providerId || ''} ${s.url || ''}`.toLowerCase();
+  return (
+    text.includes('latino') ||
+    text.includes('moviemaster') ||
+    text.includes('playlatin') ||
+    /\b(lat|esp|es-419)\b/i.test(text) ||
+    /[?&]lang=(?:lat|esp|es)\b/i.test(text)
+  );
+}
+
+function isSubServerMatch(s?: StreamServer | null): boolean {
+  if (!s) return false;
+  const text = `${s.name || ''} ${s.language || ''} ${(s as any).providerId || ''} ${s.url || ''}`.toLowerCase();
+  return (
+    text.includes('sub') ||
+    /\bsub\b/i.test(text) ||
+    /[?&]lang=sub\b/i.test(text) ||
+    text.includes('multi') ||
+    text.includes('inglés') ||
+    text.includes('ingles') ||
+    text.includes('english')
+  );
+}
+
 function deduplicateServers(servers: StreamServer[]): StreamServer[] {
   const uniqueMap = new Map<string, StreamServer>();
   for (const srv of servers) {
@@ -1183,6 +1209,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const isIframeMode = activeServer.type === 'iframe';
   const [videoSrc, setVideoSrc] = useState<string>(activeServer?.url || '');
+  const isMovieMasterEmbed = Boolean(
+    (activeServer as any)?.providerId === 'moviemaster' ||
+    (activeServer?.url && activeServer.url.includes('moviemaster.lat'))
+  );
 
   // Referencias sincronizadas para evitar valores viejos por closures y evitar recrear HLS
   const subtitlesEnabledRef = useRef(subtitlesEnabled);
@@ -1601,7 +1631,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       localStorage.setItem(PREFERRED_SERVER_STORAGE_KEY, srv.name);
       persistSuccessServer(media, srv);
     } catch (_) { }
-    const isLat = srv.language?.toLowerCase().includes('latino') || srv.name.toLowerCase().includes('latino');
+    const isLat = isLatinoServerMatch(srv);
     audioPrefs.setForMedia(mediaKey, srv.name, isLat ? 'latino' : 'sub', selectedSeason, selectedEpisode);
     setIframeReloadKey((k) => k + 1);
     setSeekUnsupported(false);
@@ -3046,7 +3076,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       ) : isIframeMode ? (
         <div className="w-full h-full relative bg-black">
-          {typeof window !== 'undefined' && Boolean(window.electronAPI) ? (
+          {typeof window !== 'undefined' && Boolean(window.electronAPI) && !isMovieMasterEmbed ? (
             <WebViewPlayer
               src={activeEmbedUrl}
               reloadKey={iframeReloadKey}
@@ -3098,9 +3128,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               title={currentTitle}
               className="w-full h-full border-0 bg-black"
               allowFullScreen
-              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-              referrerPolicy={activeServer?.referrer ? 'no-referrer' : 'origin'}
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+              sandbox={isMovieMasterEmbed ? undefined : "allow-scripts allow-same-origin allow-forms allow-presentation"}
+              referrerPolicy={isMovieMasterEmbed ? 'no-referrer-when-downgrade' : (activeServer?.referrer ? 'no-referrer' : 'origin')}
               onError={(e: any) => {
                 const msg = String(e?.message || '');
                 if (msg.includes('GUEST_VIEW_MANAGER_CALL') || msg.includes('Script failed to execute')) return;
@@ -3111,15 +3141,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   clearTimeout(iframeLoadTimeoutRef.current);
                   iframeLoadTimeoutRef.current = null;
                 }
+                markAlgoReproduciendo('iframe-loaded');
+                recordFirstFrame('iframe-loaded');
                 persistSuccessServer(media, activeServer);
-                const iframeEl = e.currentTarget;
-                setTimeout(() => {
-                  if (!iframeEl) return;
-                  const rect = iframeEl.getBoundingClientRect();
-                  const centerX = Math.round(rect.left + rect.width / 2);
-                  const centerY = Math.round(rect.top + rect.height / 2);
-                  window.electronAPI?.simulatePlayClick?.({ x: centerX, y: centerY });
-                }, 1800);
+                if (!isMovieMasterEmbed) {
+                  const iframeEl = e.currentTarget;
+                  setTimeout(() => {
+                    if (!iframeEl) return;
+                    const rect = iframeEl.getBoundingClientRect();
+                    const centerX = Math.round(rect.left + rect.width / 2);
+                    const centerY = Math.round(rect.top + rect.height / 2);
+                    window.electronAPI?.simulatePlayClick?.({ x: centerX, y: centerY });
+                  }, 1800);
+                }
               }}
             />
           )}
@@ -3553,8 +3587,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const latIdx = availableServers.findIndex(
-                      (s) => s.language?.toLowerCase().includes('latino') || s.name.toLowerCase().includes('latino'));
+                    const latIdx = availableServers.findIndex((s) => isLatinoServerMatch(s));
                     if (latIdx !== -1) {
                       handleSelectServer(latIdx);
                       audioPrefs.setForMedia(mediaKey, availableServers[latIdx].name, 'latino', selectedSeason, selectedEpisode);
@@ -3563,7 +3596,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       audioPrefs.setForMedia(mediaKey, availableServers[0].name, 'latino', selectedSeason, selectedEpisode);
                     }
                   }}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${activeServer.name.toLowerCase().includes('latino') || activeServer.language?.toLowerCase().includes('latino')
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${isLatinoServerMatch(activeServer)
                     ? 'bg-red-600 text-white shadow-md'
                     : 'text-zinc-400 hover:text-white bg-zinc-800/80'
                     }`}
@@ -3574,8 +3607,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const subIdx = availableServers.findIndex(
-                      (s) => s.language?.toLowerCase().includes('sub') || s.name.toLowerCase().includes('sub'));
+                    const strictSubIdx = availableServers.findIndex((s) => isSubServerMatch(s) && !isLatinoServerMatch(s));
+                    const subIdx = strictSubIdx !== -1 ? strictSubIdx : availableServers.findIndex((s) => isSubServerMatch(s));
                     if (subIdx !== -1) {
                       handleSelectServer(subIdx);
                       audioPrefs.setForMedia(mediaKey, availableServers[subIdx].name, 'sub', selectedSeason, selectedEpisode);
@@ -3584,7 +3617,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       audioPrefs.setForMedia(mediaKey, availableServers[1].name, 'sub', selectedSeason, selectedEpisode);
                     }
                   }}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${activeServer.name.toLowerCase().includes('sub') || activeServer.language?.toLowerCase().includes('sub')
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${isSubServerMatch(activeServer) && !isLatinoServerMatch(activeServer)
                     ? 'bg-red-600 text-white shadow-md'
                     : 'text-zinc-400 hover:text-white bg-zinc-800/80'
                     }`}
