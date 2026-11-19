@@ -1539,6 +1539,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     consecutiveUnavailableCountRef.current = 0;
     autoSkipCountRef.current = 0;
     autoAdvanceCountRef.current = 0;
+    autoAdvancedChapterGuardRef.current = null;
     setForceShowServerSelector(false);
     if (loadedMetadataTimerRef.current) {
       clearTimeout(loadedMetadataTimerRef.current);

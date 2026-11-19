@@ -358,6 +358,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const marathonConsecutiveCountRef = useRef<number>(0);
   const lastAutoAdvancedChapterRef = useRef<string | null>(null);
   const lastAutoAdvanceTriggeredAtRef = useRef<number>(0);
+
+  useEffect(() => {
+    lastAutoAdvancedChapterRef.current = null;
+    lastAutoAdvanceTriggeredAtRef.current = 0;
+  }, [activeEpisode?.id]);
   const lastObservedTimeRef = useRef<number>(0);
   const stillTimeCounterRef = useRef<number>(0);
   const preloadedSeasonKeyRef = useRef<string>('');
