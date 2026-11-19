@@ -82,6 +82,7 @@ export interface AppRuntimeContextValue {
   handleCastMediaToScreen: (media: MediaItem, episode?: Episode, initialTime?: number) => void;
   handlePlayNextEpisode: () => void;
   handlePlayPrevEpisode: () => void;
+  advanceToSameSeriesEpisode: (targetSeason: number, targetEpNum: number, epSource?: any) => Promise<void>;
   handleBroadcastPlayerState: (stateUpdate: Partial<PlaybackState>) => void;
   sendRemoteCommand: (command: RemoteCommand) => void;
 
@@ -730,8 +731,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             mediaTitle: media.title,
             mediaPoster: media.posterUrl,
             mediaYear: media.year,
-            seasonNumber: episode ? episode.seasonNumber : undefined,
-            episodeNumber: episode ? episode.episodeNumber : undefined,
+            seasonNumber: episode ? episode.seasonNumber : null,
+            episodeNumber: episode ? episode.episodeNumber : null,
             episodeTitle: episode ? (episode.title || '') : '',
             mediaItem: media,
             episodeItem: episode || undefined,
@@ -830,8 +831,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             mediaTitle: cleanMediaItem.title,
             mediaPoster: cleanMediaItem.posterUrl,
             mediaYear: cleanMediaItem.year,
-            seasonNumber: ep ? ep.seasonNumber : undefined,
-            episodeNumber: ep ? ep.episodeNumber : undefined,
+            seasonNumber: ep ? ep.seasonNumber : null,
+            episodeNumber: ep ? ep.episodeNumber : null,
             episodeTitle: ep ? (ep.title || '') : '',
             mediaItem: cleanMediaItem,
             episodeItem: ep || undefined,
@@ -1407,15 +1408,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'nextEpisode': {
-        if (!isPlayingLocally) {
-          handlePlayNextEpisode();
-        }
+        handlePlayNextEpisode();
         break;
       }
       case 'prevEpisode': {
-        if (!isPlayingLocally) {
-          handlePlayPrevEpisode();
-        }
+        handlePlayPrevEpisode();
         break;
       }
       case 'jumpToEpisode': {
@@ -1427,31 +1424,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           lastAutoAdvancedChapterRef.current = null;
           lastObservedTimeRef.current = 0;
           stillTimeCounterRef.current = 0;
-          const found = activeMedia.episodes?.find(
-            (e) => (e.seasonNumber === sNum || (!e.seasonNumber && sNum === 1)) && e.episodeNumber === eNum
-          );
-          const targetEp: Episode = found || {
-            id: `ep-${activeMedia.id}-s${sNum}-e${eNum}`,
-            title: `Episodio ${eNum}`,
-            episodeNumber: eNum,
-            seasonNumber: sNum,
-            overview: `Temporada ${sNum}, Episodio ${eNum}`,
-            duration: '24m',
-            thumbnailUrl: activeMedia.backdropUrl || activeMedia.posterUrl,
-            videoUrl: '',
-          };
-          setActiveEpisode(targetEp);
-          setPlayerInitialTime(0);
-          setIsPlayingLocally(true);
-          handleBroadcastPlayerState({
-            episodeId: targetEp.id,
-            seasonNumber: sNum,
-            episodeNumber: eNum,
-            episodeTitle: targetEp.title,
-            episodeItem: targetEp,
-            isPlaying: true,
-            currentTime: 0,
-          });
+          advanceToSameSeriesEpisode(sNum, eNum);
         }
         break;
       }
@@ -1518,6 +1491,121 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     );
   }, []);
 
+  const advanceToSameSeriesEpisode = useCallback(
+    async (targetSeason: number, targetEpNum: number, epSource?: any) => {
+      if (!activeMedia) return;
+      const currentMedia = activeMedia;
+      const sameMediaId = currentMedia.id;
+      const rawId = currentMedia.id || '';
+      const tmdbId =
+        currentMedia.tmdbId ||
+        (typeof rawId === 'string' && /^\d+$/.test(rawId)
+          ? Number(rawId)
+          : typeof rawId === 'string' && rawId.includes('-')
+            ? Number(rawId.split('-').pop()) || 0
+            : 0);
+
+      const normalizeSeasonList = (rawEps: any[], seasonNum: number): Episode[] =>
+        rawEps.map((ep: any, idx: number) => {
+          const epNum = Number(ep.episodeNumber ?? ep.episode ?? idx + 1) || idx + 1;
+          return {
+            id: String(ep.id || `ep-${sameMediaId}-s${seasonNum}-e${epNum}`),
+            title: String(ep.title || ep.name || `Episodio ${epNum}`),
+            seasonNumber: seasonNum,
+            episodeNumber: epNum,
+            overview: ep.overview || `Temporada ${seasonNum}, Episodio ${epNum}`,
+            duration: ep.duration ? String(ep.duration) : '24m',
+            videoUrl: ep.videoUrl,
+            servers: ep.servers,
+          };
+        });
+
+      let foundEp =
+        epSource ||
+        (currentMedia.episodes || []).find(
+          (e) =>
+            Number(e.seasonNumber || 1) === targetSeason &&
+            Number(e.episodeNumber || 1) === targetEpNum
+        );
+
+      if (!foundEp && tmdbId > 0) {
+        try {
+          const res = await fetch(`/api/tv/${tmdbId}/season/${targetSeason}`, {
+            signal: AbortSignal.timeout(5000),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data?.episodes) && data.episodes.length > 0) {
+              const fetchedList = normalizeSeasonList(data.episodes, targetSeason);
+              const otherEps = (currentMedia.episodes || []).filter(
+                (e) => Number(e.seasonNumber ?? (e as any).season ?? 1) !== targetSeason
+              );
+              currentMedia.episodes = [...otherEps, ...fetchedList];
+              foundEp = fetchedList.find((e) => Number(e.episodeNumber) === targetEpNum);
+            }
+          }
+        } catch (_) { }
+      }
+
+      const epTitle = String(
+        foundEp?.title || foundEp?.name || `Episodio ${targetEpNum}`
+      );
+      const nextEp: Episode = {
+        ...(foundEp || {}),
+        id: String(
+          foundEp?.id || `ep-${sameMediaId}-s${targetSeason}-e${targetEpNum}`
+        ),
+        title: epTitle,
+        seasonNumber: targetSeason,
+        episodeNumber: targetEpNum,
+        overview:
+          foundEp?.overview || `Temporada ${targetSeason}, Episodio ${targetEpNum}`,
+        duration: foundEp?.duration ? String(foundEp.duration) : '24m',
+        videoUrl: foundEp?.videoUrl || currentMedia.videoUrl,
+        servers: foundEp?.servers,
+      };
+
+      const hasTestServer = Boolean(
+        currentMedia.servers?.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))
+      );
+      if (!hasTestServer && tmdbId > 0) {
+        currentMedia.servers = generateServersForMedia({
+          tmdbId,
+          directMp4Url: currentMedia.videoUrl,
+          type: 'series',
+          season: targetSeason,
+          episode: targetEpNum,
+        });
+      }
+
+      lastAutoAdvanceTriggeredAtRef.current = Date.now();
+      lastObservedTimeRef.current = 0;
+      stillTimeCounterRef.current = 0;
+      setActiveEpisode(nextEp);
+      setPlayerInitialTime(0);
+      setIsPlayingLocally(true);
+      setRemotePlaybackState((prev) => {
+        const nextState: PlaybackState = {
+          ...prev,
+          mediaId: sameMediaId,
+          episodeId: nextEp.id,
+          mediaTitle: currentMedia.title,
+          seasonNumber: targetSeason,
+          episodeNumber: targetEpNum,
+          episodeTitle: nextEp.title,
+          mediaItem: currentMedia,
+          episodeItem: nextEp,
+          isPlaying: true,
+          currentTime: 0,
+        };
+        deviceSync.broadcastPlaybackState(nextState);
+        return nextState;
+      });
+      triggerNotification(`📱 Siguiente capítulo: T${targetSeason}:E${targetEpNum} - ${nextEp.title}`);
+    },
+    [activeMedia, deviceSync]
+  );
+
   // COPIA de App.tsx L840-918; borrar al eliminar la UI clásica
   // Universal Next (for Series Episodes ONLY in cinecast hub, plus YouTube/Spotify hubs)
   const handlePlayNextEpisode = useCallback(async () => {
@@ -1561,70 +1649,6 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           ? Number(rawId.split('-').pop()) || 0
           : 0);
 
-    const advanceToSameSeriesEpisode = (
-      targetSeason: number,
-      targetEpNum: number,
-      epSource?: any
-    ) => {
-      // Garantía estricta: NUNCA cambiar de id de serie
-      if (!activeMedia || activeMedia.id !== sameMediaId) return;
-      const epTitle = String(
-        epSource?.title || epSource?.name || `Episodio ${targetEpNum}`
-      );
-      const nextEp: Episode = {
-        ...(epSource || {}),
-        id: String(
-          epSource?.id || `ep-${sameMediaId}-s${targetSeason}-e${targetEpNum}`
-        ),
-        title: epTitle,
-        seasonNumber: targetSeason,
-        episodeNumber: targetEpNum,
-        overview:
-          epSource?.overview || `Temporada ${targetSeason}, Episodio ${targetEpNum}`,
-        duration: epSource?.duration ? String(epSource.duration) : '24m',
-        videoUrl: epSource?.videoUrl || currentMedia.videoUrl,
-        servers: epSource?.servers,
-      };
-
-      const hasTestServer = Boolean(
-        currentMedia.servers?.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))
-      );
-      if (!hasTestServer && tmdbId > 0) {
-        currentMedia.servers = generateServersForMedia({
-          tmdbId,
-          directMp4Url: currentMedia.videoUrl,
-          type: 'series',
-          season: targetSeason,
-          episode: targetEpNum,
-        });
-      }
-
-      lastAutoAdvanceTriggeredAtRef.current = Date.now();
-      lastObservedTimeRef.current = 0;
-      stillTimeCounterRef.current = 0;
-      setActiveEpisode(nextEp);
-      setPlayerInitialTime(0);
-      setIsPlayingLocally(true);
-      setRemotePlaybackState((prev) => {
-        const nextState: PlaybackState = {
-          ...prev,
-          mediaId: sameMediaId,
-          episodeId: nextEp.id,
-          mediaTitle: currentMedia.title,
-          seasonNumber: targetSeason,
-          episodeNumber: targetEpNum,
-          episodeTitle: nextEp.title,
-          mediaItem: currentMedia,
-          episodeItem: nextEp,
-          isPlaying: true,
-          currentTime: 0,
-        };
-        deviceSync.broadcastPlaybackState(nextState);
-        return nextState;
-      });
-      triggerNotification(`📱 Siguiente capítulo: T${targetSeason}:E${targetEpNum} - ${nextEp.title}`);
-    };
-
     const normalizeSeasonList = (rawEps: any[], seasonNum: number): Episode[] =>
       rawEps.map((ep: any, idx: number) => {
         const epNum = Number(ep.episodeNumber ?? ep.episode ?? idx + 1) || idx + 1;
@@ -1667,7 +1691,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       (e) => Number(e.episodeNumber ?? (e as any).episode) === curEpisode + 1
     );
     if (nextInSameSeason) {
-      advanceToSameSeriesEpisode(curSeason, curEpisode + 1, nextInSameSeason);
+      await advanceToSameSeriesEpisode(curSeason, curEpisode + 1, nextInSameSeason);
       return;
     }
 
@@ -1683,7 +1707,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         : Number(currentMedia.seasonsCount || 0);
 
     const canHaveNextSeason =
-      explicitMaxSeason > 0 ? nextSeason <= explicitMaxSeason : true;
+      explicitMaxSeason > 0 ? nextSeason <= explicitMaxSeason : (currentMedia.episodes?.some(e => Number(e.seasonNumber) === nextSeason) ?? false);
 
     if (canHaveNextSeason) {
       let nextSeasonEps = (currentMedia.episodes || []).filter(
@@ -1714,7 +1738,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         ) || nextSeasonEps[0];
 
       if (firstInNextSeason) {
-        advanceToSameSeriesEpisode(
+        await advanceToSameSeriesEpisode(
           nextSeason,
           Number(firstInNextSeason.episodeNumber) || 1,
           firstInNextSeason
@@ -1743,9 +1767,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     remotePlaybackState.seasonNumber,
     remotePlaybackState.episodeNumber,
     isSeriesMediaItem,
+    advanceToSameSeriesEpisode,
   ]);
 
-  const handlePlayPrevEpisode = () => {
+  const handlePlayPrevEpisode = useCallback(async () => {
     if (activeHub === 'youtube') {
       const idx = YOUTUBE_VIDEOS.findIndex((v) => v.id === activeYouTubeVideo?.id);
       const prevVid = YOUTUBE_VIDEOS[(idx - 1 + YOUTUBE_VIDEOS.length) % YOUTUBE_VIDEOS.length];
@@ -1765,16 +1790,20 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     if (!activeMedia || !isSeriesMediaItem(activeMedia)) return;
-    if (activeMedia.episodes && activeMedia.episodes.length > 0) {
-      const currentIdx = activeMedia.episodes.findIndex((e) => e.id === activeEpisode?.id);
-      if (currentIdx > 0) {
-        const prevEp = activeMedia.episodes[currentIdx - 1];
-        setActiveEpisode(prevEp);
-        setIsPlayingLocally(true);
-        triggerNotification(`📱 Capítulo anterior: ${prevEp.title}`);
-      }
+    const curSeason = Number(activeEpisode?.seasonNumber || remotePlaybackState.seasonNumber || 1) || 1;
+    const curEpisode = Number(activeEpisode?.episodeNumber || remotePlaybackState.episodeNumber || 1) || 1;
+
+    if (curEpisode > 1) {
+      await advanceToSameSeriesEpisode(curSeason, curEpisode - 1);
+    } else if (curSeason > 1) {
+      const prevSeason = curSeason - 1;
+      const prevSeasonEps = (activeMedia.episodes || []).filter(
+        (e) => Number(e.seasonNumber || 1) === prevSeason
+      );
+      const lastEp = prevSeasonEps.length > 0 ? Math.max(...prevSeasonEps.map(e => Number(e.episodeNumber || 1))) : 1;
+      await advanceToSameSeriesEpisode(prevSeason, lastEp);
     }
-  };
+  }, [activeHub, activeYouTubeVideo, activeSpotifyTrack, activeMedia, activeEpisode, remotePlaybackState, isSeriesMediaItem, advanceToSameSeriesEpisode]);
 
   // COPIA de App.tsx L920-926; borrar al eliminar la UI clásica
   // Transmit command to screen
@@ -2551,6 +2580,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     handleCastMediaToScreen,
     handlePlayNextEpisode,
     handlePlayPrevEpisode,
+    advanceToSameSeriesEpisode,
     handleBroadcastPlayerState,
     sendRemoteCommand,
     continueWatchingList,

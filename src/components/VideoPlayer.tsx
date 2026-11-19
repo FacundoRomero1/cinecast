@@ -36,6 +36,7 @@ interface VideoPlayerProps {
   onNextEpisode?: () => void;
   onPrevEpisode?: () => void;
   hasNextEpisode?: boolean;
+  onRequestEpisodeChange?: (targetSeason: number, targetEpisode: number) => void;
   onBroadcastState?: (stateUpdate: any) => void;
   remoteCommandNotification?: string | null;
   onOpenAudioSettings?: () => void;
@@ -375,11 +376,12 @@ function deduplicateServers(servers: StreamServer[], episodeKey: string = ''): S
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   media, episode, audioSettings, playbackSettings, onUpdateAudio, onClose,
-  onNextEpisode, onPrevEpisode, hasNextEpisode = false, onBroadcastState,
+  onNextEpisode, onPrevEpisode, hasNextEpisode = false, onRequestEpisodeChange, onBroadcastState,
   remoteCommandNotification, onOpenAudioSettings, remoteCommandTrigger, initialTime = 0,
   onBeforeAutoAdvance,
 }) => {
   const autoAdvancedChapterGuardRef = useRef<string | null>(null);
+  const tryAutoAdvanceEpisodeRef = useRef<(() => void) | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const controlsTimeoutRef = useRef<any>(null);
@@ -2618,20 +2620,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         ? media.episodes.filter((e) => (e.seasonNumber || 1) === selectedSeasonRef.current).length
         : (realSeasons.find((s) => s.seasonNumber === selectedSeasonRef.current)?.episodeCount || 8);
 
-    if (delta > 0 && selectedEpisodeRef.current >= currentSeasonEpisodes && marathonMode) {
-      // TAREA 5: Al terminar la temporada, salta a la primera del siguiente
+    if (delta > 0 && selectedEpisodeRef.current >= currentSeasonEpisodes) {
       const nextSeason = selectedSeasonRef.current + 1;
-      setSelectedSeason(nextSeason);
-      setSelectedEpisode(1);
-      selectedSeasonRef.current = nextSeason;
-      selectedEpisodeRef.current = 1;
-      triggerSignalToast(`🏃 Maratón: Avanzando a Temporada ${nextSeason}, Capítulo 1`);
+      const explicitMaxSeason =
+        media.seasons && media.seasons.length > 0
+          ? Math.max(...media.seasons.map((s: any) => Number(s.seasonNumber ?? s.season_number ?? 0)))
+          : Number(media.seasonsCount || (realSeasons.length > 0 ? realSeasons.length : 1));
+
+      if (explicitMaxSeason > 0 && nextSeason > explicitMaxSeason) {
+        triggerSignalToast('Fin de la serie');
+        setIsPlaying(false);
+        onNextEpisode?.();
+        return;
+      }
+
+      if (marathonMode) {
+        triggerSignalToast(`🏃 Maratón: Avanzando a Temporada ${nextSeason}, Capítulo 1`);
+        onRequestEpisodeChange?.(nextSeason, 1);
+      }
+    } else if (delta < 0) {
+      if (selectedEpisodeRef.current <= 1) {
+        onPrevEpisode?.();
+      } else {
+        onRequestEpisodeChange?.(selectedSeasonRef.current, selectedEpisodeRef.current - 1);
+      }
     } else {
-      setSelectedEpisode((prev) => {
-        const nextEp = Math.max(1, prev + delta);
-        selectedEpisodeRef.current = nextEp;
-        return nextEp;
-      });
+      const nextEp = selectedEpisodeRef.current + delta;
+      onRequestEpisodeChange?.(selectedSeasonRef.current, nextEp);
     }
     simulatedTimeRef.current = 0;
     setCurrentTime(0);
@@ -2646,7 +2661,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     setIframeReloadKey((k) => k + 1);
     broadcastImmediate();
-  }, [isEpisodic, broadcastImmediate, media, marathonMode, triggerSignalToast]);
+  }, [isEpisodic, realEpisodes, media.episodes, media.seasons, media.seasonsCount, realSeasons, marathonMode, triggerSignalToast, onRequestEpisodeChange, onNextEpisode, onPrevEpisode, isIframeMode, broadcastImmediate]);
 
   const attemptSmartPlay = useCallback((videoEl: HTMLVideoElement | null) => {
     if (!videoEl || isIframeMode) return;
@@ -2889,10 +2904,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (cmd.payload) {
           const s = Number(cmd.payload.season || selectedSeason);
           const e = Number(cmd.payload.episode || 1);
-          setSelectedSeason(s);
-          setSelectedEpisode(e);
-          selectedSeasonRef.current = s;
-          selectedEpisodeRef.current = e;
+          onRequestEpisodeChange?.(s, e);
           simulatedTimeRef.current = 0;
           setCurrentTime(0);
           setIframeReloadKey((k) => k + 1);
@@ -2962,6 +2974,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           normalAdvanceStreakRef.current = 0;
         }
         lastRealTimeRef.current = realState.currentTime;
+
+        // Detección de fin de reproducción en modo embebido para Maratón
+        if (realState.duration > 10 && realState.currentTime > 0) {
+          const timeToEnd = realState.duration - realState.currentTime;
+          const isNearEnd = timeToEnd <= 2.5 || (realState.currentTime >= realState.duration - 1);
+          if (isNearEnd && isPlaying) {
+            const isMarathonOn = Boolean(
+              marathonMode ||
+              playbackSettings.autoPlayNext ||
+              (typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true')
+            );
+            if (isMarathonOn && isEpisodic) {
+              tryAutoAdvanceEpisodeRef.current?.();
+            }
+          }
+        }
 
         broadcastImmediate(realState.isPlaying);
 
@@ -3095,6 +3123,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     autoAdvancedChapterGuardRef.current = chapterKey;
     handleAdvanceEpisode(1);
   }, [media.id, onBeforeAutoAdvance, handleAdvanceEpisode]);
+  tryAutoAdvanceEpisodeRef.current = tryAutoAdvanceEpisode;
 
   const startNextEpisodeCountdown = () => {
     if (marathonMode) {
@@ -3660,7 +3689,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     value={selectedSeason}
                     onChange={(e) => {
                       const newS = Number(e.target.value);
-                      setSelectedSeason(newS);
+                      onRequestEpisodeChange?.(newS, 1);
                       setIframeReloadKey((k) => k + 1);
                     }}
                     className="bg-zinc-800 text-white rounded-md px-1.5 py-0.5 text-[11px] font-bold border border-zinc-600 outline-none hover:bg-zinc-700 cursor-pointer"
@@ -3685,7 +3714,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     value={selectedEpisode}
                     onChange={(e) => {
                       const newEp = Number(e.target.value);
-                      setSelectedEpisode(newEp);
+                      onRequestEpisodeChange?.(selectedSeason, newEp);
                       setEpisodeNotExistsWarning(null);
                       setIframeReloadKey((k) => k + 1);
                     }}

@@ -2023,6 +2023,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     handleCastMediaToScreen,
     handlePlayNextEpisode,
     handlePlayPrevEpisode,
+    advanceToSameSeriesEpisode,
     handleBroadcastPlayerState,
     sendRemoteCommand,
     refreshContinueWatching,
@@ -2109,6 +2110,9 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
               remoteCommandTrigger={lastRemoteCommand}
               initialTime={playerInitialTime}
               onBeforeAutoAdvance={handleBeforeAutoAdvance}
+              onRequestEpisodeChange={(targetSeason, targetEpNum) => {
+                advanceToSameSeriesEpisode(targetSeason, targetEpNum);
+              }}
               onUpdateAudio={(newSettings) => {
                 setAudioSettings((prev) => ({ ...prev, ...newSettings }));
                 deviceSync.broadcastPlaybackState({
