@@ -76,6 +76,11 @@ ipcMain.handle('get-embed-status', () => ({
   contentUnavailable: false,
 }));
 ipcMain.handle('simulate-play-click', () => true);
+ipcMain.handle('stop-ghost-extraction', () => true);
+ipcMain.handle('set-stream-headers', () => true);
+ipcMain.handle('set-player-servers', () => true);
+ipcMain.handle('start-load-trace', () => ({ ok: true }));
+ipcMain.handle('end-load-trace', () => true);
 
 ipcMain.handle('get-real-media-state', async () => {
   const frames = getAllFrames();

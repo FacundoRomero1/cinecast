@@ -122,6 +122,8 @@ app.whenReady().then(async () => {
     safeHandle('start-load-trace', () => ({ ok: true }));
     safeHandle('record-load-trace-event', () => ({ ok: true }));
     safeHandle('end-load-trace', () => true);
+    safeHandle('stop-ghost-extraction', () => true);
+    safeHandle('set-stream-headers', () => true);
 
     safeHandle('get-real-media-state', async () => {
       const frames = getAllFrames();

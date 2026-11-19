@@ -644,6 +644,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const episodeKey = isSeriesOrAnime
       ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
       : `${media.id}_movie`;
+    // 0. Si hay servidores de prueba explícitos (ej. probe-marathon-launch con /__test/embed.html)
+    if (episode?.servers?.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))) {
+      return episode.servers;
+    }
+    if (media.servers?.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))) {
+      return media.servers;
+    }
+
     // 1. Si resolveService o Direct HLS ya resolvió servidores para este título con TMDB
     if (tmdbIdToUse > 0 && resolvedServers !== null && resolvedServers.length > 0) {
       return deduplicateServers(resolvedServers, episodeKey);
@@ -851,10 +859,56 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setForceVisibleIframeForCaptcha(false);
     setIsGhostExtracting(false);
 
+    // P1.7 — Guardia de coherencia antes de resolver
+    if (isSeriesOrAnime && episode && episode.episodeNumber !== selectedEpisode) {
+      console.log(`[VideoPlayer] [P1.7 Guardia] Esperando sincronización de episodio: prop=${episode.episodeNumber} vs selected=${selectedEpisode}`);
+      return;
+    }
+
+    const hasTestOrExplicitServers = Boolean(
+      (episode?.servers && episode.servers.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))) ||
+      (media.servers && media.servers.some((s) => typeof s.url === 'string' && s.url.includes('/__test/')))
+    );
+    if (hasTestOrExplicitServers) {
+      console.log(`[VideoPlayer] Servidores de prueba explícitos detectados en media/episode`);
+      setIsResolving(false);
+      return;
+    }
+
     // Requisito 5: Títulos sin tmdbId (TV en vivo, mp4 directo) siguen por generateServersForMedia sin pasar por resolveService
     if (tmdbIdToUse <= 0) {
       setIsResolving(false);
       return;
+    }
+
+    const isTestMode =
+      (typeof window !== 'undefined' && Boolean((window as any).__CINECAST_TEST)) ||
+      (typeof window !== 'undefined' && Array.isArray((window as any).__CINECAST_TEST_SERVERS));
+
+    if (isTestMode) {
+      const testServers = generateServersForMedia({
+        tmdbId: tmdbIdToUse,
+        title: media.title,
+        type: resolveType === 'anime' ? 'anime' : resolveType,
+        season: selectedSeason,
+        episode: selectedEpisode,
+      });
+      if (testServers.length > 0) {
+        console.log(`[VideoPlayer] [TEST_MODE] Usando servidores de prueba:`, testServers.map((s) => s.name));
+        setResolvedServers(testServers);
+        const preferred = (typeof window !== 'undefined' && localStorage.getItem(PREFERRED_SERVER_STORAGE_KEY)) || testServers[0].name;
+        const chosen = testServers.find((s) => s.name === preferred) || testServers[0];
+        setSelectedServerName(chosen.name);
+        if (chosen.type !== 'iframe' && chosen.url) {
+          setVideoSrc(chosen.url);
+        } else {
+          setVideoSrc('');
+        }
+        setIsResolving(false);
+        setIsPlaying(true);
+        setForceShowServerSelector(false);
+        return;
+      }
     }
 
     let isMounted = true;
@@ -1116,7 +1170,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       isMounted = false;
       abortController.abort();
     };
-  }, [tmdbIdToUse, selectedSeason, selectedEpisode, isSeriesOrAnime, media.id, mediaKey]);
+  }, [tmdbIdToUse, selectedSeason, selectedEpisode, isSeriesOrAnime, media.id, mediaKey, episode]);
 
   const hasNoSpanishAudio = Boolean(detectedTracks && !detectedTracks.audio.includes('es'));
 
