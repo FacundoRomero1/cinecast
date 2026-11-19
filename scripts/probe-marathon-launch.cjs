@@ -226,6 +226,10 @@ app.whenReady().then(async () => {
 
     await screenWin.loadURL(`${baseUrl}/?role=screen&room=${encodeURIComponent(activeRoomId)}`);
     await remoteWin.loadURL(`${baseUrl}/?role=remote&room=${encodeURIComponent(activeRoomId)}#/control`);
+
+    const buildMarker = await screenWin.webContents.executeJavaScript('window.__cinecastBuild').catch((err) => `err: ${err.message}`);
+    console.log(`[BUILD_MARKER] window.__cinecastBuild = "${buildMarker}"`);
+
     await wait(3500);
 
     // Activar Maratón en PC y Remote

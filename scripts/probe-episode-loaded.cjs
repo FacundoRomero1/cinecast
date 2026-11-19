@@ -247,6 +247,9 @@ app.whenReady().then(async () => {
 
     await injectSetup(screenWin, currentTestServers);
 
+    const buildMarker = await screenWin.webContents.executeJavaScript('window.__cinecastBuild').catch((err) => `err: ${err.message}`);
+    console.log(`[BUILD_MARKER] window.__cinecastBuild = "${buildMarker}"`);
+
     console.log('[probe-episode-loaded] Esperando sincronización inicial...');
     await wait(3000);
 

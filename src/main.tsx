@@ -4,6 +4,9 @@ import { NewApp } from './ui/NewApp.tsx';
 import './index.css';
 import { initTimeTracker } from './app/timeTracker';
 
+// P1.5 — Marcador de fidelidad de build en runtime
+(window as any).__cinecastBuild = import.meta.env.VITE_BUILD_SHA ?? 'dev';
+
 initTimeTracker();
 
 // Ajuste Prioritario A: Limpiar flag de UI v2 e ignorar cualquier valor de ?ui=

@@ -15,6 +15,14 @@ function getBuildId(): string {
 }
 
 const buildId = getBuildId();
+const gitSha = process.env.VITE_BUILD_SHA || (() => {
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+  } catch (_) {
+    return 'dev';
+  }
+})();
+process.env.VITE_BUILD_SHA = gitSha;
 
 function buildIdPlugin(): Plugin {
   const writeBuildId = () => {
@@ -49,6 +57,7 @@ export default defineConfig(() => {
     base: './',
     define: {
       __BUILD_ID__: JSON.stringify(buildId),
+      'import.meta.env.VITE_BUILD_SHA': JSON.stringify(gitSha),
     },
     plugins: [react(), tailwindcss(), buildIdPlugin()],
     resolve: {
