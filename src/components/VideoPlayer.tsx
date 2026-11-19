@@ -335,7 +335,7 @@ function isSubServerMatch(s?: StreamServer | null): boolean {
   );
 }
 
-function deduplicateServers(servers: StreamServer[]): StreamServer[] {
+function deduplicateServers(servers: StreamServer[], episodeKey?: string): StreamServer[] {
   const uniqueMap = new Map<string, StreamServer>();
   for (const srv of servers) {
     if (!srv) continue;
@@ -371,7 +371,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   remoteCommandNotification, onOpenAudioSettings, remoteCommandTrigger, initialTime = 0,
   onBeforeAutoAdvance,
 }) => {
-  const autoAdvancedChapterGuardRef = useRef<string>('');
+  const autoAdvancedChapterGuardRef = useRef<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const controlsTimeoutRef = useRef<any>(null);
@@ -541,6 +541,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const hasHls = Boolean(pref && (pref.playable === 'hls' || pref.type === 'hls'));
     return hasHls;
   });
+  const serversEpochRef = useRef<number>(0);
+  const [serversEpoch, setServersEpoch] = useState<number>(0);
   const [resolvedServers, setResolvedServers] = useState<StreamServer[] | null>(null);
   const [forceShowServerSelector, setForceShowServerSelector] = useState<boolean>(false);
   const [isGhostExtracting, setIsGhostExtracting] = useState<boolean>(false);
@@ -810,10 +812,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // ── Requisitos 2 & 3: Política de arranque y resolución de servidores para títulos con tmdbId ──
   useEffect(() => {
+    serversEpochRef.current += 1;
+    const epoch = serversEpochRef.current;
+    setServersEpoch(epoch);
+    setResolvedServers(null);
+    autoAdvanceCountRef.current = 0;
+    autoAdvancedChapterGuardRef.current = null;
+    setForceShowServerSelector(false);
+    setIsPlaying(true);
+    setCaptchaRequired(false);
+    setForceVisibleIframeForCaptcha(false);
+    setIsGhostExtracting(false);
+
     // Requisito 5: Títulos sin tmdbId (TV en vivo, mp4 directo) siguen por generateServersForMedia sin pasar por resolveService
     if (tmdbIdToUse <= 0) {
       setIsResolving(false);
-      setResolvedServers(null);
       return;
     }
 
@@ -829,15 +842,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     previewFailedBeforePlayingRef.current = false;
     resolvedServerRef.current = null;
 
-    setForceShowServerSelector(false);
-    autoAdvanceCountRef.current = 0;
-
     const resolveType = isSeriesOrAnime
       ? (media.category === 'anime' ? 'anime' : 'series')
       : 'movie';
 
     const directType = isSeriesOrAnime ? 'tv' : 'movie';
     const directUrl = `/api/stream/direct?tmdbId=${tmdbIdToUse}&type=${directType}&season=${selectedSeason}&episode=${selectedEpisode}`;
+    const episodeKey = isSeriesOrAnime
+      ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
+      : `${media.id}_movie`;
 
     console.log(`[VideoPlayer] [Direct HLS] Consultando stream directo nativo en ${directUrl}...`);
     setIsResolving(true);
@@ -883,7 +896,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         signal: abortController.signal,
       })
         .then((playRes) => {
-          if (!isMounted) return;
+          if (!isMounted || serversEpochRef.current !== epoch) return;
           resolveTimeRef.current = Date.now();
           const resolveMs = resolveTimeRef.current - mountTimeRef.current;
           console.log(`[PlaybackTiming] Resolve completado en ${resolveMs}ms (servidores=${playRes.servers?.length || 0})`);
@@ -906,8 +919,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             } as any));
 
             setResolvedServers((prev) => {
+              if (serversEpochRef.current !== epoch) return prev;
               const combined = [...mapped, ...(prev || [])];
-              return deduplicateServers(combined);
+              return deduplicateServers(combined, episodeKey);
             });
 
             const freshlyAcuñado: StreamServer = {
@@ -944,14 +958,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           } else {
             console.warn(`[VideoPlayer] Falló resolución en /api/resolve/play: ${playRes?.error || 'URL vacía'}.`);
-            setIsResolving(false);
-            if (!playRes?.servers?.length) {
-              setResolvedServers([]);
+            if (serversEpochRef.current === epoch) {
+              setIsResolving(false);
+              if (!playRes?.servers?.length) {
+                setResolvedServers([]);
+              }
             }
           }
         })
         .catch((err) => {
-          if (!isMounted) return;
+          if (!isMounted || serversEpochRef.current !== epoch) return;
           setIsResolving(false);
           setResolvedServers([]);
           console.warn(`[VideoPlayer] Excepción en /api/resolve/play:`, err?.message);
@@ -964,7 +980,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       fetch(directUrl, { signal: abortController.signal })
         .then(async (r) => (r.ok ? r.json() : null))
         .then((data) => {
-          if (!isMounted) return;
+          if (!isMounted || serversEpochRef.current !== epoch) return;
           if (data?.success && data?.url && typeof data.url === 'string' && data.url.includes('.m3u8')) {
             console.log(`[VideoPlayer] [Direct HLS] Stream nativo obtenido con éxito (${data.provider}): ${data.url}`);
             const directSrv: StreamServer = {
@@ -988,8 +1004,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               episode: selectedEpisode,
             }).filter((s) => s.id !== 'direct-hls');
             setResolvedServers((prev) => {
+              if (serversEpochRef.current !== epoch) return prev;
               const combined = [directSrv, ...(prev || []), ...traditionalServers];
-              return deduplicateServers(combined);
+              return deduplicateServers(combined, episodeKey);
             });
             setIsResolving(false);
             persistSuccessServer(media, directSrv, resolveType);
@@ -1000,7 +1017,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           loadTraditionalServers();
         })
         .catch((err) => {
-          if (!isMounted) return;
+          if (!isMounted || serversEpochRef.current !== epoch) return;
           console.warn(`[VideoPlayer] [Direct HLS] Error al obtener stream directo:`, err?.message);
           loadTraditionalServers();
         });
@@ -1016,7 +1033,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       fetch(animeUrl, { signal: abortController.signal })
         .then(async (r) => (r.ok ? r.json() : null))
         .then((data) => {
-          if (!isMounted) return;
+          if (!isMounted || serversEpochRef.current !== epoch) return;
           if (data?.success && Array.isArray(data.servers) && data.servers.length > 0) {
             console.log(`[VideoPlayer] [Anime] ${data.servers.length} servidores especializados obtenidos.`);
             const animeServers: StreamServer[] = data.servers.map((s: any, idx: number) => ({
@@ -1040,8 +1057,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }).filter((s) => s.id !== 'direct-hls');
 
             setResolvedServers((prev) => {
+              if (serversEpochRef.current !== epoch) return prev;
               const combined = [...animeServers, ...(prev || []), ...traditionalServers];
-              return deduplicateServers(combined);
+              return deduplicateServers(combined, episodeKey);
             });
             const first = animeServers[0];
             if (first) {
@@ -1058,7 +1076,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           loadTraditionalServers();
         })
         .catch((err) => {
-          if (!isMounted) return;
+          if (!isMounted || serversEpochRef.current !== epoch) return;
           console.warn(`[VideoPlayer] [Anime] Error consultando /api/anime/servers:`, err?.message);
           loadTraditionalServers();
         });
