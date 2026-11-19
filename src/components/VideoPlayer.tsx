@@ -1258,6 +1258,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   subtitlesEnabledRef.current = subtitlesEnabled;
   availableServersRef.current = availableServers;
+  if (typeof window !== 'undefined') {
+    (window as any).__availableServers = availableServers;
+    (window as any).__videoPlayerState = {
+      selectedSeason,
+      selectedEpisode,
+      currentTitle,
+      availableServers,
+    };
+  }
   activeServerIndexRef.current = activeServerIndex;
   selectedSeasonRef.current = selectedSeason;
   selectedEpisodeRef.current = selectedEpisode;
@@ -3060,6 +3069,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   return (
     <div ref={containerRef} onMouseMove={handleMouseMove} onTouchStart={handleMouseMove}
+      data-testid="video-player"
+      data-season={selectedSeason}
+      data-episode={selectedEpisode}
+      data-title={currentTitle}
       className="relative w-full h-screen bg-black overflow-hidden select-none flex items-center justify-center font-sans">
 
       {/* Franjas invisibles de detección de mouse para cuando el iframe captura el cursor */}
@@ -3551,6 +3564,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-700/80 px-2 py-0.5 rounded-xl shadow-lg shrink-0">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider hidden md:inline">Capítulo:</span>
                   <select
+                    data-testid="season-select"
                     value={selectedSeason}
                     onChange={(e) => {
                       const newS = Number(e.target.value);
@@ -3575,6 +3589,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     ))}
                   </select>
                   <select
+                    data-testid="episode-select"
                     value={selectedEpisode}
                     onChange={(e) => {
                       const newEp = Number(e.target.value);
