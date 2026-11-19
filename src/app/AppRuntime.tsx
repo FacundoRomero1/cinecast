@@ -2482,7 +2482,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               (typeof window !== 'undefined' && localStorage.getItem('cinecast_marathon_mode') === 'true')
             );
             // PARTE 1 (5): Si es película, el fin de reproducción NO debe avanzar ni iniciar nada; solo avanza en series con Maratón activo
-            if (isMarathonOn && activeMedia && isSeriesMediaItem(activeMedia)) {
+            if (isMarathonOn && activeMedia && isSeriesMediaItem(activeMedia) && !isPlayingLocally) {
               if (handleBeforeAutoAdvance(currentChapterKey)) {
                 lastAutoAdvanceTriggeredAtRef.current = Date.now();
                 handlePlayNextEpisode();
