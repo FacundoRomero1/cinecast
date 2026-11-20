@@ -14,9 +14,11 @@
 if (!process.versions.electron) {
   const { spawnSync } = require('child_process');
   const electronPath = require('electron');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
   const res = spawnSync(electronPath, [__filename, ...process.argv.slice(2)], {
     stdio: 'inherit',
-    env: process.env,
+    env,
   });
   process.exit(res.status ?? 1);
 }
@@ -262,7 +264,14 @@ app.whenReady().then(async () => {
           const req = await withTimeout(f.executeJavaScript('window.__req'), 500, null);
           if (req && typeof req.episode === 'number') {
             const reported = await withTimeout(f.executeJavaScript('window.__providerReportedEpisode'), 500, req.episode);
-            return { ...req, reportedEpisode: reported };
+            const videoInfo = await withTimeout(f.executeJavaScript(`(() => {
+              const v = window.__testVideo || window.__v || document.querySelector('video');
+              return {
+                currentSrc: v ? (v.currentSrc || v.src || window.location.href) : window.location.href,
+                currentTime: v ? v.currentTime : 0
+              };
+            })()`), 500, { currentSrc: '', currentTime: 0 });
+            return { ...req, reportedEpisode: reported, video: videoInfo };
           }
         } catch (_) {}
       }
@@ -329,7 +338,8 @@ app.whenReady().then(async () => {
         t1Frame.season === 1 &&
         t1Frame.episode === 1 &&
         t1Remote.epText?.includes('T1:E1') &&
-        t1Remote.loadedUrlText?.includes('1/1')
+        t1Remote.loadedUrlText?.includes('1/1') &&
+        (t1Frame.video?.currentTime ?? 0) >= 0.6
       ) {
         t1Pass = true;
         break;
@@ -342,6 +352,8 @@ app.whenReady().then(async () => {
       frameReq: t1Frame ? `T${t1Frame.season}:E${t1Frame.episode}` : 'N/A',
       remoteCard: t1Remote?.epText || 'N/A',
       remoteLoadedUrl: t1Remote?.loadedUrlText || 'N/A',
+      currentSrc: t1Frame?.video?.currentSrc || t1Remote?.loadedUrlText || 'N/A',
+      currentTime: t1Frame?.video?.currentTime != null ? t1Frame.video.currentTime : 0,
       pass: t1Pass,
     });
     console.log(`[Forma 1] Continuar viendo: ${t1Pass ? 'PASA' : 'FALLA'} (Frame: T${t1Frame?.season}:E${t1Frame?.episode}, Remote: ${t1Remote?.epText}, URL: ${t1Remote?.loadedUrlText})`);
@@ -376,7 +388,8 @@ app.whenReady().then(async () => {
         t2Frame.season === 1 &&
         t2Frame.episode === 3 &&
         t2Remote.epText?.includes('T1:E3') &&
-        t2Remote.loadedUrlText?.includes('1/3')
+        t2Remote.loadedUrlText?.includes('1/3') &&
+        (t2Frame.video?.currentTime ?? 0) >= 0.6
       ) {
         t2Pass = true;
         break;
@@ -389,6 +402,8 @@ app.whenReady().then(async () => {
       frameReq: t2Frame ? `T${t2Frame.season}:E${t2Frame.episode}` : 'N/A',
       remoteCard: t2Remote?.epText || 'N/A',
       remoteLoadedUrl: t2Remote?.loadedUrlText || 'N/A',
+      currentSrc: t2Frame?.video?.currentSrc || t2Remote?.loadedUrlText || 'N/A',
+      currentTime: t2Frame?.video?.currentTime != null ? t2Frame.video.currentTime : 0,
       pass: t2Pass,
     });
     console.log(`[Forma 2] Selector reproductor: ${t2Pass ? 'PASA' : 'FALLA'} (Frame: T${t2Frame?.season}:E${t2Frame?.episode}, Remote: ${t2Remote?.epText}, URL: ${t2Remote?.loadedUrlText})`);
@@ -420,7 +435,8 @@ app.whenReady().then(async () => {
         t3Frame.season === 1 &&
         t3Frame.episode === 5 &&
         t3Remote.epText?.includes('T1:E5') &&
-        t3Remote.loadedUrlText?.includes('1/5')
+        t3Remote.loadedUrlText?.includes('1/5') &&
+        (t3Frame.video?.currentTime ?? 0) >= 0.6
       ) {
         t3Pass = true;
         break;
@@ -433,6 +449,8 @@ app.whenReady().then(async () => {
       frameReq: t3Frame ? `T${t3Frame.season}:E${t3Frame.episode}` : 'N/A',
       remoteCard: t3Remote?.epText || 'N/A',
       remoteLoadedUrl: t3Remote?.loadedUrlText || 'N/A',
+      currentSrc: t3Frame?.video?.currentSrc || t3Remote?.loadedUrlText || 'N/A',
+      currentTime: t3Frame?.video?.currentTime != null ? t3Frame.video.currentTime : 0,
       pass: t3Pass,
     });
     console.log(`[Forma 3] jumpToEpisode celular: ${t3Pass ? 'PASA' : 'FALLA'} (Frame: T${t3Frame?.season}:E${t3Frame?.episode}, Remote: ${t3Remote?.epText}, URL: ${t3Remote?.loadedUrlText})`);
@@ -463,7 +481,8 @@ app.whenReady().then(async () => {
         t4Frame.season === 1 &&
         t4Frame.episode === 6 &&
         t4Remote.epText?.includes('T1:E6') &&
-        t4Remote.loadedUrlText?.includes('1/6')
+        t4Remote.loadedUrlText?.includes('1/6') &&
+        (t4Frame.video?.currentTime ?? 0) >= 0.6
       ) {
         t4Pass = true;
         break;
@@ -476,6 +495,8 @@ app.whenReady().then(async () => {
       frameReq: t4Frame ? `T${t4Frame.season}:E${t4Frame.episode}` : 'N/A',
       remoteCard: t4Remote?.epText || 'N/A',
       remoteLoadedUrl: t4Remote?.loadedUrlText || 'N/A',
+      currentSrc: t4Frame?.video?.currentSrc || t4Remote?.loadedUrlText || 'N/A',
+      currentTime: t4Frame?.video?.currentTime != null ? t4Frame.video.currentTime : 0,
       pass: t4Pass,
     });
     console.log(`[Forma 4] Siguiente episodio: ${t4Pass ? 'PASA' : 'FALLA'} (Frame: T${t4Frame?.season}:E${t4Frame?.episode}, Remote: ${t4Remote?.epText}, URL: ${t4Remote?.loadedUrlText})`);
@@ -506,7 +527,8 @@ app.whenReady().then(async () => {
         t5Frame.season === 1 &&
         t5Frame.episode === 5 &&
         t5Remote.epText?.includes('T1:E5') &&
-        t5Remote.loadedUrlText?.includes('1/5')
+        t5Remote.loadedUrlText?.includes('1/5') &&
+        (t5Frame.video?.currentTime ?? 0) >= 0.6
       ) {
         t5Pass = true;
         break;
@@ -519,6 +541,8 @@ app.whenReady().then(async () => {
       frameReq: t5Frame ? `T${t5Frame.season}:E${t5Frame.episode}` : 'N/A',
       remoteCard: t5Remote?.epText || 'N/A',
       remoteLoadedUrl: t5Remote?.loadedUrlText || 'N/A',
+      currentSrc: t5Frame?.video?.currentSrc || t5Remote?.loadedUrlText || 'N/A',
+      currentTime: t5Frame?.video?.currentTime != null ? t5Frame.video.currentTime : 0,
       pass: t5Pass,
     });
     console.log(`[Forma 5] Anterior episodio: ${t5Pass ? 'PASA' : 'FALLA'} (Frame: T${t5Frame?.season}:E${t5Frame?.episode}, Remote: ${t5Remote?.epText}, URL: ${t5Remote?.loadedUrlText})`);
@@ -561,7 +585,8 @@ app.whenReady().then(async () => {
         t6Frame.season === 1 &&
         t6Frame.episode === 6 &&
         t6Remote.epText?.includes('T1:E6') &&
-        t6Remote.loadedUrlText?.includes('1/6')
+        t6Remote.loadedUrlText?.includes('1/6') &&
+        (t6Frame.video?.currentTime ?? 0) >= 0.6
       ) {
         t6Pass = true;
         break;
@@ -574,6 +599,8 @@ app.whenReady().then(async () => {
       frameReq: t6Frame ? `T${t6Frame.season}:E${t6Frame.episode}` : 'N/A',
       remoteCard: t6Remote?.epText || 'N/A',
       remoteLoadedUrl: t6Remote?.loadedUrlText || 'N/A',
+      currentSrc: t6Frame?.video?.currentSrc || t6Remote?.loadedUrlText || 'N/A',
+      currentTime: t6Frame?.video?.currentTime != null ? t6Frame.video.currentTime : 0,
       pass: t6Pass,
     });
     console.log(`[Forma 6] Maratón: ${t6Pass ? 'PASA' : 'FALLA'} (Frame: T${t6Frame?.season}:E${t6Frame?.episode}, Remote: ${t6Remote?.epText}, URL: ${t6Remote?.loadedUrlText})`);
@@ -613,7 +640,8 @@ app.whenReady().then(async () => {
         t7Frame.episode === 4 &&
         t7Frame.reportedEpisode === 1 &&
         t7Remote.hasWarning &&
-        t7Remote.warningText?.includes('El proveedor podría no respetar el episodio pedido')
+        t7Remote.warningText?.includes('El proveedor podría no respetar el episodio pedido') &&
+        (t7Frame.video?.currentTime ?? 0) >= 0.6
       ) {
         t7Pass = true;
         break;
@@ -626,6 +654,8 @@ app.whenReady().then(async () => {
       frameReq: t7Frame ? `Pedido: E${t7Frame.episode}, Proveedor: E${t7Frame.reportedEpisode}` : 'N/A',
       remoteCard: t7Remote?.warningText || 'Sin cartel',
       remoteLoadedUrl: t7Remote?.loadedUrlText || 'N/A',
+      currentSrc: t7Frame?.video?.currentSrc || t7Remote?.loadedUrlText || 'N/A',
+      currentTime: t7Frame?.video?.currentTime != null ? t7Frame.video.currentTime : 0,
       pass: t7Pass,
     });
     console.log(`[Forma 7] ignoreep=1: ${t7Pass ? 'PASA' : 'FALLA'} (Frame: Pedido E${t7Frame?.episode}/Reportado E${t7Frame?.reportedEpisode}, Aviso: ${t7Remote?.warningText})`);
@@ -634,10 +664,10 @@ app.whenReady().then(async () => {
     // TABLA FINAL DE RESULTADOS
     // ──────────────────────────────────────────────────────────────────────────
     console.log('\n=== RESULTADOS PARTE 4: EL EPISODIO PEDIDO ES EL QUE CARGA ===');
-    console.log('| Forma de selección | Esperado | Ruta en proveedor (window.__req) | Celular (En pantalla) | Dirección real (host y ruta) | Resultado |');
-    console.log('|---|---|---|---|---|---|');
+    console.log('| Forma de selección | Esperado | Ruta en proveedor (window.__req) | Celular (En pantalla) | Dirección real (host y ruta) | currentSrc | currentTime | Resultado |');
+    console.log('|---|---|---|---|---|---|---|---|');
     for (const r of results) {
-      console.log(`| ${r.forma} | ${r.esperado} | ${r.frameReq} | ${r.remoteCard} | ${r.remoteLoadedUrl} | **${r.pass ? 'PASA' : 'FALLA'}** |`);
+      console.log(`| ${r.forma} | ${r.esperado} | ${r.frameReq} | ${r.remoteCard} | ${r.remoteLoadedUrl} | ${r.currentSrc} | ${r.currentTime.toFixed(1)}s | **${r.pass ? 'PASA' : 'FALLA'}** |`);
     }
 
     const allPassed = results.every((r) => r.pass);

@@ -81,12 +81,15 @@
       const ignoreep = params.get('ignoreep') === '1';
       const subfail = params.get('subfail') === '1';
 
-      // 1. window.__req guarda { id, season, episode, label }
+      // 1. window.__req guarda { id, season, episode, label, url, status, time }
       window.__req = {
         id: routeId,
         season: parseInt(routeSeason, 10) || 1,
         episode: parseInt(routeEpisode, 10) || 1,
-        label: label
+        label: label,
+        url: window.location.href,
+        status: 200,
+        time: pageLoadTime
       };
 
       // Si ignoreep=1, en el video y título muestra episodio 1; si no, el pedido por la ruta
@@ -167,6 +170,7 @@
         if (video) return;
         video = document.createElement('video');
         video.id = 'provider-video';
+        video.src = window.location.href;
         video.setAttribute('playsinline', '');
         container.appendChild(video);
 
