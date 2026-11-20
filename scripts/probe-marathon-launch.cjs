@@ -560,31 +560,20 @@ app.whenReady().then(async () => {
       category: 'movies',
       servers: [{ name: 'TestEmbed15', url: embedUrl, type: 'iframe', language: 'Latino' }],
     };
-    if (!screenWin.webContents.debugger.isAttached()) {
-      screenWin.webContents.debugger.attach('1.3');
-    }
-    try {
-      await screenWin.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
-        offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0,
-      });
-      await fetch(`${baseUrl}/api/sync/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: activeRoomId,
-          command: {
-            action: 'playDiscoveredMovie',
-            payload: staleMovie,
-          },
-        }),
-      });
-      await wait(11500);
-    } finally {
-      await screenWin.webContents.debugger.sendCommand('Network.emulateNetworkConditions', {
-        offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
-      }).catch(() => {});
-    }
-    await screenWin.webContents.reload();
+    await screenWin.loadURL('about:blank');
+    await fetch(`${baseUrl}/api/sync/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: activeRoomId,
+        command: {
+          action: 'playDiscoveredMovie',
+          payload: staleMovie,
+        },
+      }),
+    });
+    await wait(11500);
+    await screenWin.loadURL(`${baseUrl}/?role=screen&room=${encodeURIComponent(activeRoomId)}`);
     await wait(3500);
 
     const afterStaleScreen = await getScreenOverlayState(screenWin);
