@@ -9,11 +9,12 @@
  *  (e) PC recarga 5 s después de un playDiscoveredMovie: no lo repite; un comando de inicio con issuedAt de hace 15 s se ignora.
  */
 
-if (process.env.ELECTRON_RUN_AS_NODE) {
+if (!process.versions.electron) {
   const { spawnSync } = require('child_process');
+  const electronPath = require('electron');
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const res = spawnSync(process.execPath, process.argv.slice(1), {
+  const res = spawnSync(electronPath, [__filename, ...process.argv.slice(2)], {
     stdio: 'inherit',
     env,
   });
