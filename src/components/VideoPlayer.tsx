@@ -222,8 +222,8 @@ const WebViewPlayer: React.FC<WebViewPlayerProps> = ({
         clearInterval(pollInterval);
         return;
       }
+      if (!hasStarted || !webviewRef.current) return;
       try {
-        if (!webviewRef.current) return;
         const hasVideo = await webview.executeJavaScript(`
           (() => {
             const v = document.querySelector('video');
@@ -546,8 +546,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const mediaKey = (media as any).tmdbId || media.id;
 
   const [isResolving, setIsResolving] = useState<boolean>(false);
+  const [autoCommitDoneAt, setAutoCommitDoneAt] = useState<number>(0);
   const userInteractedRef = useRef<boolean>(false);
   const autoCommittedKeyRef = useRef<string | null>(null);
+  const failedServersForEpisodeRef = useRef<Set<string>>(new Set());
+  const unavailableServersForEpisodeRef = useRef<Set<string>>(new Set());
+  const retryCountByServerEpisodeRef = useRef<Map<string, number>>(new Map());
+  const iframeStallTicksRef = useRef<number>(0);
+
+  const getServerEpisodeKey = useCallback((srv?: StreamServer | null) => {
+    const idPart = (srv as any)?.providerId || (srv as any)?.id || srv?.name || 'unknown';
+    return `${media.id}:s${selectedSeasonRef.current}:e${selectedEpisodeRef.current}:${String(idPart).toLowerCase()}`;
+  }, [media.id]);
   const serversEpochRef = useRef<number>(0);
   const [serversEpoch, setServersEpoch] = useState<number>(0);
   const [resolvedServers, setResolvedServers] = useState<StreamServer[] | null>(null);
@@ -961,7 +971,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           season: selectedSeason,
           episode: selectedEpisode,
         })[0];
-        if (fallbackSrv) {
+        if (fallbackSrv && autoAdvanceCountRef.current === 0 && failedServersForEpisodeRef.current.size === 0 && !userInteractedRef.current) {
           setSelectedServerName(fallbackSrv.name);
           if (fallbackSrv.type !== 'iframe') {
             setVideoSrc(fallbackSrv.url);
@@ -1091,7 +1101,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }).filter((s) => s.id !== 'direct-hls');
             const latinoServers = traditionalServers.filter((s) => isLatinoServerMatch(s));
             const nonLatinoServers = traditionalServers.filter((s) => !isLatinoServerMatch(s));
-            const hasRankedLatinoFirst = latinoServers.length > 0 && isLatinoServerMatch(traditionalServers[0]);
+            const firstLatinoFailed =
+              latinoServers.length > 0 &&
+              failedServersForEpisodeRef.current.has(getServerEpisodeKey(latinoServers[0]));
+            const hasRankedLatinoFirst =
+              latinoServers.length > 0 &&
+              isLatinoServerMatch(traditionalServers[0]) &&
+              !firstLatinoFailed;
             if (!hasRankedLatinoFirst) {
               setSelectedServerName(directSrv.name);
               setVideoSrc(data.url);
@@ -1184,7 +1200,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       isMounted = false;
       abortController.abort();
     };
-  }, [tmdbIdToUse, selectedSeason, selectedEpisode, isSeriesOrAnime, media.id, mediaKey, episode]);
+  }, [tmdbIdToUse, selectedSeason, selectedEpisode, isSeriesOrAnime, media.id, mediaKey, episode?.id, episode?.seasonNumber, episode?.episodeNumber]);
 
   const hasNoSpanishAudio = Boolean(detectedTracks && !detectedTracks.audio.includes('es'));
 
@@ -1303,6 +1319,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     (activeServer as any)?.providerId === 'moviemaster' ||
     (activeServer?.url && activeServer.url.includes('moviemaster.lat'))
   );
+
+  const activeEmbedUrl = useMemo(() => {
+    if (!activeServer?.url) return '';
+    // PASO 1 (CENSURA): Validación de ID limpio (salvo en servidores locales/mock o directos)
+    const isMockOrLocal = activeServer.url.includes('/api/') || activeServer.url.includes('localhost') || activeServer.url.includes('127.0.0.1') || activeServer.url.includes('192.168.');
+    if (!isMockOrLocal) {
+      const cleanId = String(tmdbIdToUse || '').replace(/[^0-9]/g, '');
+      if (!cleanId || isNaN(Number(cleanId)) || Number(cleanId) <= 0) {
+        console.error(`[VideoPlayer] ID inválido detectado para: "${currentTitle}" (cleanId=${cleanId})`);
+        return ''; // Detiene la carga si el ID está corrupto
+      }
+    }
+    const url = activeServer.url;
+    if (url.includes('autoplay=')) return url;
+    return `${url}${url.includes('?') ? '&' : '?'}autoplay=1`;
+  }, [activeServer, tmdbIdToUse, currentTitle]);
 
   // Referencias sincronizadas para evitar valores viejos por closures y evitar recrear HLS
   const subtitlesEnabledRef = useRef(subtitlesEnabled);
@@ -1457,50 +1489,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  // ── Bloque 3: P3.1 — Watchdog de estados de espera (> 20s) ──
+  // ── Bloque 3: P3.1 & P2.6 — Watchdog de estados de espera y disponibilidad (6s para no disponible, 8s para embed sin frame, 20s general) ──
   useEffect(() => {
-    if (!isGhostExtracting && !captchaRequired && !isResolving) {
+    const waitingForEmbedFrame = isIframeMode && !firstFrameTimeRef.current;
+    if (!isGhostExtracting && !captchaRequired && !isResolving && !unavailableWarning && !waitingForEmbedFrame) {
       return;
     }
 
+    const budgetMs = unavailableWarning
+      ? 6000
+      : waitingForEmbedFrame
+        ? 8000
+        : 20000;
+
     const timer = setTimeout(() => {
-      console.warn('[VideoPlayer] [WATCHDOG] Estado de espera excedió 20s (isGhostExtracting / captchaRequired / isResolving). Liberando estados...');
+      if (waitingForEmbedFrame && firstFrameTimeRef.current > 0 && !unavailableWarning && !isGhostExtracting && !captchaRequired && !isResolving) {
+        return;
+      }
+      const causeLabel = unavailableWarning
+        ? 'Aún no está disponible (presupuesto 6s agotado)'
+        : waitingForEmbedFrame
+          ? 'Timeout de embed sin frame (>8s)'
+          : 'Timeout de estado de espera (>20s)';
+      console.warn(`[VideoPlayer] [WATCHDOG] ${causeLabel}. Liberando estados y rotando servidor...`);
       setIsResolving(false);
       setIsGhostExtracting(false);
       setCaptchaRequired(false);
       setForceVisibleIframeForCaptcha(false);
+      setUnavailableWarning(false);
       window.electronAPI?.stopGhostExtraction?.();
 
       const servers = availableServersRef.current || [];
       const currentIdx = activeServerIndexRef.current;
       const currentSrv = servers[currentIdx];
-      const currentId = (currentSrv as any)?.id ?? currentSrv?.name ?? 'desconocido';
-
-      if (tmdbIdToUse > 0 && currentId) {
-        reportServerPlaybackPenalty({
-          providerId: (currentSrv as any)?.providerId || 'vidlink.pro',
-          tmdbId: tmdbIdToUse,
-          type: resolveType,
-          serverId: currentId,
-          penaltyMs: 15000,
-          reason: 'Timeout de estado de espera (>20s)',
-        });
-        console.log(`[VideoPlayer] [PENALIZACIÓN] Servidor "${currentSrv?.name}" (id=${currentId}) penalizado por timeout de espera (>20s)`);
+      if (currentSrv && unavailableWarning) {
+        unavailableServersForEpisodeRef.current.add(getServerEpisodeKey(currentSrv));
       }
-
-      if (servers.length <= 1 || autoAdvanceCountRef.current >= servers.length) {
-        console.warn(`[VideoPlayer] [WATCHDOG] No quedan servidores tras timeout de espera (>20s). Mostrando selector.`);
-        setShowControls(true);
-        setForceShowServerSelector(true);
-        setAllServersExhausted(true);
-        triggerSignalToast('Tiempo de espera agotado (>20s). Ningún servidor respondió.');
-      } else {
-        advanceToNextServerRef.current?.('Timeout de estado de espera (>20s)');
-      }
-    }, 20000);
+      advanceToNextServerRef.current?.(causeLabel);
+    }, budgetMs);
 
     return () => clearTimeout(timer);
-  }, [isGhostExtracting, captchaRequired, isResolving, videoSrc, iframeReloadKey, tmdbIdToUse, resolveType, triggerSignalToast]);
+  }, [isGhostExtracting, captchaRequired, isResolving, unavailableWarning, isIframeMode, activeEmbedUrl, videoSrc, iframeReloadKey, autoCommitDoneAt, tmdbIdToUse, resolveType, triggerSignalToast, getServerEpisodeKey]);
 
   // TAREA 6: Timeout de 12 segundos para la verificación de audio en embed
   const [audioCheckTimedOut, setAudioCheckTimedOut] = useState<boolean>(false);
@@ -1578,22 +1607,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [activeServer, activeServerIndex, selectedServerName]);
 
-  const activeEmbedUrl = useMemo(() => {
-    if (!activeServer?.url) return '';
-    // PASO 1 (CENSURA): Validación de ID limpio (salvo en servidores locales/mock o directos)
-    const isMockOrLocal = activeServer.url.includes('/api/') || activeServer.url.includes('localhost') || activeServer.url.includes('127.0.0.1') || activeServer.url.includes('192.168.');
-    if (!isMockOrLocal) {
-      const cleanId = String(tmdbIdToUse || '').replace(/[^0-9]/g, '');
-      if (!cleanId || isNaN(Number(cleanId)) || Number(cleanId) <= 0) {
-        console.error(`[VideoPlayer] ID inválido detectado para: "${currentTitle}" (cleanId=${cleanId})`);
-        return ''; // Detiene la carga si el ID está corrupto
-      }
-    }
-    const url = activeServer.url;
-    if (url.includes('autoplay=')) return url;
-    return `${url}${url.includes('?') ? '&' : '?'}autoplay=1`;
-  }, [activeServer, tmdbIdToUse]);
-
   // Tarea A: Log diagnóstico obligatorio antes de inyectar iframe src
   useEffect(() => {
     if (isIframeMode && activeEmbedUrl) {
@@ -1665,6 +1678,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     autoAdvancedChapterGuardRef.current = null;
     userInteractedRef.current = false;
     autoCommittedKeyRef.current = null;
+    failedServersForEpisodeRef.current.clear();
+    unavailableServersForEpisodeRef.current.clear();
+    retryCountByServerEpisodeRef.current.clear();
+    iframeStallTicksRef.current = 0;
     setForceShowServerSelector(false);
     if (loadedMetadataTimerRef.current) {
       clearTimeout(loadedMetadataTimerRef.current);
@@ -1760,8 +1777,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // ── Error de vídeo: reintento sin CORS y luego fallback visible ──────────
   const handleSelectServer = useCallback((index: number, opts?: { auto?: boolean }) => {
-    if (index < 0 || index >= availableServers.length) return;
-    const srv = availableServers[index];
+    const serversList = availableServersRef.current.length > 0 ? availableServersRef.current : availableServers;
+    if (index < 0 || index >= serversList.length) return;
+    const srv = serversList[index];
     if (!opts?.auto) {
       userInteractedRef.current = true;
       cfAttemptRef.current = 0;
@@ -1977,20 +1995,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
-    const hasValidatedLatino = servers.some((s: any) => isLatinoServerMatch(s) && (s.validated || s.playable === 'hls'));
-    const shouldShowSelector = hasValidatedLatino
-      ? servers.length === 0
-      : (autoAdvanceCountRef.current >= servers.length || servers.length <= 1);
+    if (currentSrv) {
+      const epSrvKey = getServerEpisodeKey(currentSrv);
+      failedServersForEpisodeRef.current.add(epSrvKey);
+      if (lowerReason.includes('disponible') || lowerReason.includes('no hay opciones')) {
+        unavailableServersForEpisodeRef.current.add(epSrvKey);
+      }
+    }
 
-    if (shouldShowSelector) {
-      console.warn(`[AutoAdvance] Todos los servidores disponibles probados (${servers.length}). Fin de la lista.`);
+    let nextIdx = -1;
+    for (let offset = 1; offset <= servers.length; offset++) {
+      const candidateIdx = (currentIdx + offset) % servers.length;
+      const candidateSrv = servers[candidateIdx];
+      const candidateKey = getServerEpisodeKey(candidateSrv);
+      if (!failedServersForEpisodeRef.current.has(candidateKey)) {
+        nextIdx = candidateIdx;
+        break;
+      }
+    }
+
+    if (nextIdx === -1 || servers.length <= 1) {
+      console.warn(`[AutoAdvance] Todos los servidores disponibles probados (${servers.length}) para este capítulo sin repetir servidor fallido. Fin de la lista.`);
       setShowControls(true);
       setForceShowServerSelector(true);
       setAllServersExhausted(true);
       return;
     }
 
-    const nextIdx = (currentIdx + 1) % servers.length;
     const nextSrv = servers[nextIdx];
     const nextId = (nextSrv as any)?.id ?? nextSrv?.name ?? 'desconocido';
     activeServerIndexRef.current = nextIdx;
@@ -2489,7 +2520,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     else window.open(url, '_blank', 'noopener,noreferrer');
   }, [activeServer, activeEmbedUrl]);
 
-  // ── Detección de "Contenido no disponible" o Cloudflare + auto-salto controlado con backoff ───
+  // ── P2.6: Detección rápida de "Aún no está disponible" / "Contenido no disponible" o Cloudflare ───
   useEffect(() => {
     if (!isIframeMode) {
       setCfWarning(false);
@@ -2509,35 +2540,37 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     isRotatingRef.current = false;
     let cancelled = false;
 
-    // Sondeo de estado cada 2000ms en modo iframe
+    // Sondeo de estado cada 1000ms en modo iframe (sin esperar 10s; presupuesto <= 6s para no disponible)
     const interval = setInterval(async () => {
       const api = window.electronAPI;
       if (!api?.getEmbedStatus || cancelled) return;
 
-      // 1. Esperar 10000ms tras el load del iframe antes de evaluar errores de disponibilidad
-      if (Date.now() - iframeLoadedAtRef.current < 10000) return;
+      if (Date.now() - iframeLoadedAtRef.current < 1000) return;
 
       const st = await api.getEmbedStatus();
       if (cancelled || !st?.ok) return;
 
-      // 2. Contenido no disponible: exige 3 detecciones consecutivas
-      if (st.contentUnavailable) {
-        consecutiveUnavailableCountRef.current += 1;
-        if (consecutiveUnavailableCountRef.current >= 3) {
-          setUnavailableWarning(true);
-          consecutiveUnavailableCountRef.current = 0;
-          rotateWithBackoff('Contenido reportado no disponible (3 detecciones consecutivas tras 10s)');
-        }
-      } else {
-        consecutiveUnavailableCountRef.current = 0;
+      if ((st as any).readyState >= 2 || (typeof st.currentTime === 'number' && st.currentTime > 0.5)) {
+        recordFirstFrame('embed-status-ready');
       }
 
-      // Desafío / Bloqueo de Cloudflare: salta con back-off
+      if (st.contentUnavailable) {
+        setUnavailableWarning(true);
+        const curSrv = availableServersRef.current[activeServerIndexRef.current];
+        if (curSrv) {
+          const k = getServerEpisodeKey(curSrv);
+          unavailableServersForEpisodeRef.current.add(k);
+          failedServersForEpisodeRef.current.add(k);
+        }
+        advanceToNextServerRef.current('Aún no está disponible en servidor');
+        return;
+      }
+
       if (st.cloudflare) {
         setCfWarning(true);
-        rotateWithBackoff('Desafío Cloudflare persistente en frame');
+        advanceToNextServerRef.current('Desafío Cloudflare persistente en frame');
       }
-    }, 2000);
+    }, 1000);
 
     return () => {
       cancelled = true;
@@ -2552,19 +2585,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       isRotatingRef.current = false;
     };
-  }, [activeEmbedUrl, iframeReloadKey, isIframeMode, rotateWithBackoff]);
+  }, [activeEmbedUrl, iframeReloadKey, isIframeMode, recordFirstFrame, getServerEpisodeKey]);
 
-  // ── Auto-salto cuando un espejo falla la carga de red con backoff ───
+  // ── Auto-salto inmediato cuando el proveedor activo falla en red o es bloqueado por CDP (Gate 3R) ───
   useEffect(() => {
-    if (!isIframeMode) return;
     const api = window.electronAPI;
     if (!api?.onEmbedFailed) return;
     const off = api.onEmbedFailed((err: any) => {
-      const reason = `Fallo crítico de red did-fail-load (código: ${err?.code || 'ERR'}, url: ${err?.url || 'n/a'})`;
-      rotateWithBackoff(reason);
+      const desc = String(err?.desc || err?.code || '');
+      const failedUrl = String(err?.url || '').toLowerCase();
+      const curSrv = availableServersRef.current[activeServerIndexRef.current];
+      let curHost = '';
+      try {
+        curHost = curSrv?.url ? new URL(curSrv.url).hostname.toLowerCase() : '';
+      } catch (_) {}
+      const isBlockedByClient = desc.includes('ERR_BLOCKED_BY_CLIENT');
+      const matchesActiveHost = Boolean(curHost && failedUrl.includes(curHost));
+      if (isBlockedByClient || matchesActiveHost || isIframeMode) {
+        const reason = `Fallo crítico de red (${desc}, url: ${err?.url || 'n/a'})`;
+        advanceToNextServerRef.current(reason);
+      }
     });
     return () => off?.();
-  }, [isIframeMode, rotateWithBackoff]);
+  }, [isIframeMode]);
 
   // Regla de oro: No usar timeouts de 8 segundos para iframes. Dejar que el iframe cargue libremente.
   useEffect(() => {
@@ -2609,24 +2652,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (cancelled) return;
       if (res?.unavailable) {
         autoCommittedKeyRef.current = commitKey;
+        setUnavailableWarning(true);
+        const curSrv = availableServersRef.current[activeServerIndexRef.current];
+        if (curSrv) {
+          const k = getServerEpisodeKey(curSrv);
+          unavailableServersForEpisodeRef.current.add(k);
+          failedServersForEpisodeRef.current.add(k);
+        }
+        advanceToNextServerRef.current('Aún no está disponible en servidor');
         return;
       }
       if (res?.acted) {
         autoCommittedKeyRef.current = commitKey;
+        iframeLoadedAtRef.current = Date.now();
+        setAutoCommitDoneAt(Date.now());
         console.log(`[VideoPlayer] [P2.5 AutoCommit] Auto-commit ejecutado en "${activeServer.name}" (key=${commitKey})`);
         return;
       }
-      if (attempts < 8 && !cancelled) {
-        setTimeout(tryAutoCommit, 500);
+      if (attempts < 16 && !cancelled) {
+        setTimeout(tryAutoCommit, 450);
       }
     };
 
-    const t = setTimeout(tryAutoCommit, 600);
+    const t = setTimeout(tryAutoCommit, 500);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [isIframeMode, activeServer?.name, activeServer?.url, activeEmbedUrl, isSeriesOrAnime, episode, selectedSeason, selectedEpisode, media.id]);
+  }, [isIframeMode, activeServer?.name, activeServer?.url, activeEmbedUrl, isSeriesOrAnime, episode?.id, episode?.episodeNumber, selectedSeason, selectedEpisode, media.id]);
 
   const broadcastImmediate = useCallback((playingOverride?: boolean, extraOverrides?: Record<string, any>) => {
     if (!onBroadcastState) return;
@@ -3580,11 +3633,37 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </button>
             <button
               onClick={() => {
-                autoSkipCountRef.current = 0;
-                consecutiveUnavailableCountRef.current = 0;
-                setManualRetryCount((prev) => prev + 1);
-                setAllServersExhausted(false);
-                setIframeReloadKey((k) => k + 1);
+                const servers = availableServersRef.current || [];
+                const curSrv = servers[activeServerIndexRef.current];
+                const curKey = getServerEpisodeKey(curSrv);
+                const curRetries = retryCountByServerEpisodeRef.current.get(curKey) || 0;
+                const isKnownUnavailable = unavailableServersForEpisodeRef.current.has(curKey);
+
+                // P2.6: Un solo reintento por servidor y por episodio; nunca reintentar contra un servidor que ya sabemos que no tiene el capítulo.
+                if (!isKnownUnavailable && curRetries < 1) {
+                  retryCountByServerEpisodeRef.current.set(curKey, curRetries + 1);
+                  setManualRetryCount((prev) => prev + 1);
+                  setAllServersExhausted(false);
+                  setIframeReloadKey((k) => k + 1);
+                  return;
+                }
+
+                // Buscar otro servidor que no esté marcado como no disponible y tenga < 1 reintento
+                for (let offset = 1; offset <= servers.length; offset++) {
+                  const idx = (activeServerIndexRef.current + offset) % servers.length;
+                  const candidate = servers[idx];
+                  const candKey = getServerEpisodeKey(candidate);
+                  const candRetries = retryCountByServerEpisodeRef.current.get(candKey) || 0;
+                  if (!unavailableServersForEpisodeRef.current.has(candKey) && candRetries < 1) {
+                    retryCountByServerEpisodeRef.current.set(candKey, candRetries + 1);
+                    failedServersForEpisodeRef.current.delete(candKey);
+                    setManualRetryCount((prev) => prev + 1);
+                    setAllServersExhausted(false);
+                    handleSelectServer(idx, { auto: true });
+                    return;
+                  }
+                }
+                triggerSignalToast('Todos los servidores agotaron su único reintento para este capítulo.');
               }}
               className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition"
             >

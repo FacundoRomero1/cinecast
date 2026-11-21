@@ -977,6 +977,30 @@ function createWindow() {
   registerCineProtocol(customSession);
   registerCineProtocol(session.defaultSession);
 
+  const notifyNetworkBlockIfRelevant = (details) => {
+    if (!details || !details.url || !mainWindow || mainWindow.isDestroyed()) return;
+    const err = String(details.error || '');
+    if (
+      err === 'net::ERR_BLOCKED_BY_CLIENT' ||
+      err === 'net::ERR_CONNECTION_REFUSED' ||
+      err === 'net::ERR_NAME_NOT_RESOLVED' ||
+      err === 'net::ERR_ADDRESS_UNREACHABLE'
+    ) {
+      if (details.url.startsWith('http://127.0.0.1') || details.url.startsWith('http://localhost') || details.url.startsWith('cine://')) {
+        return;
+      }
+      mainWindow.webContents.send('embed-failed', {
+        code: -20,
+        desc: err,
+        url: details.url,
+        resourceType: details.resourceType,
+      });
+    }
+  };
+  customSession.webRequest.onErrorOccurred(notifyNetworkBlockIfRelevant);
+  session.defaultSession.webRequest.onErrorOccurred(notifyNetworkBlockIfRelevant);
+  videoSesForTrace.webRequest.onErrorOccurred(notifyNetworkBlockIfRelevant);
+
   mainWindow = new BrowserWindow({
     width: 1366,
     height: 768,
@@ -1525,6 +1549,9 @@ ipcMain.handle('get-real-media-state', async () => {
               found: true,
               currentTime: cur,
               duration: dur,
+              readyState: el.readyState || 0,
+              currentSrc: el.currentSrc || el.src || '',
+              frameUrl: location.href || '',
               ended: Boolean(el.ended || (dur > 0 && cur >= dur - 0.15)),
               isPlaying: !el.paused && !el.ended,
               isLive: !Number.isFinite(el.duration) && el.readyState >= 2,
@@ -1579,9 +1606,23 @@ ipcMain.handle('control-active-media', async (_event, { action, value }) => {
             bodyTxt.includes('aún no hay opciones') ||
             bodyTxt.includes('aun no hay opciones') ||
             bodyTxt.includes('no hay opciones para este título') ||
+            bodyTxt.includes('no hay opciones para este titulo') ||
             bodyTxt.includes('contenido no disponible')
           ) {
             return { acted: false, hasMedia: false, isPlaying: false, currentTime: 0, unavailable: true };
+          }
+          if (location.hostname.includes('moviemaster.lat')) {
+            if (bodyTxt.includes('cargando') || bodyTxt.includes('anuncio') || bodyTxt.includes('saltar en')) {
+              window.__cinecastAutoCommitted = true;
+              return { acted: true, hasMedia: true, isPlaying: true, currentTime: 0, alreadyCommitted: true };
+            }
+            const serversReady =
+              bodyTxt.includes('disponible en') ||
+              bodyTxt.includes('opción 1') ||
+              bodyTxt.includes('opcion 1');
+            if (!serversReady) {
+              return { acted: false, hasMedia: false, isPlaying: false, currentTime: 0, pending: true };
+            }
           }
           if (window.__cinecastAutoCommitted) {
             return { acted: true, hasMedia: true, isPlaying: true, currentTime: 0, alreadyCommitted: true };
@@ -1592,9 +1633,14 @@ ipcMain.handle('control-active-media', async (_event, { action, value }) => {
               return (t === 'reproducir' || t.startsWith('reproducir') || t === 'play' || el.id === 'go') && !el.disabled && el.offsetParent !== null;
             });
           if (goBtn && !goBtn.disabled && goBtn.offsetParent !== null) {
-            window.__cinecastAutoCommitted = true;
             goBtn.click();
-            return { acted: true, hasMedia: true, isPlaying: true, currentTime: 0 };
+            const afterTxt = (document.body ? (document.body.innerText || '') : '').toLowerCase();
+            const transitioned = !location.hostname.includes('moviemaster.lat') || afterTxt.includes('cargando') || afterTxt.includes('anuncio') || goBtn.offsetParent === null;
+            if (transitioned) {
+              window.__cinecastAutoCommitted = true;
+              return { acted: true, hasMedia: true, isPlaying: true, currentTime: 0 };
+            }
+            return { acted: false, hasMedia: false, isPlaying: false, currentTime: 0, pending: true };
           }
           const vids = Array.from(document.querySelectorAll('video'));
           for (const v of vids) {
@@ -1881,6 +1927,14 @@ ipcMain.handle('get-embed-status', async () => {
         const frameText = await frame.executeJavaScript('document.body ? (document.body.innerText || "").slice(0, 2000) : ""', false);
         const lower = `${frameTitle} ${frameText}`.toLowerCase();
         if (
+          lower.includes('aún no está disponible') ||
+          lower.includes('aun no esta disponible') ||
+          lower.includes('no está disponible') ||
+          lower.includes('no esta disponible') ||
+          lower.includes('aún no hay opciones') ||
+          lower.includes('aun no hay opciones') ||
+          lower.includes('no hay opciones para este título') ||
+          lower.includes('no hay opciones para este titulo') ||
           lower.includes('contenido no disponible') ||
           lower.includes('no disponible') ||
           lower.includes('video not found') ||
@@ -1889,6 +1943,7 @@ ipcMain.handle('get-embed-status', async () => {
           lower.includes('file was deleted') ||
           lower.includes('media is not available') ||
           lower.includes('no source available') ||
+          lower.includes('not available yet') ||
           lower.includes('404 not found') ||
           lower.includes('error 404') ||
           lower.includes('404 error')
@@ -1906,13 +1961,22 @@ ipcMain.handle('get-embed-status', async () => {
 
     let currentTime = null;
     let duration = null;
+    let readyState = 0;
+    let currentSrc = '';
     for (const frame of root.framesInSubtree) {
       try {
         const mediaInfo = await frame.executeJavaScript(`
           (() => {
-            const v = document.querySelector('video');
-            if (v && !isNaN(v.duration) && v.duration > 0) {
-              return { currentTime: Math.round(v.currentTime), duration: Math.round(v.duration) };
+            const vids = Array.from(document.querySelectorAll('video'));
+            for (const v of vids) {
+              if (v.readyState >= 2 || v.currentTime > 0 || (!isNaN(v.duration) && v.duration > 0)) {
+                return {
+                  currentTime: Number(v.currentTime.toFixed(2)),
+                  duration: Number.isFinite(v.duration) ? Math.round(v.duration) : 0,
+                  readyState: v.readyState || 0,
+                  currentSrc: v.currentSrc || v.src || ''
+                };
+              }
             }
             return null;
           })()
@@ -1920,12 +1984,14 @@ ipcMain.handle('get-embed-status', async () => {
         if (mediaInfo) {
           currentTime = mediaInfo.currentTime;
           duration = mediaInfo.duration;
+          readyState = mediaInfo.readyState;
+          currentSrc = mediaInfo.currentSrc;
           break;
         }
       } catch (_) {}
     }
 
-    return { ok: true, title: mainTitle, cloudflare: cf, contentUnavailable, src: lastFrame.url, currentTime, duration };
+    return { ok: true, title: mainTitle, cloudflare: cf, contentUnavailable, src: lastFrame.url, currentTime, duration, readyState, currentSrc };
   } catch (err) {
     return { ok: false, reason: String(err) };
   }
