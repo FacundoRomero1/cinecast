@@ -339,9 +339,37 @@ app.whenReady().then(async () => {
                 return { acted: false, pending: true };
               }
             }
+            if (action === 'autoSkipEmbedAd') {
+              if (location.href.startsWith('http://localhost') || location.href.startsWith('http://127.0.0.1') || location.href === 'about:blank') {
+                return { skipped: false };
+              }
+              if (window.__cinecastAdSkipped) {
+                return { skipped: true, alreadySkipped: true };
+              }
+              const candidates = Array.from(document.querySelectorAll('button, [role="button"], a, div, span')).filter((el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = el.getBoundingClientRect();
+                if (rect.width < 20 || rect.height < 14 || rect.width > 420 || rect.height > 120) return false;
+                const t = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                if (!t || t.length > 40) return false;
+                return t.includes('saltar') || t.includes('skip') || t.includes('omitir');
+              });
+              const leafCandidates = candidates.filter((el) => !candidates.some((other) => other !== el && el.contains(other)));
+              const target = leafCandidates[0] || candidates[0];
+              if (!target) return { skipped: false, notFound: true };
+              const txt = (target.innerText || target.textContent || '').trim().toLowerCase();
+              if (target.disabled || /en\\s+\\d+|in\\s+\\d+/.test(txt)) {
+                return { skipped: false, countdown: true, text: txt };
+              }
+              window.__cinecastAdSkipped = true;
+              target.click();
+              return { skipped: true, text: txt };
+            }
             return { acted: false };
           })()`), 900, { acted: false });
-          if (res && (res.acted || res.unavailable)) return res;
+          if (res && (res.acted || res.unavailable || res.skipped || res.countdown)) return res;
         } catch (_) {}
       }
       return { acted: false };

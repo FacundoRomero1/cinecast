@@ -2681,6 +2681,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         iframeLoadedAtRef.current = Date.now();
         setAutoCommitDoneAt(Date.now());
         console.log(`[VideoPlayer] [P2.5 AutoCommit] Auto-commit ejecutado en "${activeServer.name}" (key=${commitKey})`);
+        // P2.13: Intento único de saltar pre-roll (espera a que termine la cuenta regresiva del botón si existe, 1 solo click)
+        const triggerAdSkip = async (countdownRetriesLeft: number) => {
+          if (cancelled || userInteractedRef.current) return;
+          const skipRes = await (
+            (window.electronAPI as any)?.autoSkipEmbedAd?.() ??
+            window.electronAPI?.controlActiveMedia?.({ action: 'autoSkipEmbedAd' })
+          );
+          if (cancelled) return;
+          if (skipRes?.skipped) {
+            console.log(`[AD] saltado en ${Date.now() - mountTimeRef.current}ms`);
+          } else if (skipRes?.countdown && countdownRetriesLeft > 0) {
+            setTimeout(() => { triggerAdSkip(countdownRetriesLeft - 1); }, 1200);
+          } else {
+            console.log(`[AD] botón saltar no apareció (${skipRes?.text || 'sin botón'})`);
+          }
+        };
+        setTimeout(() => { triggerAdSkip(10); }, 5500);
         return;
       }
       if (attempts < 16 && !cancelled) {

@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   controlActiveMedia: (payload) => ipcRenderer.invoke('control-active-media', payload),
   autoCommitEmbedPlay: () => ipcRenderer.invoke('control-active-media', { action: 'autoCommitPlay' }),
+  autoSkipEmbedAd: () => ipcRenderer.invoke('control-active-media', { action: 'autoSkipEmbedAd' }),
   probeStreams: (urls) => ipcRenderer.invoke('probe-streams', urls),
   checkEmbedProviders: () => ipcRenderer.invoke('check-embed-providers'),
   getEmbedStatus: () => ipcRenderer.invoke('get-embed-status'),
