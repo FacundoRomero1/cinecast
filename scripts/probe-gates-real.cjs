@@ -111,23 +111,31 @@ app.whenReady().then(async () => {
       return best;
     });
 
-    safeHandle('get-embed-status', async () => {
+    const readEmbedStatus = async () => {
       if (!screenWin || screenWin.isDestroyed()) return null;
       try {
+        const allFrames = getAllFrames();
         const root = screenWin.webContents.mainFrame;
-        const frames = root.framesInSubtree.filter((f) => f !== root);
-        if (!frames.length) return { ok: false, reason: 'no-frame' };
+        const frames = allFrames.filter((f) => f !== root);
+        if (!allFrames.length) return { ok: false, reason: 'no-frame' };
 
         let contentUnavailable = false;
         let cf = false;
         let mainTitle = '';
-        const lastFrame = frames[frames.length - 1];
+        let embedHasRetryBtn = false;
+        const lastFrame = frames.length ? frames[frames.length - 1] : root;
 
         for (const frame of frames) {
           try {
-            const frameTitle = await withTimeout(frame.executeJavaScript('document.title || ""', false), 700, '');
-            const frameText = await withTimeout(frame.executeJavaScript('document.body ? (document.body.innerText || "").slice(0, 2000) : ""', false), 700, '');
-            const lower = `${frameTitle} ${frameText}`.toLowerCase();
+            const frameInfo = await withTimeout(frame.executeJavaScript(`(() => {
+              const title = document.title || '';
+              const text = document.body ? (document.body.innerText || '').slice(0, 2000) : '';
+              const sr = document.getElementById('sr');
+              const retryVisible = Boolean(sr && sr.offsetParent !== null) || text.includes('Aún no está disponible');
+              return { title, text, retryVisible };
+            })()`, false), 700, null);
+            if (!frameInfo) continue;
+            const lower = `${frameInfo.title} ${frameInfo.text}`.toLowerCase();
             if (
               lower.includes('aún no está disponible') ||
               lower.includes('aun no esta disponible') ||
@@ -148,48 +156,80 @@ app.whenReady().then(async () => {
             ) {
               contentUnavailable = true;
             }
-            if (/just a moment|attention required|checking your browser|verify|cloudflare/i.test(frameTitle)) {
+            if (/just a moment|attention required|checking your browser|verify|cloudflare/i.test(frameInfo.title)) {
               cf = true;
             }
-            if (frameTitle && !mainTitle) mainTitle = frameTitle;
+            if (frameInfo.retryVisible) embedHasRetryBtn = true;
+            if (frameInfo.title && !mainTitle) mainTitle = frameInfo.title;
           } catch (_) {}
         }
 
-        let currentTime = null;
-        let duration = null;
-        let readyState = 0;
-        let currentSrc = '';
-        for (const frame of root.framesInSubtree) {
+        let bestVideo = null;
+        for (const frame of allFrames) {
           try {
             const mediaInfo = await withTimeout(frame.executeJavaScript(`(() => {
               const vids = Array.from(document.querySelectorAll('video'));
+              let best = null;
               for (const v of vids) {
-                if (v.readyState >= 2 || v.currentTime > 0 || (!isNaN(v.duration) && v.duration > 0)) {
-                  return {
-                    currentTime: Number(v.currentTime.toFixed(2)),
-                    duration: Number.isFinite(v.duration) ? Math.round(v.duration) : 0,
-                    readyState: v.readyState || 0,
-                    currentSrc: v.currentSrc || v.src || ''
-                  };
+                const dur = Number.isFinite(v.duration) ? Math.round(v.duration) : 0;
+                const cur = Number.isFinite(v.currentTime) ? Number(v.currentTime.toFixed(2)) : 0;
+                const rs = v.readyState || 0;
+                const src = v.currentSrc || v.src || '';
+                if (rs >= 2 || cur > 0 || dur > 0 || src) {
+                  if (
+                    !best ||
+                    (dur > 300 && best.duration <= 300) ||
+                    (dur > best.duration) ||
+                    (dur === best.duration && rs > best.readyState) ||
+                    (dur === best.duration && rs === best.readyState && cur > best.currentTime)
+                  ) {
+                    best = {
+                      currentTime: cur,
+                      duration: dur,
+                      readyState: rs,
+                      currentSrc: src,
+                      frameUrl: location.href || '',
+                      host: location.hostname || ''
+                    };
+                  }
                 }
               }
-              return null;
+              return best;
             })()`, false), 700, null);
             if (mediaInfo) {
-              currentTime = mediaInfo.currentTime;
-              duration = mediaInfo.duration;
-              readyState = mediaInfo.readyState;
-              currentSrc = mediaInfo.currentSrc;
-              break;
+              if (
+                !bestVideo ||
+                (mediaInfo.duration > 300 && bestVideo.duration <= 300) ||
+                (mediaInfo.duration > bestVideo.duration) ||
+                (mediaInfo.duration === bestVideo.duration && mediaInfo.readyState > bestVideo.readyState) ||
+                (mediaInfo.duration === bestVideo.duration && mediaInfo.readyState === bestVideo.readyState && mediaInfo.currentTime > bestVideo.currentTime)
+              ) {
+                bestVideo = mediaInfo;
+              }
             }
           } catch (_) {}
         }
 
-        return { ok: true, title: mainTitle, cloudflare: cf, contentUnavailable, src: lastFrame.url, currentTime, duration, readyState, currentSrc };
+        return {
+          ok: true,
+          title: mainTitle,
+          cloudflare: cf,
+          contentUnavailable,
+          embedHasRetryBtn,
+          src: lastFrame.url,
+          currentTime: bestVideo ? bestVideo.currentTime : -1,
+          duration: bestVideo ? bestVideo.duration : -1,
+          readyState: bestVideo ? bestVideo.readyState : -1,
+          currentSrc: bestVideo ? bestVideo.currentSrc : '',
+          videoFrameUrl: bestVideo ? bestVideo.frameUrl : '',
+          videoHost: bestVideo ? bestVideo.host : '',
+        };
       } catch (err) {
         return { ok: false, reason: String(err) };
       }
-    });
+    };
+
+    safeHandle('get-embed-status', readEmbedStatus);
 
     safeHandle('control-active-media', async (_event, { action }) => {
       const frames = getAllFrames();
@@ -312,9 +352,13 @@ app.whenReady().then(async () => {
       },
     });
 
+    const adMountLogs = [];
     screenWin.webContents.on('console-message', (ev, level, msg) => {
       const text = typeof msg === 'string' ? msg : (ev && typeof ev.message === 'string' ? ev.message : '');
       const lvl = typeof level === 'number' ? level : (ev && typeof ev.level === 'number' ? ev.level : 0);
+      if (text.includes('[AD] iframe montado en')) {
+        adMountLogs.push(text);
+      }
       if (
         lvl >= 2 ||
         text.includes('[AD]') ||
@@ -349,7 +393,6 @@ app.whenReady().then(async () => {
         const vp = window.__videoPlayerState || {};
         const h2 = document.querySelector('h2');
         const iframe = document.querySelector('iframe[data-embed]');
-        const video = document.querySelector('video');
         const bodyText = document.body ? document.body.innerText : '';
         return {
           title: h2 ? h2.textContent.trim() : '',
@@ -358,64 +401,19 @@ app.whenReady().then(async () => {
           selectedSeason: vp.selectedSeason,
           selectedEpisode: vp.selectedEpisode,
           iframeSrc: iframe ? iframe.src : '',
-          directVideoReady: video ? video.readyState : -1,
-          directVideoTime: video ? Number(video.currentTime.toFixed(2)) : -1,
-          directVideoSrc: video ? (video.currentSrc || video.src || '') : '',
           hasRetryHang: bodyText.includes('Ningún servidor respondió'),
           reqs: Array.isArray(window.__req) ? window.__req.slice(-5) : []
         };
       })()`);
 
-      let embedReady = -1;
-      let embedTime = -1;
-      let embedSrc = '';
-      let embedHost = '';
-      let embedHasRetryBtn = false;
-      const frames = getAllFrames();
-      for (const f of frames) {
-        if (f === screenWin.webContents.mainFrame) continue;
-        try {
-          const fInfo = await withTimeout(f.executeJavaScript(`(() => {
-            if (location.href.startsWith('http://127.0.0.1') || location.href.startsWith('http://localhost') || location.href === 'about:blank') return null;
-            const vids = Array.from(document.querySelectorAll('video'));
-            let bestV = null;
-            for (const v of vids) {
-              if (!bestV || v.readyState > bestV.readyState || v.currentTime > bestV.currentTime) {
-                bestV = v;
-              }
-            }
-            const txt = (document.body ? document.body.innerText : '') || '';
-            const sr = document.getElementById('sr');
-            const retryVisible = Boolean(sr && sr.offsetParent !== null) || txt.includes('Aún no está disponible');
-            return {
-              url: location.href,
-              host: location.hostname,
-              readyState: bestV ? bestV.readyState : -1,
-              currentTime: bestV ? Number(bestV.currentTime.toFixed(2)) : -1,
-              currentSrc: bestV ? (bestV.currentSrc || bestV.src || '') : '',
-              retryVisible
-            };
-          })()`), 700, null);
-          if (fInfo && fInfo.host) {
-            if (fInfo.readyState > embedReady || !embedHost) {
-              embedReady = fInfo.readyState;
-              embedTime = fInfo.currentTime;
-              embedSrc = fInfo.currentSrc || fInfo.url;
-              embedHost = fInfo.host;
-            }
-            if (fInfo.retryVisible) embedHasRetryBtn = true;
-          }
-        } catch (_) {}
-      }
-
-      const effectiveReady = ui.directVideoReady >= 2 ? ui.directVideoReady : embedReady;
-      const effectiveTime = ui.directVideoReady >= 2 ? ui.directVideoTime : embedTime;
-      const effectiveSrc = ui.directVideoReady >= 2 ? ui.directVideoSrc : embedSrc;
-      let providerHost = embedHost;
-      if (!providerHost && effectiveSrc) {
-        try { providerHost = new URL(effectiveSrc).hostname; } catch (_) {}
-      }
-      if (!providerHost && ui.activeServerUrl) {
+      // P2.8: Resolver el <video> más profundo vía el mismo readEmbedStatus (get-embed-status)
+      const st = await readEmbedStatus();
+      const effectiveReady = st && typeof st.readyState === 'number' ? st.readyState : -1;
+      const effectiveTime = st && typeof st.currentTime === 'number' ? st.currentTime : -1;
+      const effectiveDuration = st && typeof st.duration === 'number' ? st.duration : -1;
+      const effectiveSrc = st && typeof st.currentSrc === 'string' ? st.currentSrc : '';
+      let providerHost = (st && st.videoHost) || '';
+      if ((!providerHost || providerHost === '127.0.0.1' || providerHost === 'localhost') && ui.activeServerUrl) {
         try { providerHost = new URL(ui.activeServerUrl).hostname; } catch (_) {}
       }
 
@@ -423,10 +421,22 @@ app.whenReady().then(async () => {
         ...ui,
         effectiveReady,
         effectiveTime,
+        effectiveDuration,
         effectiveSrc,
         providerHost,
-        embedHasRetryBtn,
+        embedHasRetryBtn: Boolean(st && st.embedHasRetryBtn),
       };
+    };
+
+    const MIN_SERIES_DURATION = 300;
+    const isRealContentFrame = (snap, minDuration = MIN_SERIES_DURATION) => {
+      if (!snap) return false;
+      return (
+        snap.effectiveReady >= 2 &&
+        snap.effectiveTime > 0.5 &&
+        snap.effectiveDuration > minDuration &&
+        isRealProviderStream(snap)
+      );
     };
 
     const isRealProviderStream = (snap) => {
@@ -498,11 +508,15 @@ app.whenReady().then(async () => {
     let snap2R1 = null;
     let pass2R1 = false;
     let elapsed2R1 = 0;
-    while (Date.now() - t2R1Start < 20000) {
+    let sawPreroll2R1 = false;
+    while (Date.now() - t2R1Start < 45000) {
       await wait(800);
       snap2R1 = await getPlayerSnapshot();
-      const isRealSrc = isRealProviderStream(snap2R1);
-      if (snap2R1.effectiveReady >= 2 && snap2R1.effectiveTime > 0.5 && isRealSrc) {
+      if (!sawPreroll2R1 && snap2R1.effectiveReady >= 2 && snap2R1.effectiveDuration > 0 && snap2R1.effectiveDuration <= MIN_SERIES_DURATION) {
+        sawPreroll2R1 = true;
+        console.log(`[Gate 2R-1] Pre-roll detectado (duration=${snap2R1.effectiveDuration}s <= ${MIN_SERIES_DURATION}s, currentSrc=${snap2R1.effectiveSrc.slice(0, 70)}) — siguiendo espera por contenido real...`);
+      }
+      if (isRealContentFrame(snap2R1, MIN_SERIES_DURATION)) {
         pass2R1 = true;
         elapsed2R1 = Number(((Date.now() - t2R1Start) / 1000).toFixed(1));
         break;
@@ -515,8 +529,9 @@ app.whenReady().then(async () => {
       servidorActivo: snap2R1?.activeServerName || 'N/A',
       hostReq: lastReq2R1 ? `${lastReq2R1.host} (${lastReq2R1.status})` : (snap2R1?.providerHost || 'N/A'),
       readyState: snap2R1?.effectiveReady ?? -1,
-      currentTime: `${snap2R1?.effectiveTime ?? 0}s`,
-      elapsed: `${elapsed2R1}s (<=20s)`,
+      currentTime: `${snap2R1?.effectiveTime ?? -1}s`,
+      duration: `${snap2R1?.effectiveDuration ?? -1}s (>300s)`,
+      elapsed: `${elapsed2R1}s`,
       currentSrc: formatDisplaySrc(snap2R1),
       resultado: pass2R1 ? 'PASA' : 'FALLA',
     });
@@ -529,10 +544,32 @@ app.whenReady().then(async () => {
     const initialServer3R = snap2R1?.activeServerName || 'MovieMaster (Latino)';
     const t3RStart = Date.now();
 
+    const cdpUrlByRequestId = new Map();
     for (const wc of webContents.getAllWebContents()) {
       if (wc.isDestroyed()) continue;
       try {
         if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+        wc.debugger.on('message', (_ev, method, params) => {
+          if (method === 'Network.requestWillBeSent' && params?.requestId && params?.request?.url) {
+            cdpUrlByRequestId.set(params.requestId, params.request.url);
+          } else if (
+            method === 'Network.loadingFailed' &&
+            (params?.blockedReason === 'inspector' ||
+              String(params?.errorText || '').includes('ERR_BLOCKED_BY_CLIENT') ||
+              String(params?.errorText || '').includes('ERR_FAILED'))
+          ) {
+            const failedUrl = cdpUrlByRequestId.get(params.requestId) || '';
+            if (failedUrl.includes('moviemaster.lat') || failedUrl.includes('quickcore.fun')) {
+              if (screenWin && !screenWin.isDestroyed()) {
+                screenWin.webContents.send('embed-failed', {
+                  code: -20,
+                  desc: params.errorText || 'net::ERR_BLOCKED_BY_CLIENT',
+                  url: failedUrl,
+                });
+              }
+            }
+          }
+        });
         await wc.debugger.sendCommand('Network.enable');
         await wc.debugger.sendCommand('Network.setBlockedURLs', {
           urls: [
@@ -567,8 +604,7 @@ app.whenReady().then(async () => {
       await wait(800);
       snap3R = await getPlayerSnapshot();
       const switchedServer = snap3R.activeServerName && snap3R.activeServerName !== initialServer3R;
-      const isRealSrc = isRealProviderStream(snap3R);
-      if (switchedServer && snap3R.effectiveReady >= 2 && snap3R.effectiveTime > 0.5 && isRealSrc) {
+      if (switchedServer && isRealContentFrame(snap3R, MIN_SERIES_DURATION)) {
         pass3R = true;
         elapsed3R = Number(((Date.now() - t3RStart) / 1000).toFixed(1));
         break;
@@ -593,7 +629,8 @@ app.whenReady().then(async () => {
       servidorActivo: `${initialServer3R} -> ${snap3R?.activeServerName || 'N/A'}`,
       hostReq: lastReq3R ? `${lastReq3R.host} (${lastReq3R.status})` : (snap3R?.providerHost || 'N/A'),
       readyState: snap3R?.effectiveReady ?? -1,
-      currentTime: `${snap3R?.effectiveTime ?? 0}s`,
+      currentTime: `${snap3R?.effectiveTime ?? -1}s`,
+      duration: `${snap3R?.effectiveDuration ?? -1}s (>300s)`,
       elapsed: `${elapsed3R}s (<=25s)`,
       currentSrc: formatDisplaySrc(snap3R),
       resultado: pass3R ? 'PASA' : 'FALLA',
@@ -627,8 +664,7 @@ app.whenReady().then(async () => {
       const isFallbackServer =
         snap2R2.activeServerName &&
         !snap2R2.activeServerName.toLowerCase().includes('moviemaster');
-      const isRealSrc = isRealProviderStream(snap2R2);
-      if (isFallbackServer && snap2R2.effectiveReady >= 2 && snap2R2.effectiveTime > 0.5 && isRealSrc) {
+      if (isFallbackServer && isRealContentFrame(snap2R2, MIN_SERIES_DURATION)) {
         pass2R2 = true;
         elapsed2R2 = Number(((Date.now() - t2R2Start) / 1000).toFixed(1));
         break;
@@ -641,16 +677,17 @@ app.whenReady().then(async () => {
       servidorActivo: snap2R2?.activeServerName || 'N/A',
       hostReq: lastReq2R2 ? `${lastReq2R2.host} (${lastReq2R2.status})` : (snap2R2?.providerHost || 'N/A'),
       readyState: snap2R2?.effectiveReady ?? -1,
-      currentTime: `${snap2R2?.effectiveTime ?? 0}s`,
+      currentTime: `${snap2R2?.effectiveTime ?? -1}s`,
+      duration: `${snap2R2?.effectiveDuration ?? -1}s (>300s)`,
       elapsed: `${elapsed2R2}s (<=20s)`,
       currentSrc: formatDisplaySrc(snap2R2),
       resultado: pass2R2 ? 'PASA' : 'FALLA',
     });
 
     // =========================================================================
-    // GATE 4R — Elegir a mano un capítulo que el proveedor no tiene (Captura 3: T37:E4 desde el selector) -> sale solo en < 10 s sin "Reintentar" colgado
+    // GATE 4R — P2.10: Selección manual de T37:E4 hasta frame real (duration > 300) con techo de 15 s
     // =========================================================================
-    console.log('\n--- Gate 4R: Selección manual en selector de capítulo inexistente en MovieMaster (T37:E4) ---');
+    console.log('\n--- Gate 4R: Selección manual en selector de capítulo inexistente en MovieMaster (T37:E4, techo 15s con frame real) ---');
     // Primero pasar a E5 (que sí existe en MovieMaster) y luego seleccionar manualmente E4 en el dropdown
     await screenWin.webContents.executeJavaScript(`(() => {
       const epSelect = document.querySelector('select[data-testid="episode-select"]');
@@ -673,7 +710,7 @@ app.whenReady().then(async () => {
     let snap4R = null;
     let pass4R = false;
     let elapsed4R = 0;
-    while (Date.now() - t4RStart < 10000) {
+    while (Date.now() - t4RStart < 15000) {
       await wait(600);
       snap4R = await getPlayerSnapshot();
       const leftMovieMaster =
@@ -682,7 +719,7 @@ app.whenReady().then(async () => {
         !snap4R.activeServerName.toLowerCase().includes('moviemaster') &&
         !snap4R.embedHasRetryBtn &&
         !snap4R.hasRetryHang;
-      if (leftMovieMaster) {
+      if (leftMovieMaster && isRealContentFrame(snap4R, MIN_SERIES_DURATION)) {
         pass4R = true;
         elapsed4R = Number(((Date.now() - t4RStart) / 1000).toFixed(1));
         break;
@@ -691,22 +728,25 @@ app.whenReady().then(async () => {
     if (!elapsed4R) elapsed4R = Number(((Date.now() - t4RStart) / 1000).toFixed(1));
     const lastReq4R = snap4R?.reqs?.[snap4R.reqs.length - 1];
     gateResults.push({
-      gate: 'Gate 4R (Selección manual T37:E4 sale <10s sin Reintentar)',
+      gate: 'Gate 4R (Selección manual T37:E4 -> frame real <=15s)',
       servidorActivo: snap4R?.activeServerName || 'N/A',
       hostReq: lastReq4R ? `${lastReq4R.host} (${lastReq4R.status})` : (snap4R?.providerHost || 'N/A'),
       readyState: snap4R?.effectiveReady ?? -1,
-      currentTime: `${snap4R?.effectiveTime ?? 0}s`,
-      elapsed: `${elapsed4R}s (<10s)`,
-      currentSrc: (snap4R?.effectiveSrc || snap4R?.activeServerUrl || '').slice(0, 85),
+      currentTime: `${snap4R?.effectiveTime ?? -1}s`,
+      duration: `${snap4R?.effectiveDuration ?? -1}s (>300s)`,
+      elapsed: `${elapsed4R}s (<=15s)`,
+      currentSrc: formatDisplaySrc(snap4R),
       resultado: pass4R ? 'PASA' : 'FALLA',
     });
 
     console.log('\n=== RESULTADOS GATES REALES (2R, 3R, 4R) ===');
-    console.log('| Gate | Servidor Final | Host en window.__req | readyState | currentTime | Tiempo | currentSrc | Resultado |');
-    console.log('|---|---|---|---|---|---|---|---|');
+    console.log('| Gate | Servidor Final | Host en window.__req | readyState | currentTime | duration | Tiempo | currentSrc | Resultado |');
+    console.log('|---|---|---|---|---|---|---|---|---|');
     for (const r of gateResults) {
-      console.log(`| ${r.gate} | ${r.servidorActivo} | ${r.hostReq} | ${r.readyState} | ${r.currentTime} | ${r.elapsed} | ${r.currentSrc} | **${r.resultado}** |`);
+      console.log(`| ${r.gate} | ${r.servidorActivo} | ${r.hostReq} | ${r.readyState} | ${r.currentTime} | ${r.duration} | ${r.elapsed} | ${r.currentSrc} | **${r.resultado}** |`);
     }
+    console.log('\n=== LOGS [AD] MEDIDOS (P2.12) ===');
+    for (const l of adMountLogs) console.log(l);
 
     const allPass = gateResults.every((r) => r.resultado === 'PASA');
     console.log(`\nRESULTADO GLOBAL GATES REALES: ${allPass ? 'PASA' : 'FALLA'}`);

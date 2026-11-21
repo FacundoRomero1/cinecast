@@ -1912,14 +1912,23 @@ ipcMain.handle('set-stream-headers', (_e, { url, referrer, userAgent }) => {
 ipcMain.handle('get-embed-status', async () => {
   if (!mainWindow) return null;
   try {
+    const allFrames = [];
+    for (const wc of webContents.getAllWebContents()) {
+      if (wc.isDestroyed()) continue;
+      try {
+        if (wc.mainFrame && Array.isArray(wc.mainFrame.framesInSubtree)) {
+          allFrames.push(...wc.mainFrame.framesInSubtree);
+        }
+      } catch (_) {}
+    }
     const root = mainWindow.webContents.mainFrame;
-    const frames = root.framesInSubtree.filter((f) => f !== root);
-    if (!frames.length) return { ok: false, reason: 'no-frame' };
+    const frames = allFrames.filter((f) => f !== root);
+    if (!allFrames.length) return { ok: false, reason: 'no-frame' };
 
     let contentUnavailable = false;
     let cf = false;
     let mainTitle = '';
-    const lastFrame = frames[frames.length - 1];
+    const lastFrame = frames.length ? frames[frames.length - 1] : root;
 
     for (const frame of frames) {
       try {
@@ -1959,39 +1968,54 @@ ipcMain.handle('get-embed-status', async () => {
       }
     }
 
-    let currentTime = null;
-    let duration = null;
-    let readyState = 0;
-    let currentSrc = '';
-    for (const frame of root.framesInSubtree) {
+    let bestVideo = null;
+    for (const frame of allFrames) {
       try {
         const mediaInfo = await frame.executeJavaScript(`
           (() => {
             const vids = Array.from(document.querySelectorAll('video'));
+            let best = null;
             for (const v of vids) {
-              if (v.readyState >= 2 || v.currentTime > 0 || (!isNaN(v.duration) && v.duration > 0)) {
-                return {
-                  currentTime: Number(v.currentTime.toFixed(2)),
-                  duration: Number.isFinite(v.duration) ? Math.round(v.duration) : 0,
-                  readyState: v.readyState || 0,
-                  currentSrc: v.currentSrc || v.src || ''
-                };
+              const dur = Number.isFinite(v.duration) ? Math.round(v.duration) : 0;
+              const cur = Number.isFinite(v.currentTime) ? Number(v.currentTime.toFixed(2)) : 0;
+              const rs = v.readyState || 0;
+              const src = v.currentSrc || v.src || '';
+              if (rs >= 2 || cur > 0 || dur > 0 || src) {
+                if (
+                  !best ||
+                  (dur > 300 && best.duration <= 300) ||
+                  (dur > best.duration) ||
+                  (dur === best.duration && rs > best.readyState) ||
+                  (dur === best.duration && rs === best.readyState && cur > best.currentTime)
+                ) {
+                  best = { currentTime: cur, duration: dur, readyState: rs, currentSrc: src, frameUrl: location.href || '' };
+                }
               }
             }
-            return null;
+            return best;
           })()
         `, false);
         if (mediaInfo) {
-          currentTime = mediaInfo.currentTime;
-          duration = mediaInfo.duration;
-          readyState = mediaInfo.readyState;
-          currentSrc = mediaInfo.currentSrc;
-          break;
+          if (
+            !bestVideo ||
+            (mediaInfo.duration > 300 && bestVideo.duration <= 300) ||
+            (mediaInfo.duration > bestVideo.duration) ||
+            (mediaInfo.duration === bestVideo.duration && mediaInfo.readyState > bestVideo.readyState) ||
+            (mediaInfo.duration === bestVideo.duration && mediaInfo.readyState === bestVideo.readyState && mediaInfo.currentTime > bestVideo.currentTime)
+          ) {
+            bestVideo = mediaInfo;
+          }
         }
       } catch (_) {}
     }
 
-    return { ok: true, title: mainTitle, cloudflare: cf, contentUnavailable, src: lastFrame.url, currentTime, duration, readyState, currentSrc };
+    const currentTime = bestVideo ? bestVideo.currentTime : null;
+    const duration = bestVideo ? bestVideo.duration : null;
+    const readyState = bestVideo ? bestVideo.readyState : 0;
+    const currentSrc = bestVideo ? bestVideo.currentSrc : '';
+    const videoFrameUrl = bestVideo ? bestVideo.frameUrl : '';
+
+    return { ok: true, title: mainTitle, cloudflare: cf, contentUnavailable, src: lastFrame.url, currentTime, duration, readyState, currentSrc, videoFrameUrl };
   } catch (err) {
     return { ok: false, reason: String(err) };
   }
