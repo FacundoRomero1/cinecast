@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
  * scripts/probe-web-degradation.cjs
- * Verificación de P2.11 — Degradación web (Chromium sin Electron):
+ * Verificación de paridad web (Chromium sin Electron):
  *  - window.electronAPI === undefined
  *  - Cero errores no capturados (pageerror)
- *  - isResolving no queda colgado ni la pantalla en negro (iframe montado)
- *  - El pill de escape ("Iniciar reproducción") aparece a los 8 s
+ *  - isResolving no queda colgado ni el iframe tapado (elementFromPoint === IFRAME)
+ *  - Nuestro pill de escape ("Iniciar reproducción") queda OCULTO en web (no duplica botón)
+ *  - Tap real sobre el botón nativo del proveedor (#go) reproduce el capítulo real (duration > 300s)
  */
 
 const { chromium } = require('playwright');
@@ -74,74 +75,103 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
         }),
       });
       await wait(1000);
-      const mounted = await page.evaluate(() => Boolean(document.querySelector('[data-testid="video-player"]')));
+      const mounted = await page.evaluate(() => Boolean(document.querySelector('iframe[data-embed]')));
       if (mounted) break;
     }
 
-    const tStart = Date.now();
-    await wait(2000);
-    const earlyState = await page.evaluate(() => {
+    // Esperar 8.5s para confirmar que nuestro pill de escape NO aparece en web (sin duplicar botones)
+    await wait(8500);
+    const preTapState = await page.evaluate(() => {
       const bodyTxt = document.body ? document.body.innerText : '';
       const iframe = document.querySelector('iframe[data-embed]');
       const pill = Array.from(document.querySelectorAll('button')).find((b) =>
         (b.textContent || '').toLowerCase().includes('iniciar reproducción')
       );
+      const rect = iframe ? iframe.getBoundingClientRect() : null;
+      const centerEl = rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
       return {
         hasSpinner: bodyTxt.includes('Resolviendo mejores servidores'),
         hasIframe: Boolean(iframe),
         iframeSrc: iframe ? iframe.getAttribute('src') : '',
-        pillVisibleEarly: Boolean(pill),
+        ourEscapePillVisible: Boolean(pill),
+        hitAtCenterTag: centerEl ? centerEl.tagName : null,
         serverName: window.__videoPlayerState?.activeServerName || '',
       };
     });
 
-    let pillAppearedAtSec = null;
-    while (Date.now() - tStart < 12000) {
-      await wait(500);
-      const pillVisible = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('button')).some((b) =>
-          (b.textContent || '').toLowerCase().includes('iniciar reproducción')
-        )
-      );
-      if (pillVisible) {
-        pillAppearedAtSec = Number(((Date.now() - tStart) / 1000).toFixed(1));
-        break;
+    // Tap real sobre el botón del proveedor dentro del iframe
+    const iframeBox = await page.locator('iframe[data-embed]').boundingBox();
+    const mmFrame = page.frames().find((f) => f.url().includes('moviemaster.lat'));
+    let clickedTarget = 'iframe-center';
+    if (mmFrame) {
+      const goBox = await mmFrame.locator('#go').boundingBox().catch(() => null);
+      if (goBox) {
+        await page.mouse.click(goBox.x + goBox.width / 2, goBox.y + goBox.height / 2);
+        clickedTarget = 'provider-#go';
+      } else {
+        await page.mouse.click(iframeBox.x + iframeBox.width / 2, iframeBox.y + iframeBox.height / 2);
       }
+    } else {
+      await page.mouse.click(iframeBox.x + iframeBox.width / 2, iframeBox.y + iframeBox.height / 2);
     }
 
-    const finalState = await page.evaluate(() => {
-      const bodyTxt = document.body ? document.body.innerText : '';
-      const iframe = document.querySelector('iframe[data-embed]');
-      return {
-        hasSpinner: bodyTxt.includes('Resolviendo mejores servidores'),
-        hasIframe: Boolean(iframe),
-        serverName: window.__videoPlayerState?.activeServerName || '',
-      };
-    });
+    const tTap = Date.now();
+    let bestVideo = null;
+    let sawPreroll = false;
+    while (Date.now() - tTap < 40000) {
+      await wait(800);
+      const f = page.frames().find((fr) => fr.url().includes('moviemaster.lat'));
+      if (!f) continue;
+      const vInfo = await f
+        .evaluate(() => {
+          const vids = Array.from(document.querySelectorAll('video'));
+          let best = null;
+          for (const v of vids) {
+            const dur = Number.isFinite(v.duration) ? Math.round(v.duration) : 0;
+            const cur = Number.isFinite(v.currentTime) ? Number(v.currentTime.toFixed(2)) : 0;
+            if (!best || dur > best.duration || (dur === best.duration && v.readyState > best.readyState)) {
+              best = { readyState: v.readyState, currentTime: cur, duration: dur, currentSrc: v.currentSrc || v.src || '' };
+            }
+          }
+          return best;
+        })
+        .catch(() => null);
+      if (vInfo) {
+        bestVideo = vInfo;
+        if (!sawPreroll && vInfo.duration > 0 && vInfo.duration <= 300) sawPreroll = true;
+        if (vInfo.readyState >= 2 && vInfo.currentTime > 0.5 && vInfo.duration > 300) break;
+      }
+    }
+    const tapToContentSec = Number(((Date.now() - tTap) / 1000).toFixed(1));
 
     const pass =
       envCheck.electronAPI === 'undefined' &&
       pageErrors.length === 0 &&
-      !earlyState.hasSpinner &&
-      earlyState.hasIframe &&
-      !earlyState.pillVisibleEarly &&
-      pillAppearedAtSec !== null &&
-      pillAppearedAtSec >= 6.5 &&
-      pillAppearedAtSec <= 11.5 &&
-      !finalState.hasSpinner &&
-      finalState.hasIframe;
+      !preTapState.hasSpinner &&
+      preTapState.hasIframe &&
+      !preTapState.ourEscapePillVisible &&
+      preTapState.hitAtCenterTag === 'IFRAME' &&
+      Boolean(bestVideo && bestVideo.readyState >= 2 && bestVideo.currentTime > 0.5 && bestVideo.duration > 300);
 
-    console.log('\n=== RESULTADO P2.11 DEGRADACIÓN WEB (CHROMIUM SIN ELECTRON) ===');
-    console.log(JSON.stringify({
-      electronAPI: envCheck.electronAPI,
-      build: envCheck.build,
-      pageErrors,
-      earlyState,
-      pillAppearedAtSec,
-      finalState,
-      adLogs,
-      resultado: pass ? 'PASA' : 'FALLA',
-    }, null, 2));
+    console.log('\n=== RESULTADO P2.11 + PARIDAD WEB (TAP REAL EN CHROMIUM SIN ELECTRON) ===');
+    console.log(
+      JSON.stringify(
+        {
+          electronAPI: envCheck.electronAPI,
+          build: envCheck.build,
+          pageErrors,
+          preTapState,
+          clickedTarget,
+          sawPreroll,
+          tapToContentSec,
+          bestVideo,
+          adLogs,
+          resultado: pass ? 'PASA' : 'FALLA',
+        },
+        null,
+        2
+      )
+    );
 
     await browser.close();
     await testEnv.stop();

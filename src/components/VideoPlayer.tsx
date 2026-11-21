@@ -552,6 +552,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const failedServersForEpisodeRef = useRef<Set<string>>(new Set());
   const unavailableServersForEpisodeRef = useRef<Set<string>>(new Set());
   const retryCountByServerEpisodeRef = useRef<Map<string, number>>(new Map());
+  const shortDurationLoggedKeyRef = useRef<string | null>(null);
   const iframeStallTicksRef = useRef<number>(0);
 
   const getServerEpisodeKey = useCallback((srv?: StreamServer | null) => {
@@ -2620,9 +2621,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [isIframeMode, activeEmbedUrl, iframeReloadKey]);
 
-  // P2.5: El pill queda visible solo como escape después de 8 s sin frame.
+  // P2.5 & Web Parity: El pill de escape solo aplica en Electron (en web se deja el botón nativo del proveedor sin duplicar botones).
   useEffect(() => {
-    if (!isIframeMode) {
+    const hasElectronBridge = typeof window !== 'undefined' && Boolean(window.electronAPI);
+    if (!isIframeMode || !hasElectronBridge) {
       setShowIframePlayBanner(false);
       return;
     }
@@ -3133,6 +3135,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           (activeServerRef.current?.url && activeServerRef.current.url.includes('/__test/'))
         );
         const minRealDuration = isTestEmbed ? 10 : 300;
+        const realSrcStr = String((realState as any).currentSrc || '');
+        const isKnownPreroll = realSrcStr.includes('quickcore.fun');
+        if (!isTestEmbed && !isKnownPreroll && realState.duration > 0 && realState.duration < 300 && realState.currentTime > 2) {
+          const shortKey = `${media.id}:s${selectedSeason}:e${selectedEpisode}:${Math.round(realState.duration)}`;
+          if (shortDurationLoggedKeyRef.current !== shortKey) {
+            shortDurationLoggedKeyRef.current = shortKey;
+            console.log('[DUR] capítulo corto', Math.round(realState.duration), media.id);
+          }
+        }
         if (realState.duration > minRealDuration && realState.currentTime > 0) {
           const timeToEnd = realState.duration - realState.currentTime;
           const isNearEnd = timeToEnd <= 2.5 || (realState.currentTime >= realState.duration - 1);
@@ -3317,6 +3328,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (time > 0.5) {
       recordFirstFrame('video-currentTime>0.5');
+    }
+    const isTestDirect = Boolean(
+      (typeof window !== 'undefined' && (window as any).__CINECAST_TEST) ||
+      (videoSrc && videoSrc.includes('/__test/'))
+    );
+    if (!isTestDirect && isEpisodic && dur > 0 && dur < 300 && time > 2) {
+      const shortKey = `${media.id}:s${selectedSeason}:e${selectedEpisode}:${Math.round(dur)}`;
+      if (shortDurationLoggedKeyRef.current !== shortKey) {
+        shortDurationLoggedKeyRef.current = shortKey;
+        console.log('[DUR] capítulo corto', Math.round(dur), media.id);
+      }
     }
 
     if (introStart !== undefined && introEnd !== undefined) {

@@ -1,23 +1,85 @@
 #!/usr/bin/env node
 /**
  * scripts/probe-gates-real.cjs
- * Verificación de Bloque 2-bis — Gates reales (sin simulador):
+ * Verificación aislada de Gates Reales (sin simulador):
+ *  - Cada gate (2R1, 3R, 2R2, 4R) corre en un PROCESO ELECTRON NUEVO con testEnv y partición limpios (arranque en frío).
  *  - window.__CINECAST_TEST_SERVERS = undefined
- *  - Gate 2R: Sin tap, con embed (Breaking Bad S01E01 en MovieMaster + Los Simpsons T37:E4 con fallback obligatorio)
- *  - Gate 3R: Fallo forzado sobre proveedor real con CDP Network.setBlockedURLs a mitad de capítulo (<= 25 s para otro servidor con currentTime > 0.5)
- *  - Gate 4R: Selección manual de capítulo que el proveedor no tiene -> sale solo en < 10 s sin "Reintentar" colgado
+ *  - Gate 2R-1: Breaking Bad S01E01 sin tap -> contenido real duration > 300s (techo 35 s, baseline 27.7 s)
+ *  - Gate 3R: Fallo forzado CDP (Network.setBlockedURLs) a mitad de capítulo -> otro servidor real con duration > 300s (<= 25 s)
+ *  - Gate 2R-2: Los Simpsons T37:E4 en frío -> fallback obligatorio con duration > 300s (<= 20 s)
+ *  - Gate 4R: Selección manual T37:E4 en frío (sin caché previa de 456/37/4) -> frame real duration > 300s (<= 15 s)
  */
+
+const gateArg = process.argv.find((a) => a.startsWith('--gate='));
+const singleGate = gateArg ? gateArg.split('=')[1].toUpperCase() : null;
 
 if (!process.versions.electron) {
   const { spawnSync } = require('child_process');
   const electronPath = require('electron');
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const res = spawnSync(electronPath, [__filename, ...process.argv.slice(2)], {
-    stdio: 'inherit',
-    env,
-  });
-  process.exit(res.status ?? 1);
+
+  if (singleGate) {
+    const res = spawnSync(electronPath, [__filename, `--gate=${singleGate}`], { stdio: 'inherit', env });
+    process.exit(res.status ?? 1);
+  }
+
+  // Orquestador: lanza cada gate en un proceso Electron completamente aislado (sin caché ni penalizaciones compartidas)
+  const gates = ['2R1', '3R', '2R2', '4R'];
+  const results = [];
+  const allAdLogs = [];
+  let buildMarker = '';
+  let testServersStr = '';
+
+  for (const g of gates) {
+    console.log(`\n==================== PROCESO AISLADO: GATE ${g} ====================`);
+    const res = spawnSync(electronPath, [__filename, `--gate=${g}`], {
+      encoding: 'utf8',
+      env,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const out = `${res.stdout || ''}\n${res.stderr || ''}`;
+    for (const line of out.split(/\r?\n/)) {
+      if (line.startsWith('GATE_JSON:')) {
+        try {
+          const parsed = JSON.parse(line.slice('GATE_JSON:'.length));
+          if (parsed.result) results.push(parsed.result);
+          if (Array.isArray(parsed.adLogs)) allAdLogs.push(...parsed.adLogs);
+          if (parsed.buildMarker) buildMarker = parsed.buildMarker;
+          if (parsed.testServersVal !== undefined) testServersStr = String(parsed.testServersVal);
+        } catch (_) {}
+      } else if (
+        line.includes('[BUILD_MARKER]') ||
+        line.includes('window.__CINECAST_TEST_SERVERS') ||
+        line.includes('[Gate ') ||
+        line.includes('[AD]') ||
+        line.includes('[P2.5') ||
+        line.includes('[AutoAdvance]') ||
+        line.includes('[PENALIZACIÓN]') ||
+        line.includes('[Embed]') ||
+        line.includes('[Direct HLS]') ||
+        line.includes('HLS éxito') ||
+        line.includes('[DUR]')
+      ) {
+        console.log(line);
+      }
+    }
+  }
+
+  console.log(`\n[BUILD_MARKER] window.__cinecastBuild = "${buildMarker}"`);
+  console.log(`window.__CINECAST_TEST_SERVERS = ${testServersStr || 'undefined'}`);
+  console.log('\n=== RESULTADOS GATES REALES AISLADOS EN FRÍO (2R, 3R, 4R) ===');
+  console.log('| Gate | Servidor Final | Host en window.__req | readyState | currentTime | duration | Tiempo | currentSrc | Resultado |');
+  console.log('|---|---|---|---|---|---|---|---|---|');
+  for (const r of results) {
+    console.log(`| ${r.gate} | ${r.servidorActivo} | ${r.hostReq} | ${r.readyState} | ${r.currentTime} | ${r.duration} | ${r.elapsed} | ${r.currentSrc} | **${r.resultado}** |`);
+  }
+  console.log('\n=== LOGS [AD] MEDIDOS (P2.12) ===');
+  for (const l of allAdLogs) console.log(l);
+
+  const allPass = results.length === gates.length && results.every((r) => r.resultado === 'PASA');
+  console.log(`\nRESULTADO GLOBAL GATES REALES AISLADOS: ${allPass ? 'PASA' : 'FALLA'}`);
+  process.exit(allPass ? 0 : 1);
 }
 
 const { app, BrowserWindow, ipcMain, webContents, session } = require('electron');
@@ -47,12 +109,13 @@ function getAllFrames() {
 app.whenReady().then(async () => {
   let testEnv = null;
   try {
-    testEnv = await startTestEnv('probe-gates-real');
+    const gateName = singleGate || '2R1';
+    testEnv = await startTestEnv(`probe-gate-${gateName.toLowerCase()}`);
     const { base: baseUrl, room: activeRoomId, port } = testEnv;
     const preloadPath = path.join(__dirname, '..', 'electron', 'preload.cjs');
 
     let screenWin = null;
-    const realProviderRequests = [];
+    const adMountLogs = [];
 
     const safeHandle = (channel, fn) => {
       try { ipcMain.removeHandler(channel); } catch (_) {}
@@ -102,7 +165,7 @@ app.whenReady().then(async () => {
             return null;
           })()`), 900, null);
           if (res && res.found) {
-            if (!best || res.isPlaying || res.currentTime > best.currentTime) {
+            if (!best || res.duration > best.duration || (res.duration === best.duration && res.currentTime > best.currentTime)) {
               best = res;
             }
           }
@@ -183,14 +246,7 @@ app.whenReady().then(async () => {
                     (dur === best.duration && rs > best.readyState) ||
                     (dur === best.duration && rs === best.readyState && cur > best.currentTime)
                   ) {
-                    best = {
-                      currentTime: cur,
-                      duration: dur,
-                      readyState: rs,
-                      currentSrc: src,
-                      frameUrl: location.href || '',
-                      host: location.hostname || ''
-                    };
+                    best = { currentTime: cur, duration: dur, readyState: rs, currentSrc: src, frameUrl: location.href || '', host: location.hostname || '' };
                   }
                 }
               }
@@ -264,13 +320,9 @@ app.whenReady().then(async () => {
                   bodyTxt.includes('disponible en') ||
                   bodyTxt.includes('opción 1') ||
                   bodyTxt.includes('opcion 1');
-                if (!serversReady) {
-                  return { acted: false, pending: true };
-                }
+                if (!serversReady) return { acted: false, pending: true };
               }
-              if (window.__cinecastAutoCommitted) {
-                return { acted: true, alreadyCommitted: true };
-              }
+              if (window.__cinecastAutoCommitted) return { acted: true, alreadyCommitted: true };
               const goBtn = document.getElementById('go') ||
                 Array.from(document.querySelectorAll('button, [role="button"], .jw-icon-display, .plyr__control--overlaid, .vjs-big-play-button, .play-button, #play')).find((el) => {
                   const t = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim().toLowerCase();
@@ -295,9 +347,9 @@ app.whenReady().then(async () => {
       return { acted: false };
     });
 
-    const partName = 'persist:probe-real-gates-' + Date.now();
+    const partName = `persist:probe-isolated-${gateName}-${Date.now()}`;
     const ses = session.fromPartition(partName);
-    const videoSes = session.fromPartition('persist:videosession');
+    const videoSes = session.fromPartition(`persist:videosession`);
 
     const recordCompletedReq = (details) => {
       const u = details.url || '';
@@ -310,7 +362,6 @@ app.whenReady().then(async () => {
         let host = '';
         try { host = new URL(u).hostname; } catch (_) {}
         const entry = { url: u, host, status: details.statusCode, time: Date.now() };
-        realProviderRequests.push(entry);
         if (screenWin && !screenWin.isDestroyed()) {
           screenWin.webContents.executeJavaScript(`
             window.__req = window.__req || [];
@@ -325,17 +376,9 @@ app.whenReady().then(async () => {
     ses.webRequest.onErrorOccurred((details) => {
       if (!details || !details.url || !screenWin || screenWin.isDestroyed()) return;
       const err = String(details.error || '');
-      if (
-        err === 'net::ERR_BLOCKED_BY_CLIENT' ||
-        err === 'net::ERR_CONNECTION_REFUSED' ||
-        err === 'net::ERR_NAME_NOT_RESOLVED'
-      ) {
+      if (err === 'net::ERR_BLOCKED_BY_CLIENT' || err === 'net::ERR_CONNECTION_REFUSED' || err === 'net::ERR_NAME_NOT_RESOLVED') {
         if (details.url.startsWith('http://127.0.0.1') || details.url.startsWith('http://localhost')) return;
-        screenWin.webContents.send('embed-failed', {
-          code: -20,
-          desc: err,
-          url: details.url,
-        });
+        screenWin.webContents.send('embed-failed', { code: -20, desc: err, url: details.url });
       }
     });
 
@@ -352,13 +395,10 @@ app.whenReady().then(async () => {
       },
     });
 
-    const adMountLogs = [];
     screenWin.webContents.on('console-message', (ev, level, msg) => {
       const text = typeof msg === 'string' ? msg : (ev && typeof ev.message === 'string' ? ev.message : '');
       const lvl = typeof level === 'number' ? level : (ev && typeof ev.level === 'number' ? ev.level : 0);
-      if (text.includes('[AD] iframe montado en')) {
-        adMountLogs.push(text);
-      }
+      if (text.includes('[AD] iframe montado en')) adMountLogs.push(text);
       if (
         lvl >= 2 ||
         text.includes('[AD]') ||
@@ -368,7 +408,8 @@ app.whenReady().then(async () => {
         text.includes('[PENALIZACIÓN]') ||
         text.includes('[Embed]') ||
         text.includes('[Direct HLS]') ||
-        text.includes('[VideoPlayer]')
+        text.includes('[VideoPlayer]') ||
+        text.includes('[DUR]')
       ) {
         console.log('[screen]', text);
       }
@@ -377,7 +418,6 @@ app.whenReady().then(async () => {
     await screenWin.loadURL(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoomId)}#/`);
     await wait(2500);
 
-    // Asegurar explícitamente que NO hay simulador activo
     const testServersVal = await screenWin.webContents.executeJavaScript(`(() => {
       delete window.__CINECAST_TEST;
       window.__CINECAST_TEST_SERVERS = undefined;
@@ -385,14 +425,11 @@ app.whenReady().then(async () => {
       return window.__CINECAST_TEST_SERVERS;
     })()`);
     const buildMarker = await screenWin.webContents.executeJavaScript('window.__cinecastBuild');
-    console.log(`[BUILD_MARKER] window.__cinecastBuild = "${buildMarker}"`);
-    console.log(`window.__CINECAST_TEST_SERVERS = ${testServersVal}`);
 
     const getPlayerSnapshot = async () => {
       const ui = await screenWin.webContents.executeJavaScript(`(() => {
         const vp = window.__videoPlayerState || {};
         const h2 = document.querySelector('h2');
-        const iframe = document.querySelector('iframe[data-embed]');
         const bodyText = document.body ? document.body.innerText : '';
         return {
           title: h2 ? h2.textContent.trim() : '',
@@ -400,13 +437,10 @@ app.whenReady().then(async () => {
           activeServerUrl: vp.activeServerUrl || '',
           selectedSeason: vp.selectedSeason,
           selectedEpisode: vp.selectedEpisode,
-          iframeSrc: iframe ? iframe.src : '',
           hasRetryHang: bodyText.includes('Ningún servidor respondió'),
           reqs: Array.isArray(window.__req) ? window.__req.slice(-5) : []
         };
       })()`);
-
-      // P2.8: Resolver el <video> más profundo vía el mismo readEmbedStatus (get-embed-status)
       const st = await readEmbedStatus();
       const effectiveReady = st && typeof st.readyState === 'number' ? st.readyState : -1;
       const effectiveTime = st && typeof st.currentTime === 'number' ? st.currentTime : -1;
@@ -416,7 +450,6 @@ app.whenReady().then(async () => {
       if ((!providerHost || providerHost === '127.0.0.1' || providerHost === 'localhost') && ui.activeServerUrl) {
         try { providerHost = new URL(ui.activeServerUrl).hostname; } catch (_) {}
       }
-
       return {
         ...ui,
         effectiveReady,
@@ -428,29 +461,11 @@ app.whenReady().then(async () => {
       };
     };
 
-    const MIN_SERIES_DURATION = 300;
-    const isRealContentFrame = (snap, minDuration = MIN_SERIES_DURATION) => {
-      if (!snap) return false;
-      return (
-        snap.effectiveReady >= 2 &&
-        snap.effectiveTime > 0.5 &&
-        snap.effectiveDuration > minDuration &&
-        isRealProviderStream(snap)
-      );
-    };
-
     const isRealProviderStream = (snap) => {
       if (!snap || !snap.effectiveSrc) return false;
-      if (snap.effectiveSrc.includes('/__test/') || (snap.activeServerUrl && snap.activeServerUrl.includes('/__test/'))) {
-        return false;
-      }
+      if (snap.effectiveSrc.includes('/__test/') || (snap.activeServerUrl && snap.activeServerUrl.includes('/__test/'))) return false;
       if (snap.effectiveSrc.startsWith('blob:http://127.0.0.1') || snap.effectiveSrc.startsWith('blob:http://localhost')) {
-        return Boolean(
-          snap.activeServerUrl &&
-          snap.activeServerUrl.startsWith('https://') &&
-          !snap.activeServerUrl.includes('127.0.0.1') &&
-          !snap.activeServerUrl.includes('localhost')
-        );
+        return Boolean(snap.activeServerUrl && snap.activeServerUrl.startsWith('https://') && !snap.activeServerUrl.includes('127.0.0.1'));
       }
       return !snap.effectiveSrc.includes('127.0.0.1') && !snap.effectiveSrc.includes('localhost');
     };
@@ -464,18 +479,16 @@ app.whenReady().then(async () => {
       return raw.slice(0, 85);
     };
 
+    const MIN_SERIES_DURATION = 300;
+    const isRealContentFrame = (snap, minDuration = MIN_SERIES_DURATION) =>
+      Boolean(snap && snap.effectiveReady >= 2 && snap.effectiveTime > 0.5 && snap.effectiveDuration > minDuration && isRealProviderStream(snap));
+
     const sendPlayCommandReliable = async (payload) => {
       for (let attempt = 0; attempt < 4; attempt++) {
         await fetch(`${baseUrl}/api/sync/command`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            roomId: activeRoomId,
-            command: {
-              action: 'playDiscoveredMovie',
-              payload,
-            },
-          }),
+          body: JSON.stringify({ roomId: activeRoomId, command: { action: 'playDiscoveredMovie', payload } }),
         });
         await wait(900);
         const snap = await getPlayerSnapshot();
@@ -485,275 +498,205 @@ app.whenReady().then(async () => {
       }
     };
 
-    const gateResults = [];
+    let result = null;
 
-    // =========================================================================
-    // GATE 2R — Caso 1: Breaking Bad S01E01 (MovieMaster disponible, sin tap)
-    // =========================================================================
-    console.log('\n--- Gate 2R (Caso 1): Breaking Bad S01E01 (MovieMaster disponible, sin tap) ---');
-    const t2R1Start = Date.now();
-    await sendPlayCommandReliable({
-      id: 'tmdb-series-1396',
-      tmdbId: 1396,
-      title: 'Breaking Bad',
-      type: 'series',
-      category: 'series',
-      season: 1,
-      episode: 1,
-      seasonNumber: 1,
-      episodeNumber: 1,
-      episodeTitle: 'Piloto',
-    });
-
-    let snap2R1 = null;
-    let pass2R1 = false;
-    let elapsed2R1 = 0;
-    let sawPreroll2R1 = false;
-    while (Date.now() - t2R1Start < 45000) {
-      await wait(800);
-      snap2R1 = await getPlayerSnapshot();
-      if (!sawPreroll2R1 && snap2R1.effectiveReady >= 2 && snap2R1.effectiveDuration > 0 && snap2R1.effectiveDuration <= MIN_SERIES_DURATION) {
-        sawPreroll2R1 = true;
-        console.log(`[Gate 2R-1] Pre-roll detectado (duration=${snap2R1.effectiveDuration}s <= ${MIN_SERIES_DURATION}s, currentSrc=${snap2R1.effectiveSrc.slice(0, 70)}) — siguiendo espera por contenido real...`);
+    if (gateName === '2R1') {
+      const tStart = Date.now();
+      await sendPlayCommandReliable({
+        id: 'tmdb-series-1396', tmdbId: 1396, title: 'Breaking Bad', type: 'series', category: 'series',
+        season: 1, episode: 1, seasonNumber: 1, episodeNumber: 1, episodeTitle: 'Piloto',
+      });
+      let snap = null; let pass = false; let elapsed = 0; let sawPreroll = false;
+      while (Date.now() - tStart < 35000) {
+        await wait(800);
+        snap = await getPlayerSnapshot();
+        if (!sawPreroll && snap.effectiveReady >= 2 && snap.effectiveDuration > 0 && snap.effectiveDuration <= MIN_SERIES_DURATION) {
+          sawPreroll = true;
+          console.log(`[Gate 2R-1] Pre-roll detectado (duration=${snap.effectiveDuration}s <= ${MIN_SERIES_DURATION}s) — siguiendo espera por contenido real...`);
+        }
+        if (isRealContentFrame(snap, MIN_SERIES_DURATION)) {
+          pass = true;
+          elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+          break;
+        }
       }
-      if (isRealContentFrame(snap2R1, MIN_SERIES_DURATION)) {
-        pass2R1 = true;
-        elapsed2R1 = Number(((Date.now() - t2R1Start) / 1000).toFixed(1));
-        break;
+      if (!elapsed) elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+      const lastReq = snap?.reqs?.[snap.reqs.length - 1];
+      result = {
+        gate: 'Gate 2R-1 (Breaking Bad S01E01 frío, techo 35s)',
+        servidorActivo: snap?.activeServerName || 'N/A',
+        hostReq: lastReq ? `${lastReq.host} (${lastReq.status})` : (snap?.providerHost || 'N/A'),
+        readyState: snap?.effectiveReady ?? -1,
+        currentTime: `${snap?.effectiveTime ?? -1}s`,
+        duration: `${snap?.effectiveDuration ?? -1}s (>300s)`,
+        elapsed: `${elapsed}s (<=35s)`,
+        currentSrc: formatDisplaySrc(snap),
+        resultado: pass && elapsed <= 35 ? 'PASA' : 'FALLA',
+      };
+    } else if (gateName === '3R') {
+      // Arranque en frío de Breaking Bad S01E01 hasta contenido real, luego bloqueo CDP a mitad de capítulo
+      await sendPlayCommandReliable({
+        id: 'tmdb-series-1396', tmdbId: 1396, title: 'Breaking Bad', type: 'series', category: 'series',
+        season: 1, episode: 1, seasonNumber: 1, episodeNumber: 1, episodeTitle: 'Piloto',
+      });
+      let snapInit = null;
+      const tWarm = Date.now();
+      while (Date.now() - tWarm < 35000) {
+        await wait(800);
+        snapInit = await getPlayerSnapshot();
+        if (isRealContentFrame(snapInit, MIN_SERIES_DURATION)) break;
       }
-    }
-    if (!elapsed2R1) elapsed2R1 = Number(((Date.now() - t2R1Start) / 1000).toFixed(1));
-    const lastReq2R1 = snap2R1?.reqs?.[snap2R1.reqs.length - 1];
-    gateResults.push({
-      gate: 'Gate 2R-1 (Breaking Bad S01E01 sin tap)',
-      servidorActivo: snap2R1?.activeServerName || 'N/A',
-      hostReq: lastReq2R1 ? `${lastReq2R1.host} (${lastReq2R1.status})` : (snap2R1?.providerHost || 'N/A'),
-      readyState: snap2R1?.effectiveReady ?? -1,
-      currentTime: `${snap2R1?.effectiveTime ?? -1}s`,
-      duration: `${snap2R1?.effectiveDuration ?? -1}s (>300s)`,
-      elapsed: `${elapsed2R1}s`,
-      currentSrc: formatDisplaySrc(snap2R1),
-      resultado: pass2R1 ? 'PASA' : 'FALLA',
-    });
+      const initialHost = snapInit?.providerHost || 'api.moviemaster.lat';
+      const initialServer = snapInit?.activeServerName || 'MovieMaster (Latino)';
+      const tStart = Date.now();
 
-    // =========================================================================
-    // GATE 3R — Fallo forzado con CDP a mitad de capítulo sobre proveedor real
-    // =========================================================================
-    console.log('\n--- Gate 3R: Bloqueo CDP del host del proveedor activo a mitad de capítulo ---');
-    const initialHost3R = snap2R1?.providerHost || 'api.moviemaster.lat';
-    const initialServer3R = snap2R1?.activeServerName || 'MovieMaster (Latino)';
-    const t3RStart = Date.now();
-
-    const cdpUrlByRequestId = new Map();
-    for (const wc of webContents.getAllWebContents()) {
-      if (wc.isDestroyed()) continue;
-      try {
-        if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
-        wc.debugger.on('message', (_ev, method, params) => {
-          if (method === 'Network.requestWillBeSent' && params?.requestId && params?.request?.url) {
-            cdpUrlByRequestId.set(params.requestId, params.request.url);
-          } else if (
-            method === 'Network.loadingFailed' &&
-            (params?.blockedReason === 'inspector' ||
-              String(params?.errorText || '').includes('ERR_BLOCKED_BY_CLIENT') ||
-              String(params?.errorText || '').includes('ERR_FAILED'))
-          ) {
-            const failedUrl = cdpUrlByRequestId.get(params.requestId) || '';
-            if (failedUrl.includes('moviemaster.lat') || failedUrl.includes('quickcore.fun')) {
-              if (screenWin && !screenWin.isDestroyed()) {
-                screenWin.webContents.send('embed-failed', {
-                  code: -20,
-                  desc: params.errorText || 'net::ERR_BLOCKED_BY_CLIENT',
-                  url: failedUrl,
-                });
+      const cdpUrlByRequestId = new Map();
+      for (const wc of webContents.getAllWebContents()) {
+        if (wc.isDestroyed()) continue;
+        try {
+          if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+          wc.debugger.on('message', (_ev, method, params) => {
+            if (method === 'Network.requestWillBeSent' && params?.requestId && params?.request?.url) {
+              cdpUrlByRequestId.set(params.requestId, params.request.url);
+            } else if (
+              method === 'Network.loadingFailed' &&
+              (params?.blockedReason === 'inspector' || String(params?.errorText || '').includes('ERR_BLOCKED_BY_CLIENT') || String(params?.errorText || '').includes('ERR_FAILED'))
+            ) {
+              const failedUrl = cdpUrlByRequestId.get(params.requestId) || '';
+              if (failedUrl.includes('moviemaster.lat') || failedUrl.includes('quickcore.fun')) {
+                if (screenWin && !screenWin.isDestroyed()) {
+                  screenWin.webContents.send('embed-failed', { code: -20, desc: params.errorText || 'net::ERR_BLOCKED_BY_CLIENT', url: failedUrl });
+                }
               }
             }
-          }
-        });
-        await wc.debugger.sendCommand('Network.enable');
-        await wc.debugger.sendCommand('Network.setBlockedURLs', {
-          urls: [
-            '*://*.moviemaster.lat/*',
-            '*://moviemaster.lat/*',
-            '*://*.quickcore.fun/*',
-            '*://*.latgw.fun/*',
-          ],
-        });
-      } catch (_) {}
-    }
-    // También bloquear en la sesión de Electron para que webRequest.onErrorOccurred emita ERR_BLOCKED_BY_CLIENT
-    let blockMovieMasterInGate3R = true;
-    ses.webRequest.onBeforeRequest({ urls: ['*://*.moviemaster.lat/*', '*://moviemaster.lat/*', '*://*.quickcore.fun/*'] }, (details, cb) => {
-      if (blockMovieMasterInGate3R) {
-        cb({ cancel: true });
-      } else {
-        cb({ cancel: false });
+          });
+          await wc.debugger.sendCommand('Network.enable');
+          await wc.debugger.sendCommand('Network.setBlockedURLs', {
+            urls: ['*://*.moviemaster.lat/*', '*://moviemaster.lat/*', '*://*.quickcore.fun/*', '*://*.latgw.fun/*'],
+          });
+        } catch (_) {}
       }
-    });
-    // Forzar una petición en el frame de MovieMaster para que dispare ERR_BLOCKED_BY_CLIENT de inmediato
-    for (const f of getAllFrames()) {
-      if (f.url && f.url.includes('moviemaster.lat')) {
-        f.executeJavaScript(`fetch('https://api.moviemaster.lat/ev').catch(() => {})`).catch(() => {});
-      }
-    }
-
-    let snap3R = null;
-    let pass3R = false;
-    let elapsed3R = 0;
-    while (Date.now() - t3RStart < 25000) {
-      await wait(800);
-      snap3R = await getPlayerSnapshot();
-      const switchedServer = snap3R.activeServerName && snap3R.activeServerName !== initialServer3R;
-      if (switchedServer && isRealContentFrame(snap3R, MIN_SERIES_DURATION)) {
-        pass3R = true;
-        elapsed3R = Number(((Date.now() - t3RStart) / 1000).toFixed(1));
-        break;
-      }
-    }
-    if (!elapsed3R) elapsed3R = Number(((Date.now() - t3RStart) / 1000).toFixed(1));
-
-    // Levantar bloqueo CDP de MovieMaster para las pruebas de Los Simpsons (Gate 2R-2 y Gate 4R)
-    blockMovieMasterInGate3R = false;
-    for (const wc of webContents.getAllWebContents()) {
-      if (wc.isDestroyed()) continue;
-      try {
-        if (wc.debugger.isAttached()) {
-          await wc.debugger.sendCommand('Network.setBlockedURLs', { urls: [] });
+      for (const f of getAllFrames()) {
+        if (f.url && f.url.includes('moviemaster.lat')) {
+          f.executeJavaScript(`fetch('https://api.moviemaster.lat/ev').catch(() => {})`).catch(() => {});
         }
-      } catch (_) {}
+      }
+
+      let snap = null; let pass = false; let elapsed = 0;
+      while (Date.now() - tStart < 25000) {
+        await wait(800);
+        snap = await getPlayerSnapshot();
+        const switched = snap.activeServerName && snap.activeServerName !== initialServer;
+        if (switched && isRealContentFrame(snap, MIN_SERIES_DURATION)) {
+          pass = true;
+          elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+          break;
+        }
+      }
+      if (!elapsed) elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+      const lastReq = snap?.reqs?.[snap.reqs.length - 1];
+      result = {
+        gate: `Gate 3R (CDP block ${initialHost} frío -> fallback)`,
+        servidorActivo: `${initialServer} -> ${snap?.activeServerName || 'N/A'}`,
+        hostReq: lastReq ? `${lastReq.host} (${lastReq.status})` : (snap?.providerHost || 'N/A'),
+        readyState: snap?.effectiveReady ?? -1,
+        currentTime: `${snap?.effectiveTime ?? -1}s`,
+        duration: `${snap?.effectiveDuration ?? -1}s (>300s)`,
+        elapsed: `${elapsed}s (<=25s)`,
+        currentSrc: formatDisplaySrc(snap),
+        resultado: pass ? 'PASA' : 'FALLA',
+      };
+    } else if (gateName === '2R2') {
+      const tStart = Date.now();
+      await sendPlayCommandReliable({
+        id: 'tmdb-series-456', tmdbId: 456, title: 'Los Simpson', type: 'series', category: 'series',
+        seasonsCount: 37, season: 37, episode: 4, seasonNumber: 37, episodeNumber: 4, episodeTitle: 'Episodio 4',
+      });
+      let snap = null; let pass = false; let elapsed = 0;
+      while (Date.now() - tStart < 20000) {
+        await wait(800);
+        snap = await getPlayerSnapshot();
+        const isFallback = snap.activeServerName && !snap.activeServerName.toLowerCase().includes('moviemaster');
+        if (isFallback && isRealContentFrame(snap, MIN_SERIES_DURATION)) {
+          pass = true;
+          elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+          break;
+        }
+      }
+      if (!elapsed) elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+      const lastReq = snap?.reqs?.[snap.reqs.length - 1];
+      result = {
+        gate: 'Gate 2R-2 (Simpsons T37:E4 frío -> fallback)',
+        servidorActivo: snap?.activeServerName || 'N/A',
+        hostReq: lastReq ? `${lastReq.host} (${lastReq.status})` : (snap?.providerHost || 'N/A'),
+        readyState: snap?.effectiveReady ?? -1,
+        currentTime: `${snap?.effectiveTime ?? -1}s`,
+        duration: `${snap?.effectiveDuration ?? -1}s (>300s)`,
+        elapsed: `${elapsed}s (<=20s)`,
+        currentSrc: formatDisplaySrc(snap),
+        resultado: pass ? 'PASA' : 'FALLA',
+      };
+    } else if (gateName === '4R') {
+      // Proceso completamente limpio: arranca en T37:E5 (nunca tocó T37:E4) y elige T37:E4 a mano en el selector
+      await sendPlayCommandReliable({
+        id: 'tmdb-series-456', tmdbId: 456, title: 'Los Simpson', type: 'series', category: 'series',
+        seasonsCount: 37, season: 37, episode: 5, seasonNumber: 37, episodeNumber: 5, episodeTitle: 'Episodio 5',
+      });
+      // Esperar a que carguen los episodios reales de T37 en el <select>
+      for (let i = 0; i < 15; i++) {
+        await wait(400);
+        const hasOpt4 = await screenWin.webContents.executeJavaScript(`(() => {
+          const s = document.querySelector('select[data-testid="episode-select"]');
+          return Boolean(s && Array.from(s.options).some(o => o.value === '4'));
+        })()`);
+        if (hasOpt4) break;
+      }
+
+      const tStart = Date.now();
+      await screenWin.webContents.executeJavaScript(`(() => {
+        const epSelect = document.querySelector('select[data-testid="episode-select"]');
+        if (epSelect) {
+          epSelect.value = '4';
+          epSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })()`);
+
+      let snap = null; let pass = false; let elapsed = 0;
+      while (Date.now() - tStart < 15000) {
+        await wait(600);
+        snap = await getPlayerSnapshot();
+        const leftMovieMaster =
+          snap.selectedEpisode === 4 &&
+          snap.activeServerName &&
+          !snap.activeServerName.toLowerCase().includes('moviemaster') &&
+          !snap.embedHasRetryBtn &&
+          !snap.hasRetryHang;
+        if (leftMovieMaster && isRealContentFrame(snap, MIN_SERIES_DURATION)) {
+          pass = true;
+          elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+          break;
+        }
+      }
+      if (!elapsed) elapsed = Number(((Date.now() - tStart) / 1000).toFixed(1));
+      const lastReq = snap?.reqs?.[snap.reqs.length - 1];
+      result = {
+        gate: 'Gate 4R (Selección manual T37:E4 en frío <=15s)',
+        servidorActivo: snap?.activeServerName || 'N/A',
+        hostReq: lastReq ? `${lastReq.host} (${lastReq.status})` : (snap?.providerHost || 'N/A'),
+        readyState: snap?.effectiveReady ?? -1,
+        currentTime: `${snap?.effectiveTime ?? -1}s`,
+        duration: `${snap?.effectiveDuration ?? -1}s (>300s)`,
+        elapsed: `${elapsed}s (<=15s)`,
+        currentSrc: formatDisplaySrc(snap),
+        resultado: pass ? 'PASA' : 'FALLA',
+      };
     }
 
-    const lastReq3R = snap3R?.reqs?.[snap3R.reqs.length - 1];
-    gateResults.push({
-      gate: `Gate 3R (CDP block ${initialHost3R} -> fallback)`,
-      servidorActivo: `${initialServer3R} -> ${snap3R?.activeServerName || 'N/A'}`,
-      hostReq: lastReq3R ? `${lastReq3R.host} (${lastReq3R.status})` : (snap3R?.providerHost || 'N/A'),
-      readyState: snap3R?.effectiveReady ?? -1,
-      currentTime: `${snap3R?.effectiveTime ?? -1}s`,
-      duration: `${snap3R?.effectiveDuration ?? -1}s (>300s)`,
-      elapsed: `${elapsed3R}s (<=25s)`,
-      currentSrc: formatDisplaySrc(snap3R),
-      resultado: pass3R ? 'PASA' : 'FALLA',
-    });
-
-    // =========================================================================
-    // GATE 2R — Caso 2: Los Simpsons T37:E4 (falta en MovieMaster -> fallback obligatorio)
-    // =========================================================================
-    console.log('\n--- Gate 2R (Caso 2): Los Simpsons T37:E4 (falta en MovieMaster -> fallback obligatorio) ---');
-    const t2R2Start = Date.now();
-    await sendPlayCommandReliable({
-      id: 'tmdb-series-456',
-      tmdbId: 456,
-      title: 'Los Simpson',
-      type: 'series',
-      category: 'series',
-      seasonsCount: 37,
-      season: 37,
-      episode: 4,
-      seasonNumber: 37,
-      episodeNumber: 4,
-      episodeTitle: 'Episodio 4',
-    });
-
-    let snap2R2 = null;
-    let pass2R2 = false;
-    let elapsed2R2 = 0;
-    while (Date.now() - t2R2Start < 20000) {
-      await wait(800);
-      snap2R2 = await getPlayerSnapshot();
-      const isFallbackServer =
-        snap2R2.activeServerName &&
-        !snap2R2.activeServerName.toLowerCase().includes('moviemaster');
-      if (isFallbackServer && isRealContentFrame(snap2R2, MIN_SERIES_DURATION)) {
-        pass2R2 = true;
-        elapsed2R2 = Number(((Date.now() - t2R2Start) / 1000).toFixed(1));
-        break;
-      }
-    }
-    if (!elapsed2R2) elapsed2R2 = Number(((Date.now() - t2R2Start) / 1000).toFixed(1));
-    const lastReq2R2 = snap2R2?.reqs?.[snap2R2.reqs.length - 1];
-    gateResults.push({
-      gate: 'Gate 2R-2 (Simpsons T37:E4 fallback obligatorio)',
-      servidorActivo: snap2R2?.activeServerName || 'N/A',
-      hostReq: lastReq2R2 ? `${lastReq2R2.host} (${lastReq2R2.status})` : (snap2R2?.providerHost || 'N/A'),
-      readyState: snap2R2?.effectiveReady ?? -1,
-      currentTime: `${snap2R2?.effectiveTime ?? -1}s`,
-      duration: `${snap2R2?.effectiveDuration ?? -1}s (>300s)`,
-      elapsed: `${elapsed2R2}s (<=20s)`,
-      currentSrc: formatDisplaySrc(snap2R2),
-      resultado: pass2R2 ? 'PASA' : 'FALLA',
-    });
-
-    // =========================================================================
-    // GATE 4R — P2.10: Selección manual de T37:E4 hasta frame real (duration > 300) con techo de 15 s
-    // =========================================================================
-    console.log('\n--- Gate 4R: Selección manual en selector de capítulo inexistente en MovieMaster (T37:E4, techo 15s con frame real) ---');
-    // Primero pasar a E5 (que sí existe en MovieMaster) y luego seleccionar manualmente E4 en el dropdown
-    await screenWin.webContents.executeJavaScript(`(() => {
-      const epSelect = document.querySelector('select[data-testid="episode-select"]');
-      if (epSelect) {
-        epSelect.value = '5';
-        epSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    })()`);
-    await wait(1500);
-
-    const t4RStart = Date.now();
-    await screenWin.webContents.executeJavaScript(`(() => {
-      const epSelect = document.querySelector('select[data-testid="episode-select"]');
-      if (epSelect) {
-        epSelect.value = '4';
-        epSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    })()`);
-
-    let snap4R = null;
-    let pass4R = false;
-    let elapsed4R = 0;
-    while (Date.now() - t4RStart < 15000) {
-      await wait(600);
-      snap4R = await getPlayerSnapshot();
-      const leftMovieMaster =
-        snap4R.selectedEpisode === 4 &&
-        snap4R.activeServerName &&
-        !snap4R.activeServerName.toLowerCase().includes('moviemaster') &&
-        !snap4R.embedHasRetryBtn &&
-        !snap4R.hasRetryHang;
-      if (leftMovieMaster && isRealContentFrame(snap4R, MIN_SERIES_DURATION)) {
-        pass4R = true;
-        elapsed4R = Number(((Date.now() - t4RStart) / 1000).toFixed(1));
-        break;
-      }
-    }
-    if (!elapsed4R) elapsed4R = Number(((Date.now() - t4RStart) / 1000).toFixed(1));
-    const lastReq4R = snap4R?.reqs?.[snap4R.reqs.length - 1];
-    gateResults.push({
-      gate: 'Gate 4R (Selección manual T37:E4 -> frame real <=15s)',
-      servidorActivo: snap4R?.activeServerName || 'N/A',
-      hostReq: lastReq4R ? `${lastReq4R.host} (${lastReq4R.status})` : (snap4R?.providerHost || 'N/A'),
-      readyState: snap4R?.effectiveReady ?? -1,
-      currentTime: `${snap4R?.effectiveTime ?? -1}s`,
-      duration: `${snap4R?.effectiveDuration ?? -1}s (>300s)`,
-      elapsed: `${elapsed4R}s (<=15s)`,
-      currentSrc: formatDisplaySrc(snap4R),
-      resultado: pass4R ? 'PASA' : 'FALLA',
-    });
-
-    console.log('\n=== RESULTADOS GATES REALES (2R, 3R, 4R) ===');
-    console.log('| Gate | Servidor Final | Host en window.__req | readyState | currentTime | duration | Tiempo | currentSrc | Resultado |');
-    console.log('|---|---|---|---|---|---|---|---|---|');
-    for (const r of gateResults) {
-      console.log(`| ${r.gate} | ${r.servidorActivo} | ${r.hostReq} | ${r.readyState} | ${r.currentTime} | ${r.duration} | ${r.elapsed} | ${r.currentSrc} | **${r.resultado}** |`);
-    }
-    console.log('\n=== LOGS [AD] MEDIDOS (P2.12) ===');
-    for (const l of adMountLogs) console.log(l);
-
-    const allPass = gateResults.every((r) => r.resultado === 'PASA');
-    console.log(`\nRESULTADO GLOBAL GATES REALES: ${allPass ? 'PASA' : 'FALLA'}`);
+    console.log('GATE_JSON:' + JSON.stringify({ result, adLogs: adMountLogs, buildMarker, testServersVal }));
     await testEnv.stop();
-    app.exit(allPass ? 0 : 1);
+    app.exit(result && result.resultado === 'PASA' ? 0 : 1);
   } catch (err) {
-    console.error('[probe-gates-real] Error fatal:', err);
+    console.error(`[probe-gates-real:${singleGate}] Error fatal:`, err);
     if (testEnv) await testEnv.stop();
     app.exit(1);
   }
