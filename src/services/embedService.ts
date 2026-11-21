@@ -350,19 +350,8 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
       servers.unshift(jimovServer);
     }
 
-    // Proveedor virtual prioritario Direct HLS (Stream Nativo HLS con subtítulos VTT) - Solo para películas y series (No para Anime)
-    if (type !== 'anime') {
-      const directHlsServer: StreamServer = {
-        id: 'direct-hls',
-        name: 'Direct HLS (Stream Nativo)',
-        url: `/api/stream/direct?tmdbId=${tmdbId}&type=${isTV ? 'tv' : 'movie'}&season=${season || 1}&episode=${episode || 1}`,
-        type: 'hls',
-        playable: 'hls',
-        language: 'Multi',
-        validated: true,
-      };
-      servers.push(directHlsServer);
-    }
+    // Direct HLS se resuelve en segundo plano vía /api/stream/direct y se inserta con su URL .m3u8 real validada
+    void isTV;
 
     // Verificación de mapa de anime con doblaje latino verificado
     let animeLatinoServer: StreamServer | null = null;

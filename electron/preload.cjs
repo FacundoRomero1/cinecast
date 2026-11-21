@@ -26,9 +26,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getRealMediaState: (opts) => {
     const force = Boolean(opts && opts.force);
     const fast = force || fastMediaPollFlag || resumeActiveFlag;
-    const minInterval = force ? 0 : fast ? 900 : 4800;
+    const minInterval = force ? 0 : fast ? 800 : 950;
     const now = Date.now();
-    if (!force && now - lastRealMediaFetchAt < minInterval) {
+    if (!force && lastRealMediaCached && lastRealMediaCached.found && now - lastRealMediaFetchAt < minInterval) {
       return Promise.resolve(lastRealMediaCached);
     }
     if (realMediaInFlight) {
@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return realMediaInFlight;
   },
   controlActiveMedia: (payload) => ipcRenderer.invoke('control-active-media', payload),
+  autoCommitEmbedPlay: () => ipcRenderer.invoke('control-active-media', { action: 'autoCommitPlay' }),
   probeStreams: (urls) => ipcRenderer.invoke('probe-streams', urls),
   checkEmbedProviders: () => ipcRenderer.invoke('check-embed-providers'),
   getEmbedStatus: () => ipcRenderer.invoke('get-embed-status'),

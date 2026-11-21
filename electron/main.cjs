@@ -1566,6 +1566,47 @@ ipcMain.handle('control-active-media', async (_event, { action, value }) => {
         const action = ${JSON.stringify(action)};
         const value = ${JSON.stringify(value)};
 
+        if (action === 'autoCommitPlay') {
+          if (location.href.startsWith('http://localhost') || location.href.startsWith('http://127.0.0.1') || location.href === 'about:blank') {
+            return { acted: false, hasMedia: false, isPlaying: false, currentTime: 0 };
+          }
+          const bodyTxt = (document.body ? (document.body.innerText || '') : '').toLowerCase();
+          if (
+            bodyTxt.includes('aún no está disponible') ||
+            bodyTxt.includes('aun no esta disponible') ||
+            bodyTxt.includes('no está disponible') ||
+            bodyTxt.includes('no esta disponible') ||
+            bodyTxt.includes('aún no hay opciones') ||
+            bodyTxt.includes('aun no hay opciones') ||
+            bodyTxt.includes('no hay opciones para este título') ||
+            bodyTxt.includes('contenido no disponible')
+          ) {
+            return { acted: false, hasMedia: false, isPlaying: false, currentTime: 0, unavailable: true };
+          }
+          if (window.__cinecastAutoCommitted) {
+            return { acted: true, hasMedia: true, isPlaying: true, currentTime: 0, alreadyCommitted: true };
+          }
+          const goBtn = document.getElementById('go') ||
+            Array.from(document.querySelectorAll('button, [role="button"], .jw-icon-display, .plyr__control--overlaid, .vjs-big-play-button, .play-button, #play')).find((el) => {
+              const t = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim().toLowerCase();
+              return (t === 'reproducir' || t.startsWith('reproducir') || t === 'play' || el.id === 'go') && !el.disabled && el.offsetParent !== null;
+            });
+          if (goBtn && !goBtn.disabled && goBtn.offsetParent !== null) {
+            window.__cinecastAutoCommitted = true;
+            goBtn.click();
+            return { acted: true, hasMedia: true, isPlaying: true, currentTime: 0 };
+          }
+          const vids = Array.from(document.querySelectorAll('video'));
+          for (const v of vids) {
+            if (v.src || v.currentSrc || v.readyState >= 1) {
+              window.__cinecastAutoCommitted = true;
+              try { await v.play(); } catch (_) {}
+              return { acted: true, hasMedia: true, isPlaying: !v.paused, currentTime: v.currentTime || 0 };
+            }
+          }
+          return { acted: false, hasMedia: false, isPlaying: false, currentTime: 0 };
+        }
+
         if (action === 'toggleSubtitles') {
           const enable = Boolean(value);
           let styleEl = document.getElementById('cinecast-sub-hide');

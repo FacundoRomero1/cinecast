@@ -545,12 +545,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const PREFERRED_SERVER_STORAGE_KEY = 'cinecast_preferred_server';
   const mediaKey = (media as any).tmdbId || media.id;
 
-  const [isResolving, setIsResolving] = useState<boolean>(() => {
-    if (tmdbIdToUse <= 0) return false;
-    const pref = getPersistedSuccessServer(media, isSeriesOrAnime ? 'series' : 'movie');
-    const hasHls = Boolean(pref && (pref.playable === 'hls' || pref.type === 'hls'));
-    return hasHls;
-  });
+  const [isResolving, setIsResolving] = useState<boolean>(false);
+  const userInteractedRef = useRef<boolean>(false);
+  const autoCommittedKeyRef = useRef<string | null>(null);
   const serversEpochRef = useRef<number>(0);
   const [serversEpoch, setServersEpoch] = useState<number>(0);
   const [resolvedServers, setResolvedServers] = useState<StreamServer[] | null>(null);
@@ -925,8 +922,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
       : `${media.id}_movie`;
 
-    console.log(`[VideoPlayer] [Direct HLS] Consultando stream directo nativo en ${directUrl}...`);
-    setIsResolving(true);
+    // P2.5: Si el servidor elegido es latino y ya está rankeado primero, arranca directo; si no hay latino, arranca el primero disponible.
+    const initialTraditional = generateServersForMedia({
+      tmdbId: tmdbIdToUse,
+      title: media.title,
+      type: resolveType === 'anime' ? 'anime' : resolveType,
+      season: selectedSeason,
+      episode: selectedEpisode,
+    }).filter((s) => s.id !== 'direct-hls');
+    const firstIsLatino = initialTraditional.length > 0 && isLatinoServerMatch(initialTraditional[0]);
+    const initialChosen = firstIsLatino ? initialTraditional[0] : (initialTraditional.find((s) => isLatinoServerMatch(s)) || initialTraditional[0]);
+    if (initialChosen) {
+      setSelectedServerName(initialChosen.name);
+      if (initialChosen.type !== 'iframe' && initialChosen.url) {
+        setVideoSrc(initialChosen.url);
+      } else {
+        setVideoSrc('');
+      }
+      setIsResolving(false);
+    } else {
+      setIsResolving(true);
+    }
+    console.log(`[VideoPlayer] [Direct HLS] Consultando stream directo nativo en ${directUrl} (initialChosen="${initialChosen?.name || 'ninguno'}")...`);
 
     const loadTraditionalServers = () => {
       const persisted = getPersistedSuccessServer(media, resolveType);
@@ -1065,8 +1082,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               validated: true,
             };
             setDirectCaptions(Array.isArray(data.captions) ? data.captions : []);
-            setSelectedServerName(directSrv.name);
-            setVideoSrc(data.url);
             const traditionalServers = generateServersForMedia({
               tmdbId: tmdbIdToUse,
               title: media.title,
@@ -1074,9 +1089,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               season: selectedSeason,
               episode: selectedEpisode,
             }).filter((s) => s.id !== 'direct-hls');
+            const latinoServers = traditionalServers.filter((s) => isLatinoServerMatch(s));
+            const nonLatinoServers = traditionalServers.filter((s) => !isLatinoServerMatch(s));
+            const hasRankedLatinoFirst = latinoServers.length > 0 && isLatinoServerMatch(traditionalServers[0]);
+            if (!hasRankedLatinoFirst) {
+              setSelectedServerName(directSrv.name);
+              setVideoSrc(data.url);
+            }
             setResolvedServers((prev) => {
               if (serversEpochRef.current !== epoch) return prev;
-              const combined = [directSrv, ...(prev || []), ...traditionalServers];
+              const combined = [...latinoServers, directSrv, ...(prev || []), ...nonLatinoServers];
               return deduplicateServers(combined, episodeKey);
             });
             setIsResolving(false);
@@ -1257,43 +1279,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
-    const hasHls = availableServers.some((s: any) => s.playable === 'hls' || s.type === 'hls');
-
-    // 2. Si hay HLS disponible y no hay selección explícita:
-    // "Preferencia: usá el favorito solo para reordenar dentro del mismo tipo. Si hay HLS disponible y el favorito es iframe, gana el HLS."
-    if (hasHls) {
-      const successPref = getPersistedSuccessServer(media);
-      if (successPref) {
-        const favHlsIdx = availableServers.findIndex((s: any) =>
-        ((s.playable === 'hls' || s.type === 'hls') &&
-          ((successPref.id !== undefined && s.id !== undefined && String(s.id) === String(successPref.id)) ||
-            (successPref.name && s.name && s.name.toLowerCase() === successPref.name.toLowerCase())))
-        );
-        if (favHlsIdx !== -1) return favHlsIdx;
-      }
-      const firstHlsIdx = availableServers.findIndex((s: any) => s.playable === 'hls' || s.type === 'hls');
-      if (firstHlsIdx !== -1) return firstHlsIdx;
+    // 2. P2.5: Si el servidor elegido es latino y ya está rankeado primero, arranca directo
+    if (isLatinoServerMatch(availableServers[0])) {
+      return 0;
     }
 
-    // 3. Coincidencia con servidor exitoso persistido para este título (dentro de su tipo)
-    const successPref = getPersistedSuccessServer(media);
-    if (successPref) {
-      const idx = availableServers.findIndex((s: any) =>
-        (successPref.id !== undefined && s.id !== undefined && String(s.id) === String(successPref.id)) ||
-        (successPref.name && s.name && s.name.toLowerCase() === successPref.name.toLowerCase())
-      );
-      if (idx !== -1) return idx;
+    const firstLatinoIdx = availableServers.findIndex((s) => isLatinoServerMatch(s));
+    if (firstLatinoIdx !== -1) {
+      return firstLatinoIdx;
     }
 
-    // 4. Coincidencia con preferencia guardada específica para este título
-    const pref = audioPrefs.getForMedia(mediaKey, selectedSeason, selectedEpisode);
-    if (pref?.serverName) {
-      const idx = availableServers.findIndex((s) => s.name.toLowerCase() === pref.serverName.toLowerCase());
-      if (idx !== -1) return idx;
-    }
-
+    // 3. Si no hay latino, arranca el primero disponible
     return 0;
-  }, [availableServers, selectedServerName, mediaKey, selectedSeason, selectedEpisode, media]);
+  }, [availableServers, selectedServerName]);
 
   const activeServer: StreamServer = availableServers[activeServerIndex] || availableServers[0] || {
     name: 'VidSrc ME (Principal HD)', url: currentVideoUrl, type: 'iframe', language: 'Multi-Audio',
@@ -1665,6 +1663,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     autoSkipCountRef.current = 0;
     autoAdvanceCountRef.current = 0;
     autoAdvancedChapterGuardRef.current = null;
+    userInteractedRef.current = false;
+    autoCommittedKeyRef.current = null;
     setForceShowServerSelector(false);
     if (loadedMetadataTimerRef.current) {
       clearTimeout(loadedMetadataTimerRef.current);
@@ -1763,6 +1763,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (index < 0 || index >= availableServers.length) return;
     const srv = availableServers[index];
     if (!opts?.auto) {
+      userInteractedRef.current = true;
       cfAttemptRef.current = 0;
       autoSkipCountRef.current = 0;
       consecutiveUnavailableCountRef.current = 0;
@@ -2573,6 +2574,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [isIframeMode, activeEmbedUrl, iframeReloadKey]);
 
+  // P2.5: El pill queda visible solo como escape después de 8 s sin frame.
   useEffect(() => {
     if (!isIframeMode) {
       setShowIframePlayBanner(false);
@@ -2583,9 +2585,48 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (!firstFrameTimeRef.current && !hasStartedWatchingRef.current) {
         setShowIframePlayBanner(true);
       }
-    }, 6000);
+    }, 8000);
     return () => clearTimeout(timer);
   }, [isIframeMode, activeEmbedUrl, iframeReloadKey]);
+
+  // P2.5: Auto-commit del servidor elegido una sola vez cuando hay servidor elegido,
+  // episode.episodeNumber === selectedEpisode y no hubo interacción previa.
+  useEffect(() => {
+    if (!isIframeMode || !activeServer?.url || !activeEmbedUrl) return;
+    const isEpisodeCoherent = !isSeriesOrAnime || !episode || episode.episodeNumber === selectedEpisode;
+    if (!isEpisodeCoherent || userInteractedRef.current) return;
+
+    const commitKey = `${media.id}:${selectedSeason}:${selectedEpisode}:${activeServer.name}`;
+    if (autoCommittedKeyRef.current === commitKey) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const tryAutoCommit = async () => {
+      if (cancelled || userInteractedRef.current || autoCommittedKeyRef.current === commitKey) return;
+      attempts += 1;
+      const api = (window as any).electronAPI;
+      const res = await (api?.autoCommitEmbedPlay?.() ?? api?.controlActiveMedia?.({ action: 'autoCommitPlay' }));
+      if (cancelled) return;
+      if (res?.unavailable) {
+        autoCommittedKeyRef.current = commitKey;
+        return;
+      }
+      if (res?.acted) {
+        autoCommittedKeyRef.current = commitKey;
+        console.log(`[VideoPlayer] [P2.5 AutoCommit] Auto-commit ejecutado en "${activeServer.name}" (key=${commitKey})`);
+        return;
+      }
+      if (attempts < 8 && !cancelled) {
+        setTimeout(tryAutoCommit, 500);
+      }
+    };
+
+    const t = setTimeout(tryAutoCommit, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [isIframeMode, activeServer?.name, activeServer?.url, activeEmbedUrl, isSeriesOrAnime, episode, selectedSeason, selectedEpisode, media.id]);
 
   const broadcastImmediate = useCallback((playingOverride?: boolean, extraOverrides?: Record<string, any>) => {
     if (!onBroadcastState) return;
@@ -3322,7 +3363,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 recordFirstFrame('webview-video-loaded');
               }}
               onDomReady={() => {
-                recordFirstFrame('webview-dom-ready');
                 window.electronAPI?.controlActiveMedia?.({
                   action: 'toggleSubtitles',
                   value: subtitlesEnabledRef.current,
@@ -3359,8 +3399,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   clearTimeout(iframeLoadTimeoutRef.current);
                   iframeLoadTimeoutRef.current = null;
                 }
-                markAlgoReproduciendo('iframe-loaded');
-                recordFirstFrame('iframe-loaded');
                 if (!isMovieMasterEmbed) {
                   const iframeEl = e.currentTarget;
                   setTimeout(() => {
