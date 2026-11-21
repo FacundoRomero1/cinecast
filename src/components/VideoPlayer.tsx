@@ -3416,6 +3416,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 recordFirstFrame('webview-video-loaded');
               }}
               onDomReady={() => {
+                console.log(`[AD] iframe montado en ${Date.now() - mountTimeRef.current}ms`);
                 window.electronAPI?.controlActiveMedia?.({
                   action: 'toggleSubtitles',
                   value: subtitlesEnabledRef.current,
@@ -3448,6 +3449,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 console.warn('[iframe onError] Error en iframe ignorado en modo iframe');
               }}
               onLoad={(e) => {
+                console.log(`[AD] iframe montado en ${Date.now() - mountTimeRef.current}ms`);
                 if (iframeLoadTimeoutRef.current) {
                   clearTimeout(iframeLoadTimeoutRef.current);
                   iframeLoadTimeoutRef.current = null;
