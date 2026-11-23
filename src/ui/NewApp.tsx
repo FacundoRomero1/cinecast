@@ -2114,10 +2114,29 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                 advanceToSameSeriesEpisode(targetSeason, targetEpNum);
               }}
               onUpdateAudio={(newSettings) => {
-                setAudioSettings((prev) => ({ ...prev, ...newSettings }));
+                let vol01: number | undefined;
+                if (typeof newSettings.volume === 'number' && Number.isFinite(newSettings.volume)) {
+                  vol01 = newSettings.volume > 1
+                    ? Math.max(0, Math.min(1, newSettings.volume / 100))
+                    : Math.max(0, Math.min(1, newSettings.volume));
+                  try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) {}
+                }
+                if (typeof newSettings.isMuted === 'boolean') {
+                  try { localStorage.setItem('cinecast_muted_v1', String(newSettings.isMuted)); } catch (_) {}
+                }
+                const nextAudio = {
+                  ...audioSettings,
+                  ...newSettings,
+                  ...(vol01 !== undefined ? { volume: Math.round(vol01 * 100) } : {}),
+                };
+                const nextPlayback =
+                  vol01 !== undefined ? { ...playbackSettings, volume: vol01 } : playbackSettings;
+                setAudioSettings(nextAudio);
+                if (vol01 !== undefined) setPlaybackSettings(nextPlayback);
                 deviceSync.broadcastPlaybackState({
                   ...remotePlaybackState,
-                  audioSettings: { ...audioSettings, ...newSettings },
+                  audioSettings: nextAudio,
+                  playbackSettings: nextPlayback,
                 });
               }}
               onClose={() => {

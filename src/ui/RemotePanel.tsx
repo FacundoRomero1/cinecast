@@ -256,6 +256,25 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
   const [isAudioSheetOpen, setIsAudioSheetOpen] = useState(false);
   const [showFineTuning, setShowFineTuning] = useState(false);
 
+  const derivedVolumePct = useMemo(() => {
+    const pbVol = playbackState?.playbackSettings?.volume;
+    if (typeof pbVol === 'number' && Number.isFinite(pbVol)) {
+      return Math.round((pbVol > 1 ? Math.max(0, Math.min(1, pbVol / 100)) : Math.max(0, Math.min(1, pbVol))) * 100);
+    }
+    const auVol = playbackState?.audioSettings?.volume;
+    if (typeof auVol === 'number' && Number.isFinite(auVol)) {
+      return Math.round(auVol > 1 ? Math.max(0, Math.min(100, auVol)) : Math.max(0, Math.min(1, auVol)) * 100);
+    }
+    try {
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('cinecast_volume_v1') : null;
+      if (saved !== null && saved !== '') {
+        const n = Number(saved);
+        if (Number.isFinite(n)) return Math.round((n > 1 ? n / 100 : n) * 100);
+      }
+    } catch (_) {}
+    return 100;
+  }, [playbackState?.playbackSettings?.volume, playbackState?.audioSettings?.volume]);
+
   const [audioOpts, setAudioOpts] = useState<{
     volume: number;
     preset: 'dialogos' | 'nocturno' | 'estandar';
@@ -264,13 +283,17 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
     trebleDb: number;
     compressorEnabled: boolean;
   }>({
-    volume: playbackState?.audioSettings?.volume ?? 100,
+    volume: derivedVolumePct,
     preset: 'estandar',
     bassDb: playbackState?.audioSettings?.bassGain ?? 0,
     midDb: playbackState?.audioSettings?.midGain ?? 0,
     trebleDb: playbackState?.audioSettings?.trebleGain ?? 0,
     compressorEnabled: false,
   });
+
+  useEffect(() => {
+    setAudioOpts((prev) => (prev.volume === derivedVolumePct ? prev : { ...prev, volume: derivedVolumePct }));
+  }, [derivedVolumePct]);
 
   const [sleepTimerNowMs, setSleepTimerNowMs] = useState<number>(() => Date.now());
   useEffect(() => {

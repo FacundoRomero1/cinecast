@@ -300,7 +300,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
         .replace('{id}', String(tmdbId || ''))
         .replace('{season}', String(season || 1))
         .replace('{episode}', String(episode || 1)),
-      type: 'iframe',
+      type: (t as any).type || 'iframe',
       language: t.language || 'Prueba',
     }));
   }

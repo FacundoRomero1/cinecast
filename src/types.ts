@@ -202,6 +202,8 @@ export interface PlaybackSettings {
   autoPlayNext: boolean;
   autoSkipIntro: boolean;
   nextEpisodeDelay: number; // seconds
+  /** Volumen maestro normalizado 0..1 (B6: única fuente de verdad) */
+  volume: number;
 }
 
 export type HubType = 'cinecast' | 'spotify' | 'youtube' | 'sports';

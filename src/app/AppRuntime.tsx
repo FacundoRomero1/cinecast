@@ -210,22 +210,45 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [remoteNotification, setRemoteNotification] = useState<string | null>(null);
 
   // COPIA de App.tsx L157-172; borrar al eliminar la UI clásica
-  // Audio & Playback Configurations (100% volumen sin muteos forzados)
-  const [audioSettings, setAudioSettings] = useState<AudioSettings>({
-    volume: 100,
-    isMuted: false,
-    preset: 'standard',
-    bassGain: 0,
-    midGain: 0,
-    trebleGain: 0,
-    compressorEnabled: false,
-    dialogueBoost: false,
+  // B6: playbackSettings.volume (0..1) como única fuente de verdad persistida en audioPrefs
+  const [playbackSettings, setPlaybackSettings] = useState<PlaybackSettings>(() => {
+    let vol01 = 1;
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('cinecast_volume_v1') : null;
+      if (raw !== null && raw !== '') {
+        const n = Number(raw);
+        if (Number.isFinite(n)) vol01 = n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n));
+      }
+    } catch (_) {}
+    return {
+      autoPlayNext: true,
+      autoSkipIntro: true,
+      nextEpisodeDelay: 5,
+      volume: vol01,
+    };
   });
 
-  const [playbackSettings, setPlaybackSettings] = useState<PlaybackSettings>({
-    autoPlayNext: true,
-    autoSkipIntro: true,
-    nextEpisodeDelay: 5,
+  const [audioSettings, setAudioSettings] = useState<AudioSettings>(() => {
+    let vol01 = 1;
+    let muted = false;
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('cinecast_volume_v1') : null;
+      if (raw !== null && raw !== '') {
+        const n = Number(raw);
+        if (Number.isFinite(n)) vol01 = n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n));
+      }
+      muted = typeof window !== 'undefined' && localStorage.getItem('cinecast_muted_v1') === 'true';
+    } catch (_) {}
+    return {
+      volume: Math.round(vol01 * 100),
+      isMuted: muted,
+      preset: 'standard',
+      bassGain: 0,
+      midGain: 0,
+      trebleGain: 0,
+      compressorEnabled: false,
+      dialogueBoost: false,
+    };
   });
 
   // COPIA de App.tsx L174-202; borrar al eliminar la UI clásica
@@ -561,11 +584,33 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       } else if (!incomingIsSeries || state.episodeId === null) {
         setActiveEpisode(null);
       }
-      if (state.audioSettings) {
-        setAudioSettings(state.audioSettings);
-      }
-      if (state.playbackSettings) {
-        setPlaybackSettings(state.playbackSettings);
+      if (state.playbackSettings || state.audioSettings) {
+        const rawVol =
+          state.playbackSettings?.volume !== undefined
+            ? state.playbackSettings.volume
+            : state.audioSettings?.volume;
+        let vol01: number | undefined;
+        if (typeof rawVol === 'number' && Number.isFinite(rawVol)) {
+          vol01 = rawVol > 1 ? Math.max(0, Math.min(1, rawVol / 100)) : Math.max(0, Math.min(1, rawVol));
+          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) {}
+        }
+        if (state.audioSettings) {
+          setAudioSettings({
+            ...state.audioSettings,
+            ...(vol01 !== undefined ? { volume: Math.round(vol01 * 100) } : {}),
+          });
+        } else if (vol01 !== undefined) {
+          setAudioSettings((prev) => ({ ...prev, volume: Math.round(vol01! * 100) }));
+        }
+        if (state.playbackSettings) {
+          setPlaybackSettings((prev) => ({
+            ...prev,
+            ...state.playbackSettings,
+            ...(vol01 !== undefined ? { volume: vol01 } : {}),
+          }));
+        } else if (vol01 !== undefined) {
+          setPlaybackSettings((prev) => ({ ...prev, volume: vol01! }));
+        }
       }
     });
 
@@ -1226,17 +1271,27 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'setVolume': {
-        const newVol = typeof cmd.payload === 'number' ? Math.max(0, Math.min(100, cmd.payload)) : 85;
-        setAudioSettings((prev) => ({ ...prev, volume: newVol, isMuted: false }));
+        const raw = typeof cmd.payload === 'number' ? cmd.payload : Number(cmd.payload?.volume ?? 0.85);
+        const vol01 = Number.isFinite(raw)
+          ? (raw > 1 ? Math.max(0, Math.min(1, raw / 100)) : Math.max(0, Math.min(1, raw)))
+          : 0.85;
+        const volPct = Math.round(vol01 * 100);
+        try {
+          localStorage.setItem('cinecast_volume_v1', String(vol01));
+          localStorage.setItem('cinecast_muted_v1', 'false');
+        } catch (_) {}
+        setPlaybackSettings((prev) => ({ ...prev, volume: vol01 }));
+        setAudioSettings((prev) => ({ ...prev, volume: volPct, isMuted: false }));
         if (!(isPlayingLocally && activeHub === 'cinecast')) {
-          window.electronAPI?.setMasterVolume?.({ volume: newVol, isMuted: false });
+          window.electronAPI?.setMasterVolume?.({ volume: volPct, isMuted: false });
         }
-        triggerNotification(`📱 Volumen PC: ${newVol}%`);
+        triggerNotification(`📱 Volumen PC: ${volPct}%`);
         break;
       }
       case 'toggleMute': {
         setAudioSettings((prev) => {
           const nextMuted = !prev.isMuted;
+          try { localStorage.setItem('cinecast_muted_v1', String(nextMuted)); } catch (_) {}
           if (!(isPlayingLocally && activeHub === 'cinecast')) {
             window.electronAPI?.setMasterVolume?.({ volume: prev.volume, isMuted: nextMuted });
           }
@@ -1246,16 +1301,39 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         break;
       }
       case 'setAudioSettings': {
-        const newSettings = cmd.payload;
-        setAudioSettings((prev) => ({ ...prev, ...newSettings }));
+        const newSettings = cmd.payload || {};
+        if (typeof newSettings.volume === 'number' && Number.isFinite(newSettings.volume)) {
+          const vol01 = newSettings.volume > 1
+            ? Math.max(0, Math.min(1, newSettings.volume / 100))
+            : Math.max(0, Math.min(1, newSettings.volume));
+          const volPct = Math.round(vol01 * 100);
+          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) {}
+          setPlaybackSettings((prev) => ({ ...prev, volume: vol01 }));
+          setAudioSettings((prev) => ({ ...prev, ...newSettings, volume: volPct }));
+        } else {
+          setAudioSettings((prev) => ({ ...prev, ...newSettings }));
+        }
+        if (typeof newSettings.isMuted === 'boolean') {
+          try { localStorage.setItem('cinecast_muted_v1', String(newSettings.isMuted)); } catch (_) {}
+        }
         if (newSettings.preset) {
           triggerNotification(`📱 Efecto de audio: ${newSettings.preset.toUpperCase()}`);
         }
         break;
       }
       case 'setPlaybackSettings': {
-        const newSettings = cmd.payload;
-        setPlaybackSettings((prev) => ({ ...prev, ...newSettings }));
+        const newSettings = cmd.payload || {};
+        if (typeof newSettings.volume === 'number' && Number.isFinite(newSettings.volume)) {
+          const vol01 = newSettings.volume > 1
+            ? Math.max(0, Math.min(1, newSettings.volume / 100))
+            : Math.max(0, Math.min(1, newSettings.volume));
+          const volPct = Math.round(vol01 * 100);
+          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) {}
+          setPlaybackSettings((prev) => ({ ...prev, ...newSettings, volume: vol01 }));
+          setAudioSettings((prev) => ({ ...prev, volume: volPct }));
+        } else {
+          setPlaybackSettings((prev) => ({ ...prev, ...newSettings }));
+        }
         break;
       }
       case 'setMarathon': {
