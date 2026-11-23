@@ -349,7 +349,8 @@ export interface ElectronAPI {
   setStreamHeaders?: (payload: { url: string; referrer?: string | null; userAgent?: string | null }) => Promise<boolean>;
   setMasterVolume?: (payload: { volume?: number; isMuted?: boolean }) => Promise<boolean>;
   getRealMediaState?: () => Promise<{ found: boolean; currentTime: number; duration: number; isPlaying: boolean; isLive: boolean; title?: string; detectedTracks?: { url: string; audio: string[]; subs: string[] } | null } | null>;
-  controlActiveMedia?: (payload: { action: string; value?: any }) => Promise<{ ok: boolean; subtitlesEnabled?: boolean; currentTime?: number; isPlaying?: boolean; hasMedia?: boolean; acted?: boolean }>;
+  controlActiveMedia?: (payload: { action: string; value?: any }) => Promise<{ ok: boolean; subtitlesEnabled?: boolean; currentTime?: number; isPlaying?: boolean; hasMedia?: boolean; acted?: boolean; unavailable?: boolean; reason?: string }>;
+  autoCommitEmbedPlay?: () => Promise<{ ok?: boolean; acted?: boolean; unavailable?: boolean; reason?: string }>;
   getEmbedStatus?: () => Promise<{ ok: boolean; title?: string; cloudflare?: boolean; contentUnavailable?: boolean; src?: string; currentTime?: number | null; duration?: number | null } | null>;
   onEmbedFailed?: (callback: (payload: { code: number; desc: string; url: string }) => void) => () => void;
   probeStreams?: (urls: string[]) => Promise<Record<string, boolean>>;

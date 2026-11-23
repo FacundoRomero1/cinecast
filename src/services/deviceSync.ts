@@ -679,10 +679,13 @@ export class DeviceSyncService {
   }
 
   public connect(roomId?: string, deviceName?: string, deviceType?: DeviceType) {
+    const prevRoomId = this.roomId;
     if (roomId) {
       this.roomId = roomId;
       localStorage.setItem('cinecast_room_id', roomId);
-      this.initBroadcastChannel();
+      if (roomId !== prevRoomId) {
+        this.initBroadcastChannel();
+      }
     }
     if (deviceName) {
       this.deviceName = deviceName;
@@ -701,6 +704,27 @@ export class DeviceSyncService {
     if (!this.tryAcquireTabLease(false)) {
       this.enterOtherTabState('otra-conexion');
       return;
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let host = window.location.host;
+    if (!host || host === 'null' || window.location.protocol === 'file:') {
+      const ip = this.getLanIp() || 'localhost';
+      host = `${ip}:${this.lanPort || 3000}`;
+    }
+    const wsUrl = `${protocol}//${host}/ws`;
+
+    // Evitar cerrar un WebSocket que ya está conectando o abierto al mismo /ws y sala
+    if (this.ws && this.ws.url === wsUrl) {
+      if (this.ws.readyState === WebSocket.OPEN) {
+        if (roomId && roomId !== prevRoomId) {
+          this.sendJoin();
+        }
+        return;
+      }
+      if (this.ws.readyState === WebSocket.CONNECTING) {
+        return;
+      }
     }
 
     if (this.reconnectTimer) {
@@ -736,13 +760,6 @@ export class DeviceSyncService {
       } catch (_) {}
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    let host = window.location.host;
-    if (!host || host === 'null' || window.location.protocol === 'file:') {
-      const ip = this.getLanIp() || 'localhost';
-      host = `${ip}:${this.lanPort || 3000}`;
-    }
-    const wsUrl = `${protocol}//${host}/ws`;
     this.lastConnectAttemptAt = Date.now();
 
     try {

@@ -493,6 +493,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   }, [deviceRole]);
 
+  const isScreenInStandbyRef = useRef(isScreenInStandby);
+  isScreenInStandbyRef.current = isScreenInStandby;
+  const deviceRoleRef = useRef(deviceRole);
+  deviceRoleRef.current = deviceRole;
+
   // Initial connection to sync network + Auto-connect to permanent home if available
   useEffect(() => {
     // If user has a permanent home saved and no room in URL, use home room
@@ -513,7 +518,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setDevices(devs);
 
       // If we are in standby on a screen and a remote device connects, auto-dismiss standby silently
-      if (isScreenInStandby && deviceRole === 'screen') {
+      if (isScreenInStandbyRef.current && deviceRoleRef.current === 'screen') {
         const hasRemoteJoined = devs.some((d) => d.type === 'remote' && d.connected !== false && !d.isCurrent);
         if (hasRemoteJoined) {
           setIsScreenInStandby(false);
@@ -548,7 +553,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       unsubRemoteConnected();
       unsubDevices();
     };
-  }, [homeRoomId, isScreenInStandby, deviceRole]);
+  }, [homeRoomId]);
 
   // COPIA de App.tsx L303-332; borrar al eliminar la UI clásica
   // Keep a ref to the latest command handler to avoid stale closures
@@ -876,8 +881,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             mediaTitle: cleanMediaItem.title,
             mediaPoster: cleanMediaItem.posterUrl,
             mediaYear: cleanMediaItem.year,
-            seasonNumber: ep ? ep.seasonNumber : null,
-            episodeNumber: ep ? ep.episodeNumber : null,
+            seasonNumber: ep ? ep.seasonNumber : undefined,
+            episodeNumber: ep ? ep.episodeNumber : undefined,
             episodeTitle: ep ? (ep.title || '') : '',
             mediaItem: cleanMediaItem,
             episodeItem: ep || undefined,

@@ -92,7 +92,6 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
   // GET /auth/start/spotify: Flujo PKCE S256 oficial (Client ID dinámico, sin client secret)
   router.get('/auth/start/spotify', async (req, res) => {
-    const localIp = getLocalIpAddress() || '127.0.0.1';
     const port = process.env.PORT || 3000;
     const rawRedirectUri = typeof req.query.redirect_uri === 'string' ? req.query.redirect_uri.trim() : '';
     let redirectUri = `http://127.0.0.1:${port}/auth/callback`;
@@ -157,7 +156,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
     <div class="steps">
       <ol>
         <li>Entra a <strong>developer.spotify.com</strong> y crea tu app.</li>
-        <li>En <strong>Redirect URIs</strong> agrega:<br><code>http://${localIp}:${port}/auth/callback</code></li>
+        <li>En <strong>Redirect URIs</strong> agrega:<br><code>${redirectUri}</code></li>
         <li>Pega tu <strong>Client ID</strong> aquí (no requiere Client Secret):</li>
       </ol>
     </div>
