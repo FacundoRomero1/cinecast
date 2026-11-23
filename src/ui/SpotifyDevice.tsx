@@ -64,6 +64,21 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
   const connectingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectAttemptsRef = useRef<number>(0);
 
+  const onDeviceReadyRef = useRef<SpotifyDeviceProps['onDeviceReady']>(onDeviceReady);
+  const onTrackChangeRef = useRef<SpotifyDeviceProps['onTrackChange']>(onTrackChange);
+  const volumeRef = useRef<number>(volume);
+  const isMutedRef = useRef<boolean>(isMuted);
+  const currentTrackRef = useRef<any>(currentTrack);
+  const isPlayerConnectedRef = useRef<boolean>(false);
+  const pendingNextRef = useRef<boolean>(false);
+  const sdkInitializedRef = useRef<boolean>(false);
+
+  onDeviceReadyRef.current = onDeviceReady;
+  onTrackChangeRef.current = onTrackChange;
+  volumeRef.current = volume;
+  isMutedRef.current = isMuted;
+  currentTrackRef.current = currentTrack;
+
   // Navegar a Ajustes
   const handleGoToSettings = useCallback(() => {
     if (onNavigateToSettings) {
@@ -143,7 +158,9 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
           try {
             playerRef.current.disconnect();
           } catch (_) {}
+          playerRef.current = null;
         }
+        isPlayerConnectedRef.current = false;
 
         const player = new (window as any).Spotify.Player({
           name: deviceName,
@@ -151,20 +168,31 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
             const token = await authService.getSpotifyAccessToken();
             if (token) cb(token);
           },
-          volume: volume / 100,
+          volume: isMutedRef.current ? 0 : volumeRef.current / 100,
         });
 
         player.addListener('ready', ({ device_id }: { device_id: string }) => {
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+          isPlayerConnectedRef.current = true;
           setDeviceId(device_id);
           setIsPlayerConnected(true);
           setStage('connected');
           setErrorCause(null);
           setErrorMessage(null);
-          if (onDeviceReady) onDeviceReady(device_id);
+          try {
+            player.setVolume?.(isMutedRef.current ? 0 : volumeRef.current / 100)?.catch?.(() => {});
+          } catch (_) {}
+          if (pendingNextRef.current) {
+            pendingNextRef.current = false;
+            try {
+              player.nextTrack?.()?.catch?.(() => {});
+            } catch (_) {}
+          }
+          if (onDeviceReadyRef.current) onDeviceReadyRef.current(device_id);
         });
 
         player.addListener('not_ready', () => {
+          isPlayerConnectedRef.current = false;
           setIsPlayerConnected(false);
         });
 
@@ -174,16 +202,18 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
           );
           if (!state) return;
           const track = state.track_window?.current_track;
+          currentTrackRef.current = track || null;
           setCurrentTrack(track || null);
           setIsPaused(state.paused);
           setPosition(state.position || 0);
           setDuration(state.duration || 0);
-          if (onTrackChange && track) onTrackChange(track);
+          if (onTrackChangeRef.current && track) onTrackChangeRef.current(track);
         });
 
         player.addListener('initialization_error', ({ message }: { message: string }) => {
           console.error(`[SPOTIFY] initialization_error message=${message}`);
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+          isPlayerConnectedRef.current = false;
           setErrorCause('EME no disponible');
           setErrorMessage(`EME / Widevine no disponible o error de inicialización: ${message}`);
           setStage('error');
@@ -192,6 +222,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
         player.addListener('authentication_error', (err?: { message?: string }) => {
           console.error(`[SPOTIFY] authentication_error message=${err?.message || 'invalid_or_expired_token'}`);
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+          isPlayerConnectedRef.current = false;
           setErrorCause('authentication_error');
           setErrorMessage('Error de autenticación: el token no es válido o expiró.');
           setStage('error');
@@ -200,6 +231,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
         player.addListener('account_error', (err?: { message?: string }) => {
           console.error(`[SPOTIFY] account_error message=${err?.message || 'premium_required'}`);
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+          isPlayerConnectedRef.current = false;
           setErrorCause('account_error');
           setErrorMessage('Spotify necesita Premium para reproducir mediante Web Playback SDK.');
           setStage('error');
@@ -207,6 +239,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
 
         player.connect().catch((err: any) => {
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+          isPlayerConnectedRef.current = false;
           setErrorCause('error de conexión');
           setErrorMessage(`Error al conectar SDK: ${err?.message || err}`);
           setStage('error');
@@ -215,6 +248,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
         playerRef.current = player;
       } catch (err: any) {
         if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
+        isPlayerConnectedRef.current = false;
         setErrorCause('error al crear player');
         setErrorMessage(`Error al crear reproductor: ${err?.message || err}`);
         setStage('error');
@@ -241,7 +275,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
         document.body.appendChild(script);
       }
     }
-  }, [deviceName, volume, onDeviceReady, onTrackChange]);
+  }, [deviceName]);
 
   // Disparar conexión al entrar en stage 'connecting'
   useEffect(() => {
@@ -249,6 +283,29 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
       initSdkPlayer();
     }
   }, [stage, initSdkPlayer]);
+
+  // Aplicar volumen vía setVolume sin recrear ni desconectar Spotify.Player
+  useEffect(() => {
+    if (playerRef.current && isPlayerConnected) {
+      try {
+        playerRef.current.setVolume?.(isMuted ? 0 : volume / 100)?.catch?.(() => {});
+      } catch (_) {}
+    }
+  }, [volume, isMuted, isPlayerConnected]);
+
+  // Limpiar instancia SDK solo al desmontar el componente
+  useEffect(() => {
+    return () => {
+      isPlayerConnectedRef.current = false;
+      pendingNextRef.current = false;
+      if (playerRef.current) {
+        try {
+          playerRef.current.disconnect();
+        } catch (_) {}
+        playerRef.current = null;
+      }
+    };
+  }, []);
 
   // Polling para stage 'waiting_auth' (cada 2s hasta 3 min = 90 intentos)
   useEffect(() => {
@@ -328,31 +385,42 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
 
   const handleNext = useCallback(async (origin: string = 'SpotifyDevice.handleNext') => {
     console.log(
-      `[SPOTIFY] next triggered origin=${origin} track_window.current_track.id=${currentTrack?.id ?? null}`
+      `[SPOTIFY] next triggered origin=${origin} track_window.current_track.id=${currentTrackRef.current?.id ?? null}`
     );
-    if (playerRef.current) {
+    if (playerRef.current && isPlayerConnectedRef.current) {
+      pendingNextRef.current = false;
       try {
         await playerRef.current.nextTrack();
       } catch (_) {}
+      return;
     }
-  }, [currentTrack?.id]);
+    // Si aún está conectando, encolar a lo sumo 1 comando pendiente (nunca N duplicados)
+    pendingNextRef.current = true;
+  }, []);
+
+  const handlePrev = useCallback(async () => {
+    if (playerRef.current && isPlayerConnectedRef.current) {
+      try {
+        await playerRef.current.previousTrack();
+      } catch (_) {}
+    }
+  }, []);
 
   useEffect(() => {
     const onRemoteNext = (e: Event) => {
       const custom = e as CustomEvent<{ origin?: string }>;
       void handleNext(custom.detail?.origin || 'window.cinecast:spotify-next');
     };
+    const onRemotePrev = () => {
+      void handlePrev();
+    };
     window.addEventListener('cinecast:spotify-next', onRemoteNext);
-    return () => window.removeEventListener('cinecast:spotify-next', onRemoteNext);
-  }, [handleNext]);
-
-  const handlePrev = async () => {
-    if (playerRef.current) {
-      try {
-        await playerRef.current.previousTrack();
-      } catch (_) {}
-    }
-  };
+    window.addEventListener('cinecast:spotify-prev', onRemotePrev);
+    return () => {
+      window.removeEventListener('cinecast:spotify-next', onRemoteNext);
+      window.removeEventListener('cinecast:spotify-prev', onRemotePrev);
+    };
+  }, [handleNext, handlePrev]);
 
   const handleSeek = async (newPosMs: number) => {
     setPosition(newPosMs);
@@ -363,31 +431,23 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     }
   };
 
-  const handleVolumeChange = async (newVol: number) => {
+  const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
     setIsMuted(newVol === 0);
-    if (playerRef.current) {
-      try {
-        await playerRef.current.setVolume(newVol / 100);
-      } catch (_) {}
-    }
   };
 
-  const handleToggleMute = async () => {
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    if (playerRef.current) {
-      try {
-        await playerRef.current.setVolume(nextMuted ? 0 : volume / 100);
-      } catch (_) {}
-    }
+  const handleToggleMute = () => {
+    setIsMuted((prev) => !prev);
   };
 
   const handleDisconnect = async () => {
+    isPlayerConnectedRef.current = false;
+    pendingNextRef.current = false;
     if (playerRef.current) {
       try {
         playerRef.current.disconnect();
       } catch (_) {}
+      playerRef.current = null;
     }
     await authService.logoutSpotify();
     setDeviceId(null);

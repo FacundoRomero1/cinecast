@@ -1866,25 +1866,21 @@ const SpotifyView: React.FC = () => {
               }
             }}
             onNextTrack={() => {
-              console.log(
-                `[SPOTIFY] next triggered origin=SpotifyView.onNextTrack track_window.current_track.id=${activeSpotifyTrack?.id ?? null}`
-              );
-              const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
-              const next = SPOTIFY_TRACKS[(idx + 1) % SPOTIFY_TRACKS.length]!;
-              setActiveSpotifyTrack(next);
-              setIsSpotifyPlaying(true);
-              if (deviceRole === 'remote') {
-                sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: next } });
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(
+                  new CustomEvent('cinecast:spotify-next', {
+                    detail: { origin: 'SpotifyView.onNextTrack' },
+                  })
+                );
               }
             }}
             onPrevTrack={() => {
-              const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
-              const prev =
-                SPOTIFY_TRACKS[(idx - 1 + SPOTIFY_TRACKS.length) % SPOTIFY_TRACKS.length]!;
-              setActiveSpotifyTrack(prev);
-              setIsSpotifyPlaying(true);
-              if (deviceRole === 'remote') {
-                sendRemoteCommand({ action: 'playSpotifyTrack', payload: { track: prev } });
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(
+                  new CustomEvent('cinecast:spotify-prev', {
+                    detail: { origin: 'SpotifyView.onPrevTrack' },
+                  })
+                );
               }
             }}
             onCastTrackToScreen={(track) => {

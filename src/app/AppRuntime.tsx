@@ -1697,9 +1697,6 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     if (activeHub === 'spotify') {
-      console.log(
-        `[SPOTIFY] next triggered origin=AppRuntime.handlePlayNextEpisode track_window.current_track.id=${activeSpotifyTrack?.id ?? null}`
-      );
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('cinecast:spotify-next', {
@@ -1707,11 +1704,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           })
         );
       }
-      const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
-      const nextTrack = SPOTIFY_TRACKS[(idx + 1) % SPOTIFY_TRACKS.length];
-      setActiveSpotifyTrack(nextTrack);
-      setIsSpotifyPlaying(true);
-      triggerNotification(`🎵 Siguiente canción: ${nextTrack.title}`);
+      triggerNotification('🎵 Siguiente canción');
       return;
     }
 
@@ -1878,21 +1871,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     if (activeHub === 'spotify') {
-      console.log(
-        `[SPOTIFY] next triggered origin=AppRuntime.handlePlayNextEpisode track_window.current_track.id=${activeSpotifyTrack?.id ?? null}`
-      );
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
-          new CustomEvent('cinecast:spotify-next', {
-            detail: { origin: 'AppRuntime.handlePlayNextEpisode' },
+          new CustomEvent('cinecast:spotify-prev', {
+            detail: { origin: 'AppRuntime.handlePlayPrevEpisode' },
           })
         );
       }
-      const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
-      const prevTrack = SPOTIFY_TRACKS[(idx - 1 + SPOTIFY_TRACKS.length) % SPOTIFY_TRACKS.length];
-      setActiveSpotifyTrack(prevTrack);
-      setIsSpotifyPlaying(true);
-      triggerNotification(`🎵 Canción anterior: ${prevTrack.title}`);
+      triggerNotification('🎵 Canción anterior');
       return;
     }
 
