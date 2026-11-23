@@ -12,6 +12,7 @@ import {
   RefreshCw,
   RotateCcw, RotateCw,
   Server,
+  SkipForward,
   Sliders,
   Volume2, VolumeX,
   X
@@ -478,22 +479,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIframeReloadKey((k) => k + 1);
   };
 
-  // Atajo de teclado 'H' para alternar barra superior y 'Escape' para salir del reproductor
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
-      if (e.key === 'h' || e.key === 'H') {
-        e.preventDefault();
-        setTopBarHiddenPersisted(!isTopBarHidden);
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isTopBarHidden, setTopBarHiddenPersisted, onClose]);
-
   const isSeriesOrAnime =
     media.type === 'series' || media.category === 'series' || media.category === 'anime' ||
     Boolean(media.seasons?.length) || Boolean(media.episodes?.length);
@@ -503,6 +488,63 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const resolveType = isSeriesOrAnime
     ? (media.category === 'anime' ? 'anime' : 'series')
     : 'movie';
+
+  const [isPointerOverPanel, setIsPointerOverPanel] = useState<boolean>(false);
+  const isPointerOverPanelRef = useRef<boolean>(false);
+  const panelGracePendingRef = useRef<boolean>(true);
+  const showControlsRef = useRef<boolean>(showControls);
+  const isTopBarHiddenRef = useRef<boolean>(isTopBarHidden);
+  const handleAdvanceEpisodeRef = useRef<(delta: number) => void>(() => {});
+  showControlsRef.current = showControls;
+  isTopBarHiddenRef.current = isTopBarHidden;
+
+  // B5: Atajos de teclado en window con capture:true (H abre/cierra panel, N siguiente, P anterior, Escape salir)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        Boolean(target?.isContentEditable) ||
+        Boolean(target?.closest?.('[contenteditable="true"]'))
+      ) {
+        return;
+      }
+      if (e.key === 'h' || e.key === 'H') {
+        e.preventDefault();
+        const isCurrentlyVisible = !isTopBarHiddenRef.current && showControlsRef.current;
+        if (isCurrentlyVisible) {
+          if (controlsTimeoutRef.current) {
+            clearTimeout(controlsTimeoutRef.current);
+            controlsTimeoutRef.current = null;
+          }
+          setTopBarHiddenPersisted(true);
+          setShowControls(false);
+        } else {
+          panelGracePendingRef.current = true;
+          setTopBarHiddenPersisted(false);
+          setShowControls(true);
+        }
+      } else if (e.key === 'n' || e.key === 'N') {
+        if (isEpisodic) {
+          e.preventDefault();
+          handleAdvanceEpisodeRef.current?.(1);
+        }
+      } else if (e.key === 'p' || e.key === 'P') {
+        if (isEpisodic) {
+          e.preventDefault();
+          handleAdvanceEpisodeRef.current?.(-1);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+  }, [setTopBarHiddenPersisted, onClose, isEpisodic]);
 
   // Tarea A: Extracción robusta de TMDB ID que soporta tmdb-series-1418_s1_e15, slugs y números
   const tmdbIdToUse = useMemo(() => {
@@ -2833,6 +2875,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIframeReloadKey((k) => k + 1);
     broadcastImmediate();
   }, [isEpisodic, realEpisodes, media.episodes, media.seasons, media.seasonsCount, realSeasons, marathonMode, triggerSignalToast, onRequestEpisodeChange, onNextEpisode, onPrevEpisode, isIframeMode, broadcastImmediate]);
+  handleAdvanceEpisodeRef.current = handleAdvanceEpisode;
 
   const attemptSmartPlay = useCallback((videoEl: HTMLVideoElement | null) => {
     if (!videoEl || isIframeMode) return;
@@ -3286,13 +3329,45 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     attemptSmartPlay(videoRef.current);
   }, [videoSrc, isIframeMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleMouseMove = useCallback(() => {
-    setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+  // B5: Auto-ocultado del panel a los 4 s sin interacción (6 s de gracia al abrir),
+  // pausado mientras el video está pausado o el mouse está sobre el panel, cancelado al desmontar.
+  const scheduleAutoHide = useCallback((delayMs: number) => {
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+      controlsTimeoutRef.current = null;
+    }
+    if (!isPlaying || isPointerOverPanelRef.current) return;
     controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying || isIframeMode) setShowControls(false);
-    }, 3000);
-  }, [isPlaying, isIframeMode]);
+      if (!isPointerOverPanelRef.current) {
+        setShowControls(false);
+      }
+    }, delayMs);
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!showControls || isTopBarHidden || !isPlaying || isPointerOverPanel) {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+        controlsTimeoutRef.current = null;
+      }
+      return;
+    }
+    const delayMs = panelGracePendingRef.current ? 6000 : 4000;
+    panelGracePendingRef.current = false;
+    scheduleAutoHide(delayMs);
+    return () => {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+        controlsTimeoutRef.current = null;
+      }
+    };
+  }, [showControls, isTopBarHidden, isPlaying, isPointerOverPanel, scheduleAutoHide]);
+
+  const handleMouseMove = useCallback(() => {
+    panelGracePendingRef.current = false;
+    setShowControls(true);
+    scheduleAutoHide(4000);
+  }, [scheduleAutoHide]);
 
   const tryAutoAdvanceEpisode = useCallback(() => {
     const chapterKey = `${media.id}_s${selectedSeasonRef.current}_e${selectedEpisodeRef.current}`;
@@ -3395,9 +3470,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       data-title={currentTitle}
       className="relative w-full h-screen bg-black overflow-hidden select-none flex items-center justify-center font-sans">
 
-      {/* Franjas invisibles de detección de mouse para cuando el iframe captura el cursor */}
-      <div onMouseEnter={handleMouseMove} onMouseMove={handleMouseMove} onTouchStart={handleMouseMove} className="absolute top-0 inset-x-0 h-6 z-50 pointer-events-auto" />
-      <div onMouseEnter={handleMouseMove} onMouseMove={handleMouseMove} onTouchStart={handleMouseMove} className="absolute bottom-0 inset-x-0 h-6 z-50 pointer-events-auto" />
+      {/* Franjas invisibles de detección de mouse para cuando el iframe captura el cursor (debajo del panel z-40 cuando está visible) */}
+      <div onMouseEnter={handleMouseMove} onMouseMove={handleMouseMove} onTouchStart={handleMouseMove} className={`absolute top-0 inset-x-0 h-6 z-30 ${!isTopBarHidden && showControls ? 'pointer-events-none' : 'pointer-events-auto'}`} />
+      <div onMouseEnter={handleMouseMove} onMouseMove={handleMouseMove} onTouchStart={handleMouseMove} className="absolute bottom-0 inset-x-0 h-6 z-30 pointer-events-auto" />
 
       {/* Requisito 2: Spinner mientras resolveService resuelve los mejores servidores */}
       {isResolving && (
@@ -3874,6 +3949,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* BARRA SUPERIOR COMPACTA (<= 64px en modo embed/iframe) */}
       <div
+        data-testid="player-top-panel"
+        data-panel-visible={String(!isTopBarHidden && showControls)}
+        onMouseEnter={() => {
+          isPointerOverPanelRef.current = true;
+          setIsPointerOverPanel(true);
+        }}
+        onMouseLeave={() => {
+          isPointerOverPanelRef.current = false;
+          setIsPointerOverPanel(false);
+        }}
         className={`absolute inset-x-0 top-0 z-40 transition-all duration-300 ${isIframeMode ? 'h-14 sm:h-16 px-3 sm:px-6 py-2 bg-gradient-to-b from-black/95 via-black/80 to-transparent' : 'p-4 sm:p-6 bg-gradient-to-b from-black/95 via-black/80 to-transparent'
           } ${isTopBarHidden
             ? 'opacity-0 pointer-events-none -translate-y-4'
@@ -3954,6 +4039,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    data-testid="player-next-episode-btn"
+                    onClick={() => handleAdvanceEpisode(1)}
+                    title="Siguiente capítulo (N)"
+                    className="ml-0.5 px-2 py-0.5 rounded-md bg-red-600/90 hover:bg-red-500 text-white text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
+                  >
+                    <span>Siguiente</span>
+                    <SkipForward className="w-3 h-3" />
+                  </button>
                 </div>
               )}
 
