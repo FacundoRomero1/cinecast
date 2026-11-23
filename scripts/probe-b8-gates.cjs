@@ -20,6 +20,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const REAL_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
 
+const PREWARM_ACCEPT_LANG = 'es-AR,es;q=0.9';
+
 (async () => {
   let testEnv = null;
   let browser = null;
@@ -27,16 +29,21 @@ const REAL_UA =
   try {
     testEnv = await startTestEnv({
       name: 'probe-b8-gates',
+      env: { NODE_ENV: 'production' },
       onStdoutLine: (line) => {
         serverStdoutLines.push(line);
       },
     });
     const { base: baseUrl, room: activeRoomId } = testEnv;
 
-    // Pre-cosechar ui para 1396 y 46923 (el ui dura 6h por serie; medimos el arranque real del capítulo)
+    // Pre-cosechar ui + snapshot inicial para 1396 y ui para 46923 (medimos el arranque del capítulo)
     await fetch(`${baseUrl}/api/mm/play`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': REAL_UA },
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': REAL_UA,
+        'Accept-Language': PREWARM_ACCEPT_LANG,
+      },
       body: JSON.stringify({ tmdb: 1396, type: 'tv', season: 1, episode: 1 }),
     }).catch(() => {});
     await fetch(`${baseUrl}/api/mm/servers?tmdb=46923&type=tv&season=1&episode=1`).catch(() => {});
@@ -47,7 +54,11 @@ const REAL_UA =
     // =========================================================================
     // G8-1: Breaking Bad S01E01 (con bridge Electron simulado + [BUILD_MARKER])
     // =========================================================================
-    const ctx1 = await browser.newContext({ userAgent: REAL_UA, viewport: { width: 1280, height: 720 } });
+    const ctx1 = await browser.newContext({
+      userAgent: REAL_UA,
+      viewport: { width: 1280, height: 720 },
+      extraHTTPHeaders: { 'Accept-Language': PREWARM_ACCEPT_LANG },
+    });
     const page1 = await ctx1.newPage();
 
     const g81Logs = [];
@@ -257,9 +268,22 @@ const REAL_UA =
     });
 
     // Parte B: si el cliente pide el snapshot expirado (410), hace 1 solo re-mint con reseek a currentTime
-    await page1.evaluate(() => {
+    await page1.evaluate(async () => {
       const v = document.querySelector('video');
-      if (v) v.currentTime = 62;
+      if (!v) return;
+      v.currentTime = 62;
+      await new Promise((resolve) => {
+        if (v.currentTime >= 61 && v.readyState >= 2) {
+          resolve();
+          return;
+        }
+        const done = () => {
+          v.removeEventListener('seeked', done);
+          resolve();
+        };
+        v.addEventListener('seeked', done, { once: true });
+        setTimeout(done, 2500);
+      });
     });
     await wait(250);
     trackingPhase = 'remintB';
@@ -271,7 +295,7 @@ const REAL_UA =
     }, `/api/mm/manifest/${currentManifestKey}`);
 
     let partBResult = null;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60; i++) {
       await wait(150);
       partBResult = await page1.evaluate(() => {
         const v = document.querySelector('video');
@@ -402,7 +426,11 @@ const REAL_UA =
     // =========================================================================
     // G8-5: Web (G8-1 en Chromium puro sin Electron: window.electronAPI === undefined)
     // =========================================================================
-    const ctxWeb = await browser.newContext({ userAgent: REAL_UA, viewport: { width: 1280, height: 720 } });
+    const ctxWeb = await browser.newContext({
+      userAgent: REAL_UA,
+      viewport: { width: 1280, height: 720 },
+      extraHTTPHeaders: { 'Accept-Language': PREWARM_ACCEPT_LANG },
+    });
     const pageWeb = await ctxWeb.newPage();
 
     let g85Quickcore = 0;
@@ -497,21 +525,19 @@ const REAL_UA =
     });
     await wait(2000);
 
-    // Configurar proveedores en la página: MovieMaster primero (colgará 6 s en cosecha) + DirectFallback segundo
+    // Configurar fallback en la página y permitir flujo real de MovieMaster (/api/mm/play -> 6s deadline -> fallback)
+    await pageDeadline.route('**/api/stream/direct*', (route) =>
+      route.fulfill({ status: 404, contentType: 'application/json', body: '{"success":false}' })
+    );
     await pageDeadline.evaluate((b) => {
       window.__CINECAST_TEST = true;
+      window.__CINECAST_TEST_ALLOW_MM = true;
       window.__CINECAST_TEST_SERVERS = [
-        {
-          name: 'MovieMaster',
-          type: 'moviemaster',
-          playable: 'hls',
-          urlTemplate: 'https://api.moviemaster.lat/e/tv/{id}/{season}/{episode}?lang=LAT&autoplay=1',
-        },
         {
           name: 'DirectFallbackAfterDeadline',
           type: 'mp4',
           playable: 'mp4',
-          urlTemplate: `${b}/__test/video.mp4?id={id}&s={season}&e={episode}`,
+          urlTemplate: `${b}/__test/video.wav?id={id}&s={season}&e={episode}`,
         },
       ];
     }, baseUrl);
@@ -550,20 +576,6 @@ const REAL_UA =
             seasonNumber: 1,
             episodeNumber: 1,
             episodeTitle: 'Episodio 1',
-            servers: [
-              {
-                name: 'MovieMaster',
-                url: 'https://api.moviemaster.lat/e/tv/999991/1/1?lang=LAT&autoplay=1',
-                type: 'moviemaster',
-                language: 'Latino',
-              },
-              {
-                name: 'DirectFallbackAfterDeadline',
-                url: `${baseUrl}/__test/video.mp4?id=999991&s=1&e=1`,
-                type: 'mp4',
-                language: 'Latino',
-              },
-            ],
           },
         },
       }),
@@ -600,13 +612,56 @@ const REAL_UA =
     });
     const cooldownElapsedMs = Date.now() - tCooldown0;
 
-    // Restaurar harvestBaseUrl normal
+    // Restaurar harvestBaseUrl normal y probar caché negativa 24h (servers: [])
     await fetch(`${baseUrl}/api/mm/test-config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ harvestBaseUrl: null, clearTmdb: 999991 }),
+      body: JSON.stringify({ harvestBaseUrl: null, serversBaseUrl: null, clearTmdb: 999991 }),
     });
     await ctxDeadline.close();
+
+    // Prueba de caché negativa 24 h (tmdb 999992 con servers: [])
+    await fetch(`${baseUrl}/api/mm/test-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        harvestBaseUrl: `${baseUrl}/api/mm/test-empty`,
+        serversBaseUrl: `${baseUrl}/api/mm/test-empty`,
+        clearTmdb: 999992,
+      }),
+    });
+    const negFirstResp = await fetch(`${baseUrl}/api/mm/play`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': REAL_UA },
+      body: JSON.stringify({ tmdb: 999992, type: 'tv', season: 1, episode: 1 }),
+    });
+    // Reapuntar cosecha a test-hang SIN limpiar 999992: la segunda llamada NO debe cosechar ni colgarse
+    await fetch(`${baseUrl}/api/mm/test-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        harvestBaseUrl: `${baseUrl}/api/mm/test-hang`,
+        serversBaseUrl: null,
+      }),
+    });
+    const tNeg2 = Date.now();
+    const negSecondResp = await fetch(`${baseUrl}/api/mm/play`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': REAL_UA },
+      body: JSON.stringify({ tmdb: 999992, type: 'tv', season: 1, episode: 1 }),
+    });
+    const negSecondElapsedMs = Date.now() - tNeg2;
+    const negCacheDiskPath = require('path').join(require('os').tmpdir(), 'cinecast-mm-neg-cache-v1.json');
+    let negCachePersisted24h = false;
+    try {
+      const negRaw = JSON.parse(require('fs').readFileSync(negCacheDiskPath, 'utf8'));
+      negCachePersisted24h = Boolean(negRaw && typeof negRaw['999992|tv|1|1'] === 'number');
+    } catch (_) {}
+    await fetch(`${baseUrl}/api/mm/test-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harvestBaseUrl: null, serversBaseUrl: null, clearTmdb: 999992 }),
+    });
 
     const deadlineAbortLog =
       serverStdoutLines.find((l) => l.includes('[MM] abortado por deadline')) || null;
@@ -631,6 +686,13 @@ const REAL_UA =
       rPc?.manifestUrl && rMobile?.manifestUrl && rPc.manifestUrl !== rMobile.manifestUrl
     );
 
+    const g8NegativeCachePass = Boolean(
+      negFirstResp.status === 404 &&
+      negSecondResp.status === 404 &&
+      negSecondElapsedMs < 250 &&
+      negCachePersisted24h
+    );
+
     const g8DeadlinePass = Boolean(
       mmPlayDeadlineStatus === 404 &&
       mmPlayDeadlineMs >= 5800 &&
@@ -640,7 +702,8 @@ const REAL_UA =
       deadlineState.activeServerName === 'DirectFallbackAfterDeadline' &&
       deadlineState.currentTime > 0.3 &&
       cooldownResp.status === 404 &&
-      cooldownElapsedMs < 250
+      cooldownElapsedMs < 250 &&
+      g8NegativeCachePass
     );
 
     const allPass = g81Pass && distinctUaKeys && g82Pass && g83Pass && g84Pass && g85Pass && g8DeadlinePass;
@@ -710,6 +773,9 @@ const REAL_UA =
               totalFallbackElapsedMs,
               cooldownSecondCallMs: cooldownElapsedMs,
               cooldownSecondCallStatus: cooldownResp.status,
+              g8NegativeCachePass,
+              negSecondElapsedMs,
+              negCachePersisted24h,
               distinctUaKeys,
               pcManifestUrl: rPc?.manifestUrl,
               mobileManifestUrl: rMobile?.manifestUrl,

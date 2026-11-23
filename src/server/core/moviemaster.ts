@@ -224,6 +224,7 @@ function markNegativelyCached(cacheKey: string): void {
 }
 
 let testHarvestBaseUrlOverride: string | null = null;
+let testServersBaseUrlOverride: string | null = null;
 
 function buildEmbedUrl(tmdb: number, type: MovieMasterMediaType, season = 1, episode = 1): string {
   const base = (testHarvestBaseUrlOverride || process.env.CINECAST_MM_HARVEST_BASE_URL || 'https://api.moviemaster.lat').replace(/\/+$/, '');
@@ -236,13 +237,15 @@ function buildEmbedUrl(tmdb: number, type: MovieMasterMediaType, season = 1, epi
 async function harvestUiViaElectron(
   embedUrl: string,
   tmdb: number,
-  deadlineMs: number = HARVEST_TIMEOUT_MS
+  deadlineMs: number = HARVEST_TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<{ ui: string | null; timedOut: boolean }> {
   const electron = requireModule('electron');
   const { BrowserWindow, session } = electron;
   const partition = `mm-harvest-${tmdb}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const ses = session.fromPartition(partition, { cache: false });
   let win: any = null;
+  let onAbort: (() => void) | null = null;
 
   try {
     return await new Promise<{ ui: string | null; timedOut: boolean }>((resolve) => {
@@ -251,8 +254,23 @@ async function harvestUiViaElectron(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (signal && onAbort) {
+          signal.removeEventListener('abort', onAbort);
+        }
         resolve({ ui: val, timedOut });
       };
+
+      onAbort = () => {
+        try {
+          win?.webContents?.stop?.();
+        } catch (_) {}
+        finish(null, true);
+      };
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
 
       const timer = setTimeout(() => {
         finish(null, true);
@@ -279,8 +297,12 @@ async function harvestUiViaElectron(
         }
       );
 
+      const serverUrlFilters = testServersBaseUrlOverride
+        ? ['*://api.moviemaster.lat/servers*', `${testServersBaseUrlOverride.replace(/\/+$/, '')}/servers*`]
+        : ['*://api.moviemaster.lat/servers*'];
+
       ses.webRequest.onCompleted(
-        { urls: ['*://api.moviemaster.lat/servers*'] },
+        { urls: serverUrlFilters },
         (details: { url?: string }) => {
           try {
             if (!details?.url) return;
@@ -365,9 +387,11 @@ async function getSharedPlaywrightBrowser(): Promise<any> {
 
 async function harvestUiViaPlaywright(
   embedUrl: string,
-  deadlineMs: number = HARVEST_TIMEOUT_MS
+  deadlineMs: number = HARVEST_TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<{ ui: string | null; timedOut: boolean }> {
   let ctx: any = null;
+  let onAbort: (() => void) | null = null;
   try {
     const browser = await getSharedPlaywrightBrowser();
     ctx = await browser.newContext({ userAgent: REAL_UA });
@@ -397,15 +421,33 @@ async function harvestUiViaPlaywright(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (signal && onAbort) {
+          signal.removeEventListener('abort', onAbort);
+        }
         resolve({ ui: val, timedOut });
       };
+
+      onAbort = () => {
+        finish(null, true);
+      };
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
 
       const timer = setTimeout(() => {
         finish(null, true);
       }, deadlineMs);
 
       const checkUrl = (rawUrl: string) => {
-        if (!rawUrl || !rawUrl.includes('api.moviemaster.lat/servers')) return;
+        if (!rawUrl) return;
+        const matchesProd = rawUrl.includes('api.moviemaster.lat/servers');
+        const matchesTest =
+          Boolean(testServersBaseUrlOverride) &&
+          rawUrl.includes(testServersBaseUrlOverride!.replace(/\/+$/, '')) &&
+          rawUrl.includes('/servers');
+        if (!matchesProd && !matchesTest) return;
         try {
           const u = new URL(rawUrl);
           const ui = u.searchParams.get('ui');
@@ -426,6 +468,9 @@ async function harvestUiViaPlaywright(
     console.warn(`[MM] Error cosechando ui via Playwright:`, err?.message || err);
     return { ui: null, timedOut: false };
   } finally {
+    if (signal && onAbort) {
+      signal.removeEventListener('abort', onAbort);
+    }
     try {
       if (ctx) await ctx.close();
     } catch (_) {}
@@ -442,7 +487,7 @@ export interface HarvestUiOptions {
 
 /**
  * harvestUi(tmdb): ventana oculta, webRequest.onCompleted sobre /servers?, extrae ui.
- * Deadline duro 6 s. Log [MM] harvest ms=... ui=cache|harvest y [MM] abortado por deadline.
+ * Deadline duro 6 s (AbortController). Log [MM] harvest ms=... ui=cache|harvest y [MM] abortado por deadline.
  */
 export async function harvestUi(tmdb: number, opts: HarvestUiOptions = {}): Promise<string | null> {
   const cleanTmdb = Math.floor(Number(tmdb));
@@ -481,15 +526,24 @@ export async function harvestUi(tmdb: number, opts: HarvestUiOptions = {}): Prom
   const task = (async () => {
     const isElectron = Boolean(process.versions && process.versions.electron);
     const primaryUrl = buildEmbedUrl(cleanTmdb, type, season, episode);
+    const harvestAbortController = new AbortController();
+    const harvestTimer = setTimeout(() => {
+      harvestAbortController.abort();
+    }, deadlineMs);
 
-    const res = isElectron
-      ? await harvestUiViaElectron(primaryUrl, cleanTmdb, deadlineMs)
-      : await harvestUiViaPlaywright(primaryUrl, deadlineMs);
+    let res: { ui: string | null; timedOut: boolean };
+    try {
+      res = isElectron
+        ? await harvestUiViaElectron(primaryUrl, cleanTmdb, deadlineMs, harvestAbortController.signal)
+        : await harvestUiViaPlaywright(primaryUrl, deadlineMs, harvestAbortController.signal);
+    } finally {
+      clearTimeout(harvestTimer);
+    }
 
     const elapsed = Date.now() - t0;
 
-    if (res.timedOut || !res.ui) {
-      if (res.timedOut) {
+    if (res.timedOut || harvestAbortController.signal.aborted || !res.ui) {
+      if (res.timedOut || harvestAbortController.signal.aborted) {
         console.log('[MM] abortado por deadline');
         markDeadlineCooldown(titleCacheKey);
       }
@@ -522,7 +576,8 @@ async function fetchServersWithUi(
     type === 'movie'
       ? `tmdb=${tmdb}&type=movie&ui=${encodeURIComponent(ui)}`
       : `tmdb=${tmdb}&type=tv&season=${s}&episode=${e}&ui=${encodeURIComponent(ui)}`;
-  const url = `https://api.moviemaster.lat/servers?${qs}`;
+  const serversBase = (testServersBaseUrlOverride || 'https://api.moviemaster.lat').replace(/\/+$/, '');
+  const url = `${serversBase}/servers?${qs}`;
 
   const timeoutSig = AbortSignal.timeout(SERVERS_FETCH_TIMEOUT_MS);
   const effectiveSignal = signal ? AbortSignal.any([signal, timeoutSig]) : timeoutSig;
@@ -944,138 +999,233 @@ export async function mintSnapshot(
     return getMmLangRank(a.lang) - getMmLangRank(b.lang);
   });
 
-  const maxAttempts = Math.min(MAX_MINT_ATTEMPTS, candidates.length);
-  let refreshedListOn410 = false;
-
   const mintDeadlineMs = opts.mintDeadlineMs ?? MINT_DEADLINE_MS;
-  const mintAbortController = new AbortController();
-  let mintDeadlineExpired = false;
-  const mintTimer = setTimeout(() => {
-    mintDeadlineExpired = true;
-    mintAbortController.abort();
-  }, mintDeadlineMs);
+  const maxAttempts = Math.min(opts.serverName ? 2 : 4, candidates.length);
+  const selectedCandidates = candidates.slice(0, maxAttempts);
+  let refreshedListOn410 = false;
+  let hadTimeoutAbort = false;
 
-  try {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      if (mintDeadlineExpired || mintAbortController.signal.aborted) {
-        console.log('[MM] abortado por deadline');
-        markDeadlineCooldown(cacheKey);
-        return null;
-      }
+  const raceController = new AbortController();
 
-      const srv = candidates[attempt];
-
-      if (opts.simulateFirstServer502 && attempt === 0) {
-        console.warn(
-          `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): HTTP 502 HTML payload (<) [simulated]`
-        );
-        continue;
-      }
-
-      let masterRes = await fetchValidM3u8(
-        srv.video,
-        opts.userAgent,
-        opts.acceptLanguage,
-        mintAbortController.signal
-      );
-
-      if (mintDeadlineExpired || (!masterRes.ok && masterRes.aborted)) {
-        console.log('[MM] abortado por deadline');
-        markDeadlineCooldown(cacheKey);
-        return null;
-      }
-
-      if (!masterRes.ok && masterRes.reason.includes('410') && !refreshedListOn410) {
-        refreshedListOn410 = true;
-        servers = await getServers(cleanTmdb, type, s || 1, e || 1, {
-          forceRefresh: true,
-          harvestDeadlineMs: opts.harvestDeadlineMs,
-        });
-        const refreshedMatch =
-          servers.find((x) => x.name === srv.name && x.lang === srv.lang) || servers[attempt];
-        if (refreshedMatch) {
-          masterRes = await fetchValidM3u8(
-            refreshedMatch.video,
-            opts.userAgent,
-            opts.acceptLanguage,
-            mintAbortController.signal
-          );
+  const tryCandidate = async (
+    srv: NormalizedMovieMasterServer,
+    attemptIdx: number,
+    staggerMs: number
+  ): Promise<SnapshotEntry | null> => {
+    if (staggerMs > 0) {
+      await new Promise<void>((resolve) => {
+        if (raceController.signal.aborted) {
+          resolve();
+          return;
         }
-      }
+        const t = setTimeout(() => {
+          raceController.signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, staggerMs);
+        const onAbort = () => {
+          clearTimeout(t);
+          resolve();
+        };
+        raceController.signal.addEventListener('abort', onAbort, { once: true });
+      });
+    }
 
-      if (mintDeadlineExpired || (!masterRes.ok && masterRes.aborted)) {
-        console.log('[MM] abortado por deadline');
-        markDeadlineCooldown(cacheKey);
-        return null;
-      }
+    if (raceController.signal.aborted) return null;
 
-      if (!masterRes.ok) {
-        console.warn(
-          `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en master "${srv.name}" (${srv.lang}): ${masterRes.reason}`
-        );
-        continue;
-      }
+    if (opts.simulateFirstServer502 && attemptIdx === 0) {
+      console.warn(
+        `[MM] Intento ${attemptIdx + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): HTTP 502 HTML payload (<) [simulated]`
+      );
+      return null;
+    }
 
-      const variantUrl = extractFirstVariantUrl(masterRes.text, masterRes.finalUrl);
-      let variantText = masterRes.text;
-      let variantFinalUrl = masterRes.finalUrl;
-
-      if (variantUrl) {
-        const varRes = await fetchValidM3u8(
-          variantUrl,
+    const fetchWithMintDeadline = async (targetUrl: string) => {
+      const fetchAc = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        fetchAc.abort();
+      }, mintDeadlineMs);
+      const onParentAbort = () => fetchAc.abort();
+      raceController.signal.addEventListener('abort', onParentAbort, { once: true });
+      try {
+        const res = await fetchValidM3u8(
+          targetUrl,
           opts.userAgent,
           opts.acceptLanguage,
-          mintAbortController.signal
+          fetchAc.signal
         );
-        if (mintDeadlineExpired || (!varRes.ok && varRes.aborted)) {
-          console.log('[MM] abortado por deadline');
-          markDeadlineCooldown(cacheKey);
-          return null;
+        if (timedOut && !raceController.signal.aborted) {
+          hadTimeoutAbort = true;
         }
-        if (!varRes.ok) {
-          console.warn(
-            `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en variante "${srv.name}" (${srv.lang}): ${varRes.reason}`
-          );
-          continue;
-        }
-        variantText = varRes.text;
-        variantFinalUrl = varRes.finalUrl;
+        return res;
+      } finally {
+        clearTimeout(timer);
+        raceController.signal.removeEventListener('abort', onParentAbort);
       }
+    };
 
-      const normalized = normalizeAndMeasureVariantM3u8(variantText, variantFinalUrl);
-      if (normalized.segs === 0 || normalized.durationSec <= 0) {
-        console.warn(
-          `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): 0 segmentos`
-        );
-        continue;
+    let masterRes = await fetchWithMintDeadline(srv.video);
+    if (raceController.signal.aborted) return null;
+
+    if (!masterRes.ok && masterRes.reason.includes('410') && !refreshedListOn410) {
+      refreshedListOn410 = true;
+      const refreshedServers = await getServers(cleanTmdb, type, s || 1, e || 1, {
+        forceRefresh: true,
+        harvestDeadlineMs: opts.harvestDeadlineMs,
+      });
+      if (raceController.signal.aborted) return null;
+      const refreshedMatch =
+        refreshedServers.find((x) => x.name === srv.name && x.lang === srv.lang) ||
+        refreshedServers[attemptIdx];
+      if (refreshedMatch) {
+        masterRes = await fetchWithMintDeadline(refreshedMatch.video);
+        if (raceController.signal.aborted) return null;
       }
-
-      const key = buildSnapshotKey(cleanTmdb, type, s, e, srv.name, uaHash);
-      const entry: SnapshotEntry = {
-        key,
-        uaHash,
-        text: normalized.text,
-        lang: srv.lang,
-        serverName: srv.name,
-        durationSec: normalized.durationSec,
-        segs: normalized.segs,
-        at: Date.now(),
-        tmdb: cleanTmdb,
-        type,
-        season: s,
-        episode: e,
-      };
-
-      putSnapshotLru(entry);
-      console.log(
-        `[MM] lang=${entry.lang} srv=${entry.serverName} segs=${entry.segs} dur=${entry.durationSec}`
-      );
-      return entry;
     }
-  } finally {
-    clearTimeout(mintTimer);
+
+    if (!masterRes.ok) {
+      console.warn(
+        `[MM] Intento ${attemptIdx + 1}/${maxAttempts} descartado en master "${srv.name}" (${srv.lang}): ${masterRes.reason}`
+      );
+      return null;
+    }
+
+    const variantUrl = extractFirstVariantUrl(masterRes.text, masterRes.finalUrl);
+    let variantText = masterRes.text;
+    let variantFinalUrl = masterRes.finalUrl;
+
+    if (variantUrl) {
+      const varRes = await fetchWithMintDeadline(variantUrl);
+      if (raceController.signal.aborted) return null;
+      if (!varRes.ok) {
+        console.warn(
+          `[MM] Intento ${attemptIdx + 1}/${maxAttempts} descartado en variante "${srv.name}" (${srv.lang}): ${varRes.reason}`
+        );
+        return null;
+      }
+      variantText = varRes.text;
+      variantFinalUrl = varRes.finalUrl;
+    }
+
+    const normalized = normalizeAndMeasureVariantM3u8(variantText, variantFinalUrl);
+    if (normalized.segs === 0 || normalized.durationSec <= 0) {
+      console.warn(
+        `[MM] Intento ${attemptIdx + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): 0 segmentos`
+      );
+      return null;
+    }
+
+    const key = buildSnapshotKey(cleanTmdb, type, s, e, srv.name, uaHash);
+    return {
+      key,
+      uaHash,
+      text: normalized.text,
+      lang: srv.lang,
+      serverName: srv.name,
+      durationSec: normalized.durationSec,
+      segs: normalized.segs,
+      at: Date.now(),
+      tmdb: cleanTmdb,
+      type,
+      season: s,
+      episode: e,
+    };
+  };
+
+  if (opts.serverName) {
+    for (let i = 0; i < selectedCandidates.length; i++) {
+      const entry = await tryCandidate(selectedCandidates[i], i, 0);
+      if (entry) {
+        putSnapshotLru(entry);
+        console.log(
+          `[MM] lang=${entry.lang} srv=${entry.serverName} segs=${entry.segs} dur=${entry.durationSec}`
+        );
+        return entry;
+      }
+    }
+    if (hadTimeoutAbort) {
+      console.log('[MM] abortado por deadline');
+      markDeadlineCooldown(cacheKey);
+    }
+    return null;
   }
 
+  // Carrera escalonada (250 ms) dentro de cada nivel de idioma (LAT -> ESP -> SUB):
+  // evita que un servidor lento bloquee el mint sin que otro idioma le gane a LAT sano.
+  const tiers: NormalizedMovieMasterServer[][] = [];
+  if (opts.serverName) {
+    tiers.push(...selectedCandidates.map((s) => [s]));
+  } else {
+    const langOrder: NormalizedMmLang[] = [];
+    for (const c of candidates) {
+      if (!langOrder.includes(c.lang)) langOrder.push(c.lang);
+    }
+    for (const l of langOrder) {
+      const allForLang = candidates.filter((c) => c.lang === l);
+      if (allForLang.length > 0) {
+        tiers.push(allForLang.slice(0, 4));
+      }
+      if (allForLang.length > 4) {
+        tiers.push(allForLang.slice(4, 8));
+      }
+    }
+  }
+
+  for (const tier of tiers) {
+    const winner = await new Promise<SnapshotEntry | null>((resolve) => {
+      let settled = false;
+      let remaining = tier.length;
+      if (remaining === 0) {
+        resolve(null);
+        return;
+      }
+
+      tier.forEach((srv, idx) => {
+        const globalIdx = candidates.indexOf(srv);
+        const isSimSkip = Boolean(opts.simulateFirstServer502 && globalIdx === 0);
+        const effectiveIdx = opts.simulateFirstServer502 && tier.some((x) => candidates.indexOf(x) === 0)
+          ? Math.max(0, idx - 1)
+          : idx;
+        const staggerMs = idx === 0 || isSimSkip ? 0 : effectiveIdx * 250;
+
+        tryCandidate(srv, globalIdx >= 0 ? globalIdx : idx, staggerMs)
+          .then((entry) => {
+            if (entry && !settled) {
+              settled = true;
+              raceController.abort();
+              resolve(entry);
+              return;
+            }
+            remaining -= 1;
+            if (remaining === 0 && !settled) {
+              settled = true;
+              resolve(null);
+            }
+          })
+          .catch(() => {
+            remaining -= 1;
+            if (remaining === 0 && !settled) {
+              settled = true;
+              resolve(null);
+            }
+          });
+      });
+    });
+
+    if (winner) {
+      putSnapshotLru(winner);
+      console.log(
+        `[MM] lang=${winner.lang} srv=${winner.serverName} segs=${winner.segs} dur=${winner.durationSec}`
+      );
+      return winner;
+    }
+  }
+
+  if (hadTimeoutAbort) {
+    console.log('[MM] abortado por deadline');
+    markDeadlineCooldown(cacheKey);
+  }
   return null;
 }
 
@@ -1202,12 +1352,23 @@ export function createMovieMasterRouter(): Router {
     res.json({ ok: true, removed });
   });
 
-  // Endpoints auxiliares para pruebas de deadline de cosecha (6 s)
+  // Endpoints auxiliares para pruebas de deadline de cosecha (6 s) y caché negativa (24 h)
   router.get('/mm/test-hang/*', (_req: Request, res: Response) => {
     const timer = setTimeout(() => {
       if (!res.headersSent) res.status(504).end();
     }, 30_000);
     res.on('close', () => clearTimeout(timer));
+  });
+
+  router.get('/mm/test-empty/e/*', (_req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(
+      '<!doctype html><html><body><script>fetch("/api/mm/test-empty/servers?ui=EMPTY_TEST_UI").catch(()=>{});</script></body></html>'
+    );
+  });
+
+  router.get('/mm/test-empty/servers', (_req: Request, res: Response) => {
+    res.json({ servers: [] });
   });
 
   router.post('/mm/test-config', (req: Request, res: Response) => {
@@ -1218,12 +1379,26 @@ export function createMovieMasterRouter(): Router {
           ? b.harvestBaseUrl.trim()
           : null;
     }
+    if ('serversBaseUrl' in b) {
+      testServersBaseUrlOverride =
+        typeof b.serversBaseUrl === 'string' && b.serversBaseUrl.trim()
+          ? b.serversBaseUrl.trim()
+          : null;
+    }
     if (b.clearTmdb) {
       const t = Math.floor(Number(b.clearTmdb));
       uiCache.delete(t);
       for (const k of Array.from(serversCache.keys())) {
         if (k.startsWith(`${t}|`)) serversCache.delete(k);
       }
+      let clearedNeg = false;
+      for (const k of Array.from(negativeServersCache.keys())) {
+        if (k.startsWith(`${t}|`)) {
+          negativeServersCache.delete(k);
+          clearedNeg = true;
+        }
+      }
+      if (clearedNeg) saveNegDiskCache();
       for (const k of Array.from(deadlineCooldownCache.keys())) {
         if (k.startsWith(`${t}|`)) deadlineCooldownCache.delete(k);
       }
@@ -1232,7 +1407,11 @@ export function createMovieMasterRouter(): Router {
         if (snap && snap.tmdb === t) snapshotCache.delete(k);
       }
     }
-    res.json({ ok: true, harvestBaseUrl: testHarvestBaseUrlOverride });
+    res.json({
+      ok: true,
+      harvestBaseUrl: testHarvestBaseUrlOverride,
+      serversBaseUrl: testServersBaseUrlOverride,
+    });
   });
 
   return router;

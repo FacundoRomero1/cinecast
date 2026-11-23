@@ -607,6 +607,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const shortDurationLoggedKeyRef = useRef<string | null>(null);
   const iframeStallTicksRef = useRef<number>(0);
   const mmRemintAttemptedKeyRef = useRef<string | null>(null);
+  const mmRemintInFlightRef = useRef<boolean>(false);
   const pendingMmReseekTimeRef = useRef<number>(0);
 
   const getServerEpisodeKey = useCallback((srv?: StreamServer | null) => {
@@ -924,10 +925,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
+    const allowMmInTest =
+      typeof window !== 'undefined' && Boolean((window as any).__CINECAST_TEST_ALLOW_MM);
+
     const hasEpisodeTestServers = Boolean(
       episode?.servers && episode.servers.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))
     );
-    if (hasEpisodeTestServers) {
+    if (hasEpisodeTestServers && !allowMmInTest) {
       console.log(`[VideoPlayer] Servidores de prueba explícitos detectados en episode`);
       setIsResolving(false);
       return;
@@ -940,8 +944,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const isTestMode =
-      (typeof window !== 'undefined' && Boolean((window as any).__CINECAST_TEST)) ||
-      (typeof window !== 'undefined' && Array.isArray((window as any).__CINECAST_TEST_SERVERS));
+      ((typeof window !== 'undefined' && Boolean((window as any).__CINECAST_TEST)) ||
+        (typeof window !== 'undefined' && Array.isArray((window as any).__CINECAST_TEST_SERVERS))) &&
+      !allowMmInTest;
 
     if (isTestMode) {
       const testServers = generateServersForMedia({
@@ -996,7 +1001,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       episode: selectedEpisode,
     }).filter((s) => s.id !== 'direct-hls');
     const initialChosen = initialTraditional[0];
-    if (initialChosen) {
+    if (initialChosen && !allowMmInTest) {
       setSelectedServerName(initialChosen.name);
       if (initialChosen.type !== 'iframe' && initialChosen.url) {
         setVideoSrc(initialChosen.url);
@@ -1827,6 +1832,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     retryCountByServerEpisodeRef.current.clear();
     iframeStallTicksRef.current = 0;
     mmRemintAttemptedKeyRef.current = null;
+    mmRemintInFlightRef.current = false;
     pendingMmReseekTimeRef.current = 0;
     setForceShowServerSelector(false);
     if (loadedMetadataTimerRef.current) {
@@ -2422,7 +2428,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // ── HLS (MSE) para .m3u8 con cabeceras registradas previamente ───────────
   useEffect(() => {
-    if (isIframeMode || !videoRef.current || !videoSrc) return;
+    if (isResolving || isIframeMode || !videoRef.current || !videoSrc) return;
     let hlsInstance: Hls | null = null;
     let isCancelled = false;
     let liveWatchdogTimer: any = null;
@@ -2687,11 +2693,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             const respCode = Number((data as any)?.response?.code || (data as any)?.networkDetails?.status || 0);
             console.log(`[VideoPlayer] HLS event error: type=${data.type} details=${data.details} fatal=${data.fatal} code=${respCode}`);
 
-            // B8: En Hls.Events.ERROR con response.code 410 (snapshot caducado), un solo play y recoverMediaError/reseek a currentTime
-            if (respCode === 410 && videoSrc.includes('/api/mm/manifest/')) {
+            // B8: En Hls.Events.ERROR con response.code 410 (snapshot caducado) o 403 (segmento firmado), un solo re-mint y reseek a currentTime
+            if ((respCode === 410 || respCode === 403) && videoSrc.includes('/api/mm/manifest/')) {
               const remintKey = `${media.id}:s${selectedSeasonRef.current}:e${selectedEpisodeRef.current}`;
               if (mmRemintAttemptedKeyRef.current !== remintKey) {
                 mmRemintAttemptedKeyRef.current = remintKey;
+                mmRemintInFlightRef.current = true;
                 if (manifestTimer) {
                   clearTimeout(manifestTimer);
                   manifestTimer = null;
@@ -2712,7 +2719,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     ? videoRef.current.currentTime
                     : lastRealTimeRef.current;
                 pendingMmReseekTimeRef.current = savedTime;
-                console.log(`[MM] Snapshot 410 detectado -> re-mint único con reseek=${savedTime.toFixed(2)}s`);
+                console.log(`[MM] Snapshot ${respCode} detectado -> re-mint único con reseek=${savedTime.toFixed(2)}s`);
                 fetch('/api/mm/play', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -2726,8 +2733,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 })
                   .then((r) => (r.ok ? r.json() : null))
                   .then((mmRes) => {
+                    mmRemintInFlightRef.current = false;
                     if (isCancelled || !mmRes?.manifestUrl) {
-                      advanceToNextServerRef.current('Fallo re-mint 410 MovieMaster');
+                      advanceToNextServerRef.current(`Fallo re-mint ${respCode} MovieMaster`);
                       return;
                     }
                     console.log(
@@ -2737,11 +2745,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     setVideoSrc(freshUrl);
                   })
                   .catch(() => {
-                    if (!isCancelled) advanceToNextServerRef.current('Excepción re-mint 410 MovieMaster');
+                    mmRemintInFlightRef.current = false;
+                    if (!isCancelled) advanceToNextServerRef.current(`Excepción re-mint ${respCode} MovieMaster`);
                   });
                 return;
               }
             }
+            if (mmRemintInFlightRef.current) return;
             // En error de fragmento reintentar startLoad(), y si falla 3 veces marcar fallo
             if (data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR) {
               fragErrorCount += 1;
@@ -2772,7 +2782,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           videoRef.current.play().catch(() => { });
         }
       } else {
-        videoRef.current.src = videoSrc;
+        const directEl = videoRef.current;
+        directEl.src = videoSrc;
+        applyVolumeToElement(directEl);
+        directEl.play().catch(() => {
+          directEl.muted = true;
+          directEl.play().catch(() => { });
+        });
       }
     };
 
@@ -2790,7 +2806,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsSuccessCallbackRef.current = null;
       hlsInstance?.destroy();
     };
-  }, [videoSrc, isIframeMode, corsMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [videoSrc, isIframeMode, corsMode, isResolving]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenExternalStream = useCallback(() => {
     const url = activeServer?.url || activeEmbedUrl;
@@ -3928,6 +3944,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             handleTimeUpdate();
             const v = videoRef.current;
             if (v && v.currentTime > 0) {
+              lastRealTimeRef.current = v.currentTime;
               if (hlsErrorTimeoutRef.current) {
                 clearTimeout(hlsErrorTimeoutRef.current);
                 hlsErrorTimeoutRef.current = null;
@@ -3937,6 +3954,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               setTvSignalDown(false);
               markAlgoReproduciendo('video-timeupdate', v.currentTime);
               recordFirstFrame('video-timeupdate');
+            }
+          }}
+          onSeeked={(e) => {
+            if (e.currentTarget.currentTime > 0) {
+              lastRealTimeRef.current = e.currentTarget.currentTime;
             }
           }}
           onLoadedMetadata={(e) => {

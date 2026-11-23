@@ -282,6 +282,30 @@ export function createApp(options: CreateAppOptions): Express {
 </html>`);
     });
 
+    app.get('/__test/video.wav', (req, res) => {
+      const dur = Math.max(2, Math.min(600, Number(req.query.dur) || 25));
+      const sampleRate = 8000;
+      const numSamples = dur * sampleRate;
+      const buf = Buffer.alloc(44 + numSamples);
+      buf.write('RIFF', 0);
+      buf.writeUInt32LE(36 + numSamples, 4);
+      buf.write('WAVEfmt ', 8);
+      buf.writeUInt32LE(16, 16);
+      buf.writeUInt16LE(1, 20);
+      buf.writeUInt16LE(1, 22);
+      buf.writeUInt32LE(sampleRate, 24);
+      buf.writeUInt32LE(sampleRate, 28);
+      buf.writeUInt16LE(1, 32);
+      buf.writeUInt16LE(8, 34);
+      buf.write('data', 36);
+      buf.writeUInt32LE(numSamples, 40);
+      buf.fill(128, 44);
+      res.setHeader('Content-Type', 'audio/wav');
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(buf);
+    });
+
     app.get('/__test/keys.html', (_req, res) => {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(`<!DOCTYPE html>
