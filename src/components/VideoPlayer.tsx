@@ -22,7 +22,7 @@ import { ResumeController, type ResumeState } from '../app/resumeController';
 import { globalAudioEngine } from '../services/audioEngine';
 import { audioPrefs, normalizeVolume01 } from '../services/audioPrefs';
 import { diagnosticService } from '../services/diagnosticService';
-import { extractCleanRouteAndEp, generateServersForMedia } from '../services/embedService';
+import { applyProviderRanking, extractCleanRouteAndEp, generateServersForMedia } from '../services/embedService';
 import { reportServerPlaybackPenalty, resolveServerPlay } from '../services/resolveService';
 import { watchHistoryService } from '../services/watchHistoryService';
 import { AudioSettings, Episode, MediaItem, PlaybackSettings, RemoteCommand, StreamServer } from '../types';
@@ -313,6 +313,14 @@ function isEnglishCaption(lang?: string, label?: string): boolean {
 
 function isLatinoServerMatch(s?: StreamServer | null): boolean {
   if (!s) return false;
+  const mmLang = String((s as any).mmLang || '').toLowerCase();
+  if (mmLang === 'subtitulado' || mmLang === 'sub' || mmLang === 'castellano' || mmLang === 'esp') {
+    return false;
+  }
+  const langLower = String(s.language || '').toLowerCase();
+  if (langLower.includes('subtitulado') || langLower.includes('castellano')) {
+    return false;
+  }
   const text = `${s.name || ''} ${s.language || ''} ${(s as any).providerId || ''} ${s.url || ''}`.toLowerCase();
   return (
     text.includes('latino') ||
@@ -598,6 +606,8 @@ const unavailableServersForEpisodeRef = useRef<Set<string>>(new Set());
 const retryCountByServerEpisodeRef = useRef<Map<string, number>>(new Map());
 const shortDurationLoggedKeyRef = useRef<string | null>(null);
 const iframeStallTicksRef = useRef<number>(0);
+const mmRemintAttemptedKeyRef = useRef<string | null>(null);
+const pendingMmReseekTimeRef = useRef<number>(0);
 
 const getServerEpisodeKey = useCallback((srv?: StreamServer | null) => {
   const idPart = (srv as any)?.providerId || (srv as any)?.id || srv?.name || 'unknown';
@@ -977,7 +987,7 @@ useEffect(() => {
     ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
     : `${media.id}_movie`;
 
-  // P2.5: Si el servidor elegido es latino y ya está rankeado primero, arranca directo; si no hay latino, arranca el primero disponible.
+  // P2.5 / B8: Arrancar con servidor HLS directo (sin montar iframe) mientras se resuelve MovieMaster
   const initialTraditional = generateServersForMedia({
     tmdbId: tmdbIdToUse,
     title: media.title,
@@ -985,8 +995,7 @@ useEffect(() => {
     season: selectedSeason,
     episode: selectedEpisode,
   }).filter((s) => s.id !== 'direct-hls');
-  const firstIsLatino = initialTraditional.length > 0 && isLatinoServerMatch(initialTraditional[0]);
-  const initialChosen = firstIsLatino ? initialTraditional[0] : (initialTraditional.find((s) => isLatinoServerMatch(s)) || initialTraditional[0]);
+  const initialChosen = initialTraditional[0];
   if (initialChosen) {
     setSelectedServerName(initialChosen.name);
     if (initialChosen.type !== 'iframe' && initialChosen.url) {
@@ -998,24 +1007,30 @@ useEffect(() => {
   } else {
     setIsResolving(true);
   }
-  console.log(`[VideoPlayer] [Direct HLS] Consultando stream directo nativo en ${directUrl} (initialChosen="${initialChosen?.name || 'ninguno'}")...`);
 
   const loadTraditionalServers = () => {
     const persisted = getPersistedSuccessServer(media, resolveType);
     const hasHlsFav = Boolean(persisted && (persisted.playable === 'hls' || persisted.type === 'hls'));
+    const nonMmTraditional = generateServersForMedia({
+      tmdbId: tmdbIdToUse,
+      title: media.title,
+      type: resolveType === 'anime' ? 'anime' : resolveType,
+      season: selectedSeason,
+      episode: selectedEpisode,
+    }).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
+
+    setResolvedServers((prev) => {
+      if (serversEpochRef.current !== epoch) return prev;
+      const validPrev = (prev || []).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
+      return deduplicateServers(applyProviderRanking([...validPrev, ...nonMmTraditional]), episodeKey);
+    });
 
     if (hasHlsFav) {
       console.log(`[VideoPlayer] [ARRANQUE] Favorito HLS detectado para "${currentTitle}": "${persisted?.name}" (id=${persisted?.id}). Montando HLS directo sin preview.`);
       setIsResolving(true);
     } else {
       console.log(`[VideoPlayer] [ARRANQUE] Sin favorito HLS para "${currentTitle}". Montando preview tradicional.`);
-      const fallbackSrv = generateServersForMedia({
-        tmdbId: tmdbIdToUse,
-        title: media.title,
-        type: resolveType === 'anime' ? 'anime' : resolveType,
-        season: selectedSeason,
-        episode: selectedEpisode,
-      })[0];
+      const fallbackSrv = nonMmTraditional[0];
       if (fallbackSrv && autoAdvanceCountRef.current === 0 && failedServersForEpisodeRef.current.size === 0 && !userInteractedRef.current) {
         setSelectedServerName(fallbackSrv.name);
         if (fallbackSrv.type !== 'iframe') {
@@ -1065,7 +1080,8 @@ useEffect(() => {
 
           setResolvedServers((prev) => {
             if (serversEpochRef.current !== epoch) return prev;
-            const combined = [...mapped, ...(prev || [])];
+            const validPrev = (prev || []).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
+            const combined = applyProviderRanking([...mapped, ...validPrev, ...nonMmTraditional]);
             return deduplicateServers(combined, episodeKey);
           });
 
@@ -1104,7 +1120,7 @@ useEffect(() => {
           if (serversEpochRef.current === epoch) {
             setIsResolving(false);
             if (!playRes?.servers?.length) {
-              setResolvedServers([]);
+              setResolvedServers(deduplicateServers(nonMmTraditional, episodeKey));
             }
           }
         }
@@ -1112,7 +1128,7 @@ useEffect(() => {
       .catch((err) => {
         if (!isMounted || serversEpochRef.current !== epoch) return;
         setIsResolving(false);
-        setResolvedServers([]);
+        setResolvedServers(deduplicateServers(nonMmTraditional, episodeKey));
         console.warn(`[VideoPlayer] Excepción en /api/resolve/play:`, err?.message);
       });
   };
@@ -1143,23 +1159,13 @@ useEffect(() => {
             type: resolveType === 'anime' ? 'anime' : resolveType,
             season: selectedSeason,
             episode: selectedEpisode,
-          }).filter((s) => s.id !== 'direct-hls');
-          const latinoServers = traditionalServers.filter((s) => isLatinoServerMatch(s));
-          const nonLatinoServers = traditionalServers.filter((s) => !isLatinoServerMatch(s));
-          const firstLatinoFailed =
-            latinoServers.length > 0 &&
-            failedServersForEpisodeRef.current.has(getServerEpisodeKey(latinoServers[0]));
-          const hasRankedLatinoFirst =
-            latinoServers.length > 0 &&
-            isLatinoServerMatch(traditionalServers[0]) &&
-            !firstLatinoFailed;
-          if (!hasRankedLatinoFirst) {
-            setSelectedServerName(directSrv.name);
-            setVideoSrc(data.url);
-          }
+          }).filter((s) => s.id !== 'direct-hls' && ((s as any).providerId !== 'moviemaster' || Boolean(s.url)));
+          setSelectedServerName(directSrv.name);
+          setVideoSrc(data.url);
           setResolvedServers((prev) => {
             if (serversEpochRef.current !== epoch) return prev;
-            const combined = [...latinoServers, directSrv, ...(prev || []), ...nonLatinoServers];
+            const validPrev = (prev || []).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
+            const combined = applyProviderRanking([directSrv, ...validPrev, ...traditionalServers]);
             return deduplicateServers(combined, episodeKey);
           });
           setIsResolving(false);
@@ -1178,6 +1184,97 @@ useEffect(() => {
       });
   };
   loadDirectStreamRef.current = loadDirectStream;
+
+  const loadMovieMasterDirect = () => {
+    fetch('/api/mm/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tmdb: tmdbIdToUse,
+        type: directType,
+        season: selectedSeason,
+        episode: selectedEpisode,
+      }),
+      signal: abortController.signal,
+    })
+      .then(async (r) => (r.ok ? r.json() : null))
+      .then((mmData) => {
+        if (!isMounted || serversEpochRef.current !== epoch) return;
+        if (mmData?.manifestUrl) {
+          console.log(
+            `[MM] lang=${mmData.lang} srv=${mmData.serverName} segs=${mmData.segs} dur=${mmData.durationSec}`
+          );
+          const mapLangLabel = (l: string) =>
+            l === 'castellano' ? 'Castellano' : l === 'subtitulado' ? 'Subtitulado' : 'Latino';
+          const mapAudioLangs = (l: string) =>
+            l === 'castellano' ? ['es'] : l === 'subtitulado' ? ['sub'] : ['latino'];
+
+          const rawList: Array<{ id?: string; name: string; lang: string; site?: string }> =
+            Array.isArray(mmData.servers) && mmData.servers.length > 0
+              ? mmData.servers
+              : [{ id: `mm-minted-${tmdbIdToUse}`, name: mmData.serverName || 'Servidor 1', lang: mmData.lang || 'latino' }];
+
+          let mintedAssigned = false;
+          const mmServers: StreamServer[] = rawList.map((s, idx) => {
+            const isMinted =
+              !mintedAssigned &&
+              s.name.toLowerCase() === String(mmData.serverName || '').toLowerCase() &&
+              s.lang === mmData.lang;
+            if (isMinted) mintedAssigned = true;
+            const label = mapLangLabel(s.lang);
+            return {
+              id: s.id || `mm-${tmdbIdToUse}-${selectedSeason}-${selectedEpisode}-${idx + 1}`,
+              providerId: 'moviemaster',
+              name: `MovieMaster ${s.name} (${label})`,
+              mmServerName: s.name,
+              mmLang: s.lang,
+              url: isMinted ? mmData.manifestUrl : '',
+              type: 'hls',
+              playable: 'hls',
+              language: label,
+              audioLangs: mapAudioLangs(s.lang),
+              validated: isMinted,
+              durationSec: isMinted ? mmData.durationSec : undefined,
+            } as any;
+          });
+
+          if (!mintedAssigned && mmServers.length > 0) {
+            mmServers[0].url = mmData.manifestUrl;
+            (mmServers[0] as any).validated = true;
+          }
+
+          const mintedSrv = mmServers.find((s) => Boolean(s.url)) || mmServers[0];
+          const traditionalFallbacks = generateServersForMedia({
+            tmdbId: tmdbIdToUse,
+            title: media.title,
+            type: resolveType === 'anime' ? 'anime' : resolveType,
+            season: selectedSeason,
+            episode: selectedEpisode,
+          }).filter((s) => s.id !== 'direct-hls' && (s as any).providerId !== 'moviemaster');
+
+          const ranked = applyProviderRanking([...mmServers, ...traditionalFallbacks]);
+          setResolvedServers(deduplicateServers(ranked, episodeKey));
+          if (mintedSrv) {
+            setSelectedServerName(mintedSrv.name);
+          }
+          setVideoSrc(mmData.manifestUrl);
+          if (typeof mmData.durationSec === 'number' && mmData.durationSec > 0) {
+            setDuration(mmData.durationSec);
+          }
+          setIsResolving(false);
+          setIsPlaying(true);
+          setForceShowServerSelector(false);
+          return;
+        }
+
+        // MovieMaster sin servidores para este título -> caer a otros HLS y luego embeds
+        loadDirectStream();
+      })
+      .catch(() => {
+        if (!isMounted || serversEpochRef.current !== epoch) return;
+        loadDirectStream();
+      });
+  };
 
   const isAnime = media.category === 'anime' || resolveType === 'anime';
 
@@ -1238,7 +1335,7 @@ useEffect(() => {
         loadTraditionalServers();
       });
   } else {
-    loadDirectStream();
+    loadMovieMasterDirect();
   }
 
   return () => {
@@ -1340,17 +1437,8 @@ const activeServerIndex = useMemo(() => {
     }
   }
 
-  // 2. P2.5: Si el servidor elegido es latino y ya está rankeado primero, arranca directo
-  if (isLatinoServerMatch(availableServers[0])) {
-    return 0;
-  }
-
-  const firstLatinoIdx = availableServers.findIndex((s) => isLatinoServerMatch(s));
-  if (firstLatinoIdx !== -1) {
-    return firstLatinoIdx;
-  }
-
-  // 3. Si no hay latino, arranca el primero disponible
+  // 2. B8: availableServers ya viene rankeado (LAT -> ESP -> SUB -> otros HLS -> embeds);
+  // arranca en el primero disponible.
   return 0;
 }, [availableServers, selectedServerName]);
 
@@ -1408,6 +1496,8 @@ if (typeof window !== 'undefined') {
     activeServerIndex,
     activeServerName: activeServer?.name,
     activeServerUrl: activeServer?.url,
+    activeServerLanguage: activeServer?.language,
+    activeServerType: activeServer?.type,
   };
 }
 activeServerIndexRef.current = activeServerIndex;
@@ -1724,6 +1814,8 @@ useEffect(() => {
   unavailableServersForEpisodeRef.current.clear();
   retryCountByServerEpisodeRef.current.clear();
   iframeStallTicksRef.current = 0;
+  mmRemintAttemptedKeyRef.current = null;
+  pendingMmReseekTimeRef.current = 0;
   setForceShowServerSelector(false);
   if (loadedMetadataTimerRef.current) {
     clearTimeout(loadedMetadataTimerRef.current);
@@ -1752,7 +1844,7 @@ useEffect(() => {
 
 // ── Sincronizar fuente cuando el servidor activo es directo (mp4/hls) ────
 useEffect(() => {
-  if (activeServer && activeServer.type !== 'iframe') {
+  if (activeServer && activeServer.type !== 'iframe' && activeServer.url) {
     setVideoSrc(activeServer.url);
   }
 }, [activeServer]);
@@ -1895,34 +1987,66 @@ const handleSelectServer = useCallback((index: number, opts?: { auto?: boolean }
     skipTimeoutRef.current = null;
   }
   if (tmdbIdToUse > 0 && !srv.url) {
-    const srvId = (srv as any).id ?? srv.name;
-    resolveServerPlay({
-      providerId: (srv as any)?.providerId || 'vidlink.pro',
-      serverId: srvId,
-      params: {
-        type: resolveType,
-        tmdbId: tmdbIdToUse,
-        season: selectedSeason,
-        episode: selectedEpisode,
-      },
-      lang: 'latino',
-    })
-      .then((playRes) => {
-        if (playRes && playRes.success && playRes.url) {
-          srv.url = playRes.url;
-          srv.type = playRes.playable === 'hls' ? 'hls' : 'iframe';
-          (srv as any).playable = playRes.playable;
-          (srv as any).acao = playRes.acao;
-          (srv as any).validated = true;
-          if (srv.type !== 'iframe') {
+    if ((srv as any)?.providerId === 'moviemaster' && srv.type === 'hls') {
+      fetch('/api/mm/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tmdb: tmdbIdToUse,
+          type: isSeriesOrAnime ? 'tv' : 'movie',
+          season: selectedSeason,
+          episode: selectedEpisode,
+          serverName: (srv as any).mmServerName || srv.name,
+          lang: (srv as any).mmLang,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((mmData) => {
+          if (mmData?.manifestUrl) {
+            console.log(
+              `[MM] lang=${mmData.lang} srv=${mmData.serverName} segs=${mmData.segs} dur=${mmData.durationSec}`
+            );
+            srv.url = mmData.manifestUrl;
+            (srv as any).validated = true;
             setCorsMode(true);
             corsRetryRef.current = 0;
-            setVideoSrc(srv.url);
+            setVideoSrc(mmData.manifestUrl);
+            if (typeof mmData.durationSec === 'number' && mmData.durationSec > 0) {
+              setDuration(mmData.durationSec);
+            }
           }
-          setIframeReloadKey((k) => k + 1);
-        }
+        })
+        .catch(() => {});
+    } else {
+      const srvId = (srv as any).id ?? srv.name;
+      resolveServerPlay({
+        providerId: (srv as any)?.providerId || 'vidlink.pro',
+        serverId: srvId,
+        params: {
+          type: resolveType,
+          tmdbId: tmdbIdToUse,
+          season: selectedSeason,
+          episode: selectedEpisode,
+        },
+        lang: 'latino',
       })
-      .catch(() => { });
+        .then((playRes) => {
+          if (playRes && playRes.success && playRes.url) {
+            srv.url = playRes.url;
+            srv.type = playRes.playable === 'hls' ? 'hls' : 'iframe';
+            (srv as any).playable = playRes.playable;
+            (srv as any).acao = playRes.acao;
+            (srv as any).validated = true;
+            if (srv.type !== 'iframe') {
+              setCorsMode(true);
+              corsRetryRef.current = 0;
+              setVideoSrc(srv.url);
+            }
+            setIframeReloadKey((k) => k + 1);
+          }
+        })
+        .catch(() => { });
+    }
   }
 
   if (srv.type !== 'iframe' && srv.url) {
@@ -2356,7 +2480,7 @@ useEffect(() => {
     }
 
     const curSrv = activeServerRef.current;
-    if (videoSrc && (videoSrc.includes('.m3u8') || curSrv?.type === 'hls' || (curSrv as any)?.playable === 'hls')) {
+    if (videoSrc && (videoSrc.includes('.m3u8') || videoSrc.includes('/api/mm/manifest/') || curSrv?.type === 'hls' || (curSrv as any)?.playable === 'hls')) {
       if (Hls.isSupported()) {
         let fragErrorCount = 0;
         let isHlsSettled = false;
@@ -2469,14 +2593,19 @@ useEffect(() => {
 
         hlsSuccessCallbackRef.current = markHlsSuccess;
 
+        const reseekStart = pendingMmReseekTimeRef.current > 0 ? pendingMmReseekTimeRef.current : -1;
         hlsInstance = new Hls({
           enableWorker: false,
           lowLatencyMode: true,
           startLevel: 0,
+          startPosition: reseekStart,
           maxBufferLength: 15,
           maxMaxBufferLength: 60,
           liveSyncDurationCount: 3,
         });
+        if (typeof window !== 'undefined') {
+          (window as any).__hlsInstance = hlsInstance;
+        }
         hlsInstance.attachMedia(videoRef.current);
         const video = videoRef.current;
         if (video) {
@@ -2518,6 +2647,12 @@ useEffect(() => {
           isHlsBuffering = false;
           if (videoRef.current && !isCancelled) {
             setTvSignalDown(false);
+            if (pendingMmReseekTimeRef.current > 0) {
+              try {
+                videoRef.current.currentTime = pendingMmReseekTimeRef.current;
+              } catch (_) {}
+              pendingMmReseekTimeRef.current = 0;
+            }
             videoRef.current.muted = true;
             videoRef.current.play().then(() => {
               setIsPlaying(true);
@@ -2537,7 +2672,64 @@ useEffect(() => {
         // Requisito 3: Fallo en ERROR fatal o fragmentos fallidos
         hlsInstance.on(Hls.Events.ERROR, (_e, data) => {
           if (isCancelled) return;
-          console.log(`[VideoPlayer] HLS event error: type=${data.type} details=${data.details} fatal=${data.fatal}`);
+          const respCode = Number((data as any)?.response?.code || (data as any)?.networkDetails?.status || 0);
+          console.log(`[VideoPlayer] HLS event error: type=${data.type} details=${data.details} fatal=${data.fatal} code=${respCode}`);
+
+          // B8: En Hls.Events.ERROR con response.code 410 (snapshot caducado), un solo play y recoverMediaError/reseek a currentTime
+          if (respCode === 410 && videoSrc.includes('/api/mm/manifest/')) {
+            const remintKey = `${media.id}:s${selectedSeasonRef.current}:e${selectedEpisodeRef.current}`;
+            if (mmRemintAttemptedKeyRef.current !== remintKey) {
+              mmRemintAttemptedKeyRef.current = remintKey;
+              if (manifestTimer) {
+                clearTimeout(manifestTimer);
+                manifestTimer = null;
+              }
+              if (hardLimitTimer) {
+                clearTimeout(hardLimitTimer);
+                hardLimitTimer = null;
+              }
+              if (hlsErrorTimeoutRef.current) {
+                clearTimeout(hlsErrorTimeoutRef.current);
+                hlsErrorTimeoutRef.current = null;
+              }
+              try {
+                hlsInstance?.stopLoad();
+              } catch (_) {}
+              const savedTime =
+                videoRef.current && videoRef.current.currentTime > 0
+                  ? videoRef.current.currentTime
+                  : lastRealTimeRef.current;
+              pendingMmReseekTimeRef.current = savedTime;
+              console.log(`[MM] Snapshot 410 detectado -> re-mint único con reseek=${savedTime.toFixed(2)}s`);
+              fetch('/api/mm/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  tmdb: tmdbIdToUse,
+                  type: isSeriesOrAnime ? 'tv' : 'movie',
+                  season: selectedSeasonRef.current,
+                  episode: selectedEpisodeRef.current,
+                  forceRefresh: true,
+                }),
+              })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((mmRes) => {
+                  if (isCancelled || !mmRes?.manifestUrl) {
+                    advanceToNextServerRef.current('Fallo re-mint 410 MovieMaster');
+                    return;
+                  }
+                  console.log(
+                    `[MM] lang=${mmRes.lang} srv=${mmRes.serverName} segs=${mmRes.segs} dur=${mmRes.durationSec}`
+                  );
+                  const freshUrl = `${mmRes.manifestUrl}${mmRes.manifestUrl.includes('?') ? '&' : '?'}remint=${Date.now()}`;
+                  setVideoSrc(freshUrl);
+                })
+                .catch(() => {
+                  if (!isCancelled) advanceToNextServerRef.current('Excepción re-mint 410 MovieMaster');
+                });
+              return;
+            }
+          }
           // En error de fragmento reintentar startLoad(), y si falla 3 veces marcar fallo
           if (data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR) {
             fragErrorCount += 1;
@@ -3364,7 +3556,13 @@ useEffect(() => () => {
 // ── Autoplay al cambiar fuente ───────────────────────────────────────────
 useEffect(() => {
   if (isIframeMode || !videoRef.current) return;
-  videoRef.current.currentTime = initialTime && initialTime > 0 ? initialTime : 0;
+  const targetTime =
+    pendingMmReseekTimeRef.current > 0
+      ? pendingMmReseekTimeRef.current
+      : initialTime && initialTime > 0
+        ? initialTime
+        : 0;
+  videoRef.current.currentTime = targetTime;
   attemptSmartPlay(videoRef.current);
 }, [videoSrc, isIframeMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3454,6 +3652,9 @@ const handleTimeUpdate = () => {
   if (isIframeMode || !videoRef.current) return;
   const time = videoRef.current.currentTime;
   const dur = videoRef.current.duration || 0;
+  if (time > 0) {
+    lastRealTimeRef.current = time;
+  }
   setCurrentTime(time);
   setDuration(dur);
 
@@ -3485,7 +3686,8 @@ const handleTimeUpdate = () => {
   if (recapStart !== undefined && recapEnd !== undefined) {
     setIsRecapActive(time >= recapStart && time <= recapEnd);
   }
-  if (isEpisodic && hasNextEpisode && dur > 0 && dur - time <= 12 && playbackSettings.autoPlayNext && countdownToNext === null) {
+  const minDirectDuration = isTestDirect ? 10 : 300;
+  if (isEpisodic && hasNextEpisode && dur > minDirectDuration && dur - time <= 12 && (playbackSettings.autoPlayNext || marathonMode) && countdownToNext === null) {
     startNextEpisodeCountdown();
   }
   broadcastImmediate();
@@ -3643,7 +3845,7 @@ return (
       <video
         ref={videoRef}
         key={corsMode ? 'cors' : 'nocors'}
-        src={(!videoSrc || videoSrc.includes('.m3u8') || activeServer?.type === 'hls' || (activeServer as any)?.playable === 'hls') ? undefined : videoSrc}
+        src={(!videoSrc || videoSrc.includes('.m3u8') || videoSrc.includes('/api/mm/manifest/') || activeServer?.type === 'hls' || (activeServer as any)?.playable === 'hls') ? undefined : videoSrc}
         className="w-full h-full object-contain"
         crossOrigin={corsMode ? 'anonymous' : undefined}
         muted={false}
@@ -4161,7 +4363,15 @@ return (
               </button>
             </div>
 
-            {/* TAREA 6: Badge de verificación con timeout de 12s */}
+            {/* TAREA 6 & B8: Badge de idioma activo */}
+            {!isIframeMode && activeServer?.language && (
+              <span
+                data-testid="active-audio-badge"
+                className="px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/70 text-emerald-300 text-[10px] font-bold shadow-sm shrink-0"
+              >
+                {activeServer.language}
+              </span>
+            )}
             {isIframeMode && (
               <div className="hidden lg:flex items-center shrink-0">
                 {detectedTracks === null ? (

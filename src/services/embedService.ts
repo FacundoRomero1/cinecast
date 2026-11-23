@@ -7,6 +7,7 @@ import { StreamServer } from '../types';
 export interface ProviderConfig {
   id: string;
   name: string;
+  type?: 'hls' | 'iframe';
   enabled: boolean;
   priority: number;
   languages: string[];
@@ -129,11 +130,14 @@ export function formatAudioLangWithSource(
       .filter((l) => l && l !== 'desconocido');
 
     if (measuredWithoutUnknown.length > 0) {
-      if (measuredWithoutUnknown.some((l) => l === 'latino' || l === 'spa' || l === 'es-419')) {
+      if (measuredWithoutUnknown.some((l) => l === 'latino' || l === 'spa' || l === 'es-419' || l === 'lat')) {
         return 'Latino (medido)';
       }
-      if (measuredWithoutUnknown.some((l) => l === 'es' || l === 'castellano' || l === 'es-es')) {
+      if (measuredWithoutUnknown.some((l) => l === 'es' || l === 'castellano' || l === 'es-es' || l === 'esp')) {
         return 'Castellano (medido)';
+      }
+      if (measuredWithoutUnknown.some((l) => l === 'sub' || l === 'subtitulado')) {
+        return 'Subtitulado (medido)';
       }
       if (measuredWithoutUnknown.some((l) => l === 'en' || l === 'eng' || l === 'original')) {
         return 'Inglés (medido)';
@@ -236,27 +240,55 @@ export async function refreshProviderHealth(): Promise<void> {
   }
 }
 
-/** Servidores ordenados por grupo de idioma (Latino→1, ES→2, Multi→3, EN→4), luego HLS antes que iframe, y desempate por salud/velocidad */
-function applyProviderRanking(servers: StreamServer[], _type?: string): StreamServer[] {
+function getServerB8Bucket(s: StreamServer, prov?: ProviderConfig): number {
+  const isHls = s.type === 'hls' || (s as any).playable === 'hls' || prov?.type === 'hls';
+  const mmLang = String((s as any).mmLang || '').toLowerCase().trim();
+  const langLabel = String(s.language || '').toLowerCase().trim();
+  const audioList = Array.isArray(s.audioLangs) ? s.audioLangs.map((x) => x.toLowerCase().trim()) : [];
+
+  const isLat =
+    mmLang === 'latino' ||
+    mmLang === 'lat' ||
+    audioList.some((l) => l === 'latino' || l === 'lat' || l === 'es-419' || l === 'spa') ||
+    langLabel.includes('latino');
+  const isEsp =
+    mmLang === 'castellano' ||
+    mmLang === 'esp' ||
+    audioList.some((l) => l === 'es' || l === 'castellano' || l === 'es-es' || l === 'esp') ||
+    langLabel.includes('castellano');
+  const isSub =
+    mmLang === 'subtitulado' ||
+    mmLang === 'sub' ||
+    audioList.some((l) => l === 'sub' || l === 'subtitulado') ||
+    langLabel.includes('subtitulado');
+
+  if (isHls) {
+    if (isLat) return 1;
+    if (isEsp) return 2;
+    if (isSub) return 3;
+    return 4; // cualquier HLS de otro proveedor
+  }
+
+  // Embeds van después de cualquier HLS (5..8 según prioridad de idioma)
+  const embedLangRank = getAudioLangPriority(s.audioLangs, prov?.languages, prov?.langHintUnreliable);
+  return 4 + embedLangRank;
+}
+
+/**
+ * B8 Ranking: LAT (HLS) -> ESP (HLS) -> SUB (HLS) -> cualquier HLS de otro proveedor -> embeds.
+ */
+export function applyProviderRanking(servers: StreamServer[], _type?: string): StreamServer[] {
   const health = readProviderHealth();
 
   return [...servers].sort((a, b) => {
-    // 1. Grupo de idioma (getAudioLangPriority: latino→1, es→2, multi→3, en→4)
     const provA = (providersData as ProviderConfig[]).find((p) => p.name === a.name || p.id === (a as any).providerId);
     const provB = (providersData as ProviderConfig[]).find((p) => p.name === b.name || p.id === (b as any).providerId);
-    const isMovieMasterA = provA?.id === 'moviemaster' || (a as any).providerId === 'moviemaster' || a.name.toLowerCase().includes('moviemaster');
-    const isMovieMasterB = provB?.id === 'moviemaster' || (b as any).providerId === 'moviemaster' || b.name.toLowerCase().includes('moviemaster');
-    const rankA = isMovieMasterA ? 1 : getAudioLangPriority(a.audioLangs, provA?.languages, provA?.langHintUnreliable);
-    const rankB = isMovieMasterB ? 1 : getAudioLangPriority(b.audioLangs, provB?.languages, provB?.langHintUnreliable);
-    if (rankA !== rankB) return rankA - rankB;
 
-    // 2. HLS antes que iframe
-    const aIsHls = a.type === 'hls' || (a as any).playable === 'hls';
-    const bIsHls = b.type === 'hls' || (b as any).playable === 'hls';
-    if (aIsHls && !bIsHls) return -1;
-    if (!aIsHls && bIsHls) return 1;
+    const bucketA = getServerB8Bucket(a, provA);
+    const bucketB = getServerB8Bucket(b, provB);
+    if (bucketA !== bucketB) return bucketA - bucketB;
 
-    // 3. Salud / speedMs si hay disponible en caché de salud
+    // Salud / speedMs si hay disponible en caché de salud
     if (health) {
       const hA = health[a.name];
       const hB = health[b.name];
@@ -265,7 +297,7 @@ function applyProviderRanking(servers: StreamServer[], _type?: string): StreamSe
       if (scoreA !== scoreB) return scoreA - scoreB;
     }
 
-    // 4. Prioridad declarada del proveedor
+    // Prioridad declarada del proveedor
     const prioA = provA?.priority ?? 0;
     const prioB = provB?.priority ?? 0;
     return prioB - prioA;
@@ -372,6 +404,20 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
     // Generación dinámica desde providers.json clasificado por preferencia de idioma (getAudioLangPriority: Latino→1, ES→2, Multi→3, EN→4)
     const rankedProviders = rankProvidersByLanguage(providersData as ProviderConfig[], type);
     for (const p of rankedProviders) {
+      if (p.id === 'moviemaster' || p.type === 'hls') {
+        servers.push({
+          id: `mm-direct-${tmdbId}-${season || 1}-${episode || 1}`,
+          name: p.name,
+          providerId: p.id,
+          url: '',
+          type: 'hls',
+          playable: 'hls',
+          language: 'Latino',
+          audioLangs: ['latino'],
+        } as StreamServer);
+        continue;
+      }
+
       const url = buildProviderUrl(p, { tmdbId, type, season, episode });
       if (!url) continue;
 
@@ -509,6 +555,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
   const DEAD_DOMAINS = ['vidsrc.pro', 'autoembed.cc', 'smashystream.com', 'embed.su'];
   const sanitized = ordered.filter((s) => {
     if (!s || typeof s.url !== 'string') return false;
+    if ((s as any).providerId === 'moviemaster' && s.type === 'hls') return true;
     const u = s.url.trim();
     if (!u || u.includes('..')) return false;
     if (DEAD_DOMAINS.some((d) => u.toLowerCase().includes(d))) return false;

@@ -2,6 +2,7 @@
   {
     "id": "moviemaster",
     "name": "MovieMaster (Latino)",
+    "type": "hls",
     "enabled": true,
     "priority": 15,
     "langHintUnreliable": false,

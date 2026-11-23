@@ -7,6 +7,7 @@ import { createArchiveRouter } from './routes/archive.js';
 import { createAuthRouter, type AuthRouterOptions } from './routes/auth.js';
 import { createCatalogRouter, type CatalogItem, type CatalogRouterOptions } from './routes/catalog.js';
 import { createClientLogRouter, isLoopbackIp } from './routes/clientlog.js';
+import { createMovieMasterRouter } from './moviemaster.js';
 import { createDiagnosticsRouter, type DiagnosticsOptions } from './routes/diagnostics.js';
 import { createDownloadsRouter, type DownloadsOptions } from './routes/downloads.js';
 import { createHistoryRouter, type HistoryOptions } from './routes/history.js';
@@ -137,6 +138,7 @@ export function createApp(options: CreateAppOptions): Express {
   app.use('/api', createAccountsRouter(accountsOpts));
   app.use('/api', createYouTubeRouter());
   app.use('/api', createClientLogRouter());
+  app.use('/api', createMovieMasterRouter());
   app.use('/api', createResolveRouter({ baseDir: options.baseDir }));
 
   // PARTE 4 (Paso 10): Clave de TMDB configurable en userData/cinecast-config.json (POST solo desde 127.0.0.1)
