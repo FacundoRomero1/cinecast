@@ -1775,54 +1775,63 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     // 2. Si terminó la temporada actual, buscar T+1 E1 cargando esa temporada a demanda
     const nextSeason = curSeason + 1;
-    const explicitMaxSeason =
+    const numberOfSeasons =
       currentMedia.seasons && currentMedia.seasons.length > 0
         ? Math.max(
           ...currentMedia.seasons.map((s: any) =>
             Number(s.seasonNumber ?? s.season_number ?? 0)
           )
         )
-        : Number(currentMedia.seasonsCount || 0);
+        : Number((currentMedia as any).numberOfSeasons || currentMedia.seasonsCount || 0);
 
     const canHaveNextSeason =
-      explicitMaxSeason > 0 ? nextSeason <= explicitMaxSeason : (currentMedia.episodes?.some(e => Number(e.seasonNumber) === nextSeason) ?? false);
+      numberOfSeasons > 0 ? nextSeason <= numberOfSeasons : true;
 
-    if (canHaveNextSeason) {
-      let nextSeasonEps = (currentMedia.episodes || []).filter(
-        (e) => Number(e.seasonNumber ?? (e as any).season ?? 1) === nextSeason
-      );
+    console.log(
+      `[SEASON] canHaveNextSeason=${canHaveNextSeason} numberOfSeasons=${numberOfSeasons || 'missing'} currentSeasonEpisodes=${curSeasonEps.length} tmdb=${tmdbId}`
+    );
 
-      if (nextSeasonEps.length === 0 && tmdbId > 0) {
-        try {
-          const res = await fetch(`/api/tv/${tmdbId}/season/${nextSeason}`, {
-            signal: AbortSignal.timeout(5000),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data?.episodes) && data.episodes.length > 0) {
-              nextSeasonEps = normalizeSeasonList(data.episodes, nextSeason);
-              const otherEps = (currentMedia.episodes || []).filter(
-                (e) => Number(e.seasonNumber ?? (e as any).season ?? 1) !== nextSeason
-              );
-              currentMedia.episodes = [...otherEps, ...nextSeasonEps];
-            }
+    let nextSeasonEps = (currentMedia.episodes || []).filter(
+      (e) => Number(e.seasonNumber ?? (e as any).season ?? 1) === nextSeason
+    );
+
+    if (nextSeasonEps.length === 0 && tmdbId > 0) {
+      try {
+        const res = await fetch(`/api/tv/${tmdbId}/season/${nextSeason}`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data?.episodes) && data.episodes.length > 0) {
+            nextSeasonEps = normalizeSeasonList(data.episodes, nextSeason);
+            const otherEps = (currentMedia.episodes || []).filter(
+              (e) => Number(e.seasonNumber ?? (e as any).season ?? 1) !== nextSeason
+            );
+            currentMedia.episodes = [...otherEps, ...nextSeasonEps];
           }
-        } catch (_) { }
-      }
+        }
+      } catch (_) { }
+    }
 
-      const firstInNextSeason =
-        nextSeasonEps.find(
-          (e) => Number(e.episodeNumber ?? (e as any).episode) === 1
-        ) || nextSeasonEps[0];
+    const firstInNextSeason =
+      nextSeasonEps.find(
+        (e) => Number(e.episodeNumber ?? (e as any).episode) === 1
+      ) || nextSeasonEps[0];
 
-      if (firstInNextSeason) {
-        await advanceToSameSeriesEpisode(
-          nextSeason,
-          Number(firstInNextSeason.episodeNumber) || 1,
-          firstInNextSeason
-        );
-        return;
-      }
+    const isBeyondNumberOfSeasons = numberOfSeasons > 0 ? nextSeason > numberOfSeasons : true;
+
+    if (firstInNextSeason) {
+      await advanceToSameSeriesEpisode(
+        nextSeason,
+        Number(firstInNextSeason.episodeNumber) || 1,
+        firstInNextSeason
+      );
+      return;
+    }
+
+    if (!isBeyondNumberOfSeasons) {
+      await advanceToSameSeriesEpisode(nextSeason, 1);
+      return;
     }
 
     // 3. No existe capítulo siguiente ni temporada siguiente -> Fin de la serie (NO cambiar de id ni iniciar nada)
