@@ -1737,7 +1737,7 @@ const HubRouteSynchronizer: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const prevHubRef = useRef<HubType>(activeHub);
-  const prevPathRef = useRef<string>(location.pathname);
+  const prevPathRef = useRef<string>('');
   // Hub pedido por la navegacion que aun no se refleja en activeHub (evita rebote de ruta)
   const pendingHubFromRouteRef = useRef<HubType | null>(null);
 
@@ -1866,6 +1866,9 @@ const SpotifyView: React.FC = () => {
               }
             }}
             onNextTrack={() => {
+              console.log(
+                `[SPOTIFY] next triggered origin=SpotifyView.onNextTrack track_window.current_track.id=${activeSpotifyTrack?.id ?? null}`
+              );
               const idx = SPOTIFY_TRACKS.findIndex((t) => t.id === activeSpotifyTrack?.id);
               const next = SPOTIFY_TRACKS[(idx + 1) % SPOTIFY_TRACKS.length]!;
               setActiveSpotifyTrack(next);

@@ -169,6 +169,9 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
         });
 
         player.addListener('player_state_changed', (state: any) => {
+          console.log(
+            `[SPOTIFY] player_state_changed position=${state?.position ?? null} duration=${state?.duration ?? null} paused=${state ? Boolean(state.paused) : null} track_window.current_track.id=${state?.track_window?.current_track?.id ?? null}`
+          );
           if (!state) return;
           const track = state.track_window?.current_track;
           setCurrentTrack(track || null);
@@ -179,20 +182,23 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
         });
 
         player.addListener('initialization_error', ({ message }: { message: string }) => {
+          console.error(`[SPOTIFY] initialization_error message=${message}`);
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
           setErrorCause('EME no disponible');
           setErrorMessage(`EME / Widevine no disponible o error de inicialización: ${message}`);
           setStage('error');
         });
 
-        player.addListener('authentication_error', () => {
+        player.addListener('authentication_error', (err?: { message?: string }) => {
+          console.error(`[SPOTIFY] authentication_error message=${err?.message || 'invalid_or_expired_token'}`);
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
           setErrorCause('authentication_error');
           setErrorMessage('Error de autenticación: el token no es válido o expiró.');
           setStage('error');
         });
 
-        player.addListener('account_error', () => {
+        player.addListener('account_error', (err?: { message?: string }) => {
+          console.error(`[SPOTIFY] account_error message=${err?.message || 'premium_required'}`);
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
           setErrorCause('account_error');
           setErrorMessage('Spotify necesita Premium para reproducir mediante Web Playback SDK.');
@@ -320,13 +326,25 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     }
   };
 
-  const handleNext = async () => {
+  const handleNext = useCallback(async (origin: string = 'SpotifyDevice.handleNext') => {
+    console.log(
+      `[SPOTIFY] next triggered origin=${origin} track_window.current_track.id=${currentTrack?.id ?? null}`
+    );
     if (playerRef.current) {
       try {
         await playerRef.current.nextTrack();
       } catch (_) {}
     }
-  };
+  }, [currentTrack?.id]);
+
+  useEffect(() => {
+    const onRemoteNext = (e: Event) => {
+      const custom = e as CustomEvent<{ origin?: string }>;
+      void handleNext(custom.detail?.origin || 'window.cinecast:spotify-next');
+    };
+    window.addEventListener('cinecast:spotify-next', onRemoteNext);
+    return () => window.removeEventListener('cinecast:spotify-next', onRemoteNext);
+  }, [handleNext]);
 
   const handlePrev = async () => {
     if (playerRef.current) {
@@ -675,7 +693,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
               <button
                 type="button"
                 aria-label="Pista siguiente"
-                onClick={handleNext}
+                onClick={() => handleNext('SpotifyDevice.handleNext')}
                 className="min-w-[48px] min-h-[48px] rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center justify-center transition active:scale-95"
               >
                 <SkipForward className="w-5 h-5" />
