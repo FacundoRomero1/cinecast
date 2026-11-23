@@ -1186,6 +1186,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     loadDirectStreamRef.current = loadDirectStream;
 
     const loadMovieMasterDirect = () => {
+      const mmDeadlineController = new AbortController();
+      let deadlineExpired = false;
+      const deadlineTimer = setTimeout(() => {
+        deadlineExpired = true;
+        mmDeadlineController.abort();
+      }, 9500);
+      const onParentAbort = () => mmDeadlineController.abort();
+      abortController.signal.addEventListener('abort', onParentAbort, { once: true });
+
       fetch('/api/mm/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1195,10 +1204,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           season: selectedSeason,
           episode: selectedEpisode,
         }),
-        signal: abortController.signal,
+        signal: mmDeadlineController.signal,
       })
         .then(async (r) => (r.ok ? r.json() : null))
         .then((mmData) => {
+          clearTimeout(deadlineTimer);
+          abortController.signal.removeEventListener('abort', onParentAbort);
           if (!isMounted || serversEpochRef.current !== epoch) return;
           if (mmData?.manifestUrl) {
             console.log(
@@ -1271,7 +1282,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           loadDirectStream();
         })
         .catch(() => {
+          clearTimeout(deadlineTimer);
+          abortController.signal.removeEventListener('abort', onParentAbort);
           if (!isMounted || serversEpochRef.current !== epoch) return;
+          if (deadlineExpired) {
+            console.log('[MM] abortado por deadline');
+          }
           loadDirectStream();
         });
     };

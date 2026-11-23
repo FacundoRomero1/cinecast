@@ -23,8 +23,14 @@ const REAL_UA =
 (async () => {
   let testEnv = null;
   let browser = null;
+  const serverStdoutLines = [];
   try {
-    testEnv = await startTestEnv('probe-b8-gates');
+    testEnv = await startTestEnv({
+      name: 'probe-b8-gates',
+      onStdoutLine: (line) => {
+        serverStdoutLines.push(line);
+      },
+    });
     const { base: baseUrl, room: activeRoomId } = testEnv;
 
     // Pre-cosechar ui para 1396 y 46923 (el ui dura 6h por serie; medimos el arranque real del capítulo)
@@ -148,6 +154,57 @@ const REAL_UA =
       g81AutoSkipCalls === 0 &&
       g81MmLogs.length > 0
     );
+
+    if (process.argv.includes('--only-g81')) {
+      // Verificar también que uaHash separa claves de snapshot entre PC y celular
+      const rPc = await fetch(`${baseUrl}/api/mm/play`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': REAL_UA, 'Accept-Language': 'es-AR,es;q=0.9' },
+        body: JSON.stringify({ tmdb: 1396, type: 'tv', season: 1, episode: 1 }),
+      }).then((r) => r.json());
+      const rMobile = await fetch(`${baseUrl}/api/mm/play`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36',
+          'Accept-Language': 'es-419,es;q=0.9',
+        },
+        body: JSON.stringify({ tmdb: 1396, type: 'tv', season: 1, episode: 1 }),
+      }).then((r) => r.json());
+      const distinctUaKeys = Boolean(
+        rPc?.manifestUrl && rMobile?.manifestUrl && rPc.manifestUrl !== rMobile.manifestUrl
+      );
+
+      console.log('\n=== RESULTADO G8-1 (CON BUILD_MARKER POST-COMMIT Y UA_HASH) ===');
+      console.log(
+        JSON.stringify(
+          {
+            'G8-1': {
+              pass: g81Pass && distinctUaKeys,
+              buildMarker: g81State?.buildMarker,
+              elapsedMs: g81ElapsedMs,
+              duration: g81State?.duration,
+              currentTime: g81State?.currentTime,
+              quickcoreRequests: g81Quickcore,
+              apiEncryptedAfterManifest: g81ApiEncrypted,
+              adLogsCount: g81AdLogs.length,
+              iframeCount: g81State?.iframeCount,
+              mmLog: g81MmLogs[0] || null,
+              pcManifestUrl: rPc?.manifestUrl,
+              mobileManifestUrl: rMobile?.manifestUrl,
+              distinctUaKeys,
+            },
+            resultado: g81Pass && distinctUaKeys ? 'PASA' : 'FALLA',
+          },
+          null,
+          2
+        )
+      );
+      await ctx1.close();
+      await browser.close();
+      await testEnv.stop();
+      process.exit(g81Pass && distinctUaKeys ? 0 : 1);
+    }
 
     // =========================================================================
     // G8-4 (sobre page1 ya reproduciendo 1396/1/1):
@@ -418,7 +475,175 @@ const REAL_UA =
       g85State.iframeCount === 0
     );
 
-    const allPass = g81Pass && g82Pass && g83Pass && g84Pass && g85Pass;
+    // =========================================================================
+    // G8-Deadline: Apuntar la cosecha a un host que cuelgue (/api/mm/test-hang),
+    // verificar que a los 6 s suelta con "[MM] abortado por deadline", activa cooldown 10m
+    // y el ranking en el reproductor avanza al siguiente proveedor sin bloquear el play.
+    // =========================================================================
+    await fetch(`${baseUrl}/api/mm/test-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        harvestBaseUrl: `${baseUrl}/api/mm/test-hang`,
+        clearTmdb: 999991,
+      }),
+    });
+
+    const ctxDeadline = await browser.newContext({ userAgent: REAL_UA, viewport: { width: 1280, height: 720 } });
+    const pageDeadline = await ctxDeadline.newPage();
+    await pageDeadline.goto(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(activeRoomId)}#/`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 20000,
+    });
+    await wait(2000);
+
+    // Configurar proveedores en la página: MovieMaster primero (colgará 6 s en cosecha) + DirectFallback segundo
+    await pageDeadline.evaluate((b) => {
+      window.__CINECAST_TEST = true;
+      window.__CINECAST_TEST_SERVERS = [
+        {
+          name: 'MovieMaster',
+          type: 'moviemaster',
+          playable: 'hls',
+          urlTemplate: 'https://api.moviemaster.lat/e/tv/{id}/{season}/{episode}?lang=LAT&autoplay=1',
+        },
+        {
+          name: 'DirectFallbackAfterDeadline',
+          type: 'mp4',
+          playable: 'mp4',
+          urlTemplate: `${b}/__test/video.mp4?id={id}&s={season}&e={episode}`,
+        },
+      ];
+    }, baseUrl);
+
+    let mmPlayDeadlineMs = 0;
+    let mmPlayDeadlineStatus = 0;
+    let tMmPlayReqStart = 0;
+    pageDeadline.on('request', (req) => {
+      if (req.url().includes('/api/mm/play') && req.method() === 'POST') {
+        tMmPlayReqStart = Date.now();
+      }
+    });
+    pageDeadline.on('response', (res) => {
+      if (res.url().includes('/api/mm/play') && res.request().method() === 'POST') {
+        mmPlayDeadlineMs = Date.now() - (tMmPlayReqStart || Date.now());
+        mmPlayDeadlineStatus = res.status();
+      }
+    });
+
+    const tDeadlinePlayStart = Date.now();
+    await fetch(`${baseUrl}/api/sync/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: activeRoomId,
+        command: {
+          action: 'playDiscoveredMovie',
+          payload: {
+            id: 'tmdb-series-999991',
+            tmdbId: 999991,
+            title: 'Serie Deadline Test',
+            type: 'series',
+            category: 'series',
+            season: 1,
+            episode: 1,
+            seasonNumber: 1,
+            episodeNumber: 1,
+            episodeTitle: 'Episodio 1',
+            servers: [
+              {
+                name: 'MovieMaster',
+                url: 'https://api.moviemaster.lat/e/tv/999991/1/1?lang=LAT&autoplay=1',
+                type: 'moviemaster',
+                language: 'Latino',
+              },
+              {
+                name: 'DirectFallbackAfterDeadline',
+                url: `${baseUrl}/__test/video.mp4?id=999991&s=1&e=1`,
+                type: 'mp4',
+                language: 'Latino',
+              },
+            ],
+          },
+        },
+      }),
+    });
+
+    let deadlineState = null;
+    for (let i = 0; i < 120; i++) {
+      await wait(100);
+      deadlineState = await pageDeadline.evaluate(() => {
+        const v = document.querySelector('video');
+        const vp = window.__videoPlayerState || {};
+        return {
+          hasVideo: Boolean(v),
+          currentTime: v ? Number((v.currentTime || 0).toFixed(2)) : 0,
+          duration: v && Number.isFinite(v.duration) ? Number(v.duration.toFixed(2)) : 0,
+          activeServerName: vp.activeServerName || '',
+        };
+      });
+      if (
+        deadlineState.activeServerName === 'DirectFallbackAfterDeadline' &&
+        deadlineState.currentTime > 0.3
+      ) {
+        break;
+      }
+    }
+    const totalFallbackElapsedMs = Date.now() - tDeadlinePlayStart;
+
+    // Verificar que una segunda consulta inmediata al mismo título cae en el cooldown de 10 min (<200 ms)
+    const tCooldown0 = Date.now();
+    const cooldownResp = await fetch(`${baseUrl}/api/mm/play`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': REAL_UA },
+      body: JSON.stringify({ tmdb: 999991, type: 'tv', season: 1, episode: 1 }),
+    });
+    const cooldownElapsedMs = Date.now() - tCooldown0;
+
+    // Restaurar harvestBaseUrl normal
+    await fetch(`${baseUrl}/api/mm/test-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harvestBaseUrl: null, clearTmdb: 999991 }),
+    });
+    await ctxDeadline.close();
+
+    const deadlineAbortLog =
+      serverStdoutLines.find((l) => l.includes('[MM] abortado por deadline')) || null;
+    const harvestLogs = serverStdoutLines.filter((l) => l.includes('[MM] harvest ms='));
+
+    // Verificar además que uaHash separa claves de snapshot entre PC y celular
+    const rPc = await fetch(`${baseUrl}/api/mm/play`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': REAL_UA, 'Accept-Language': 'es-AR,es;q=0.9' },
+      body: JSON.stringify({ tmdb: 1396, type: 'tv', season: 1, episode: 1 }),
+    }).then((r) => r.json());
+    const rMobile = await fetch(`${baseUrl}/api/mm/play`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36',
+        'Accept-Language': 'es-419,es;q=0.9',
+      },
+      body: JSON.stringify({ tmdb: 1396, type: 'tv', season: 1, episode: 1 }),
+    }).then((r) => r.json());
+    const distinctUaKeys = Boolean(
+      rPc?.manifestUrl && rMobile?.manifestUrl && rPc.manifestUrl !== rMobile.manifestUrl
+    );
+
+    const g8DeadlinePass = Boolean(
+      mmPlayDeadlineStatus === 404 &&
+      mmPlayDeadlineMs >= 5800 &&
+      mmPlayDeadlineMs <= 7500 &&
+      Boolean(deadlineAbortLog) &&
+      deadlineState &&
+      deadlineState.activeServerName === 'DirectFallbackAfterDeadline' &&
+      deadlineState.currentTime > 0.3 &&
+      cooldownResp.status === 404 &&
+      cooldownElapsedMs < 250
+    );
+
+    const allPass = g81Pass && distinctUaKeys && g82Pass && g83Pass && g84Pass && g85Pass && g8DeadlinePass;
     console.log('\n=== RESULTADO GATES B8 (G8-1 a G8-5) ===');
     console.log(
       JSON.stringify(
@@ -473,6 +698,21 @@ const REAL_UA =
               quickcoreRequests: g85Quickcore,
               apiEncryptedAfterManifest: g85ApiEncrypted,
               iframeCount: g85State?.iframeCount,
+            },
+            'G8-Deadline': {
+              pass: g8DeadlinePass,
+              mmPlayDeadlineMs,
+              mmPlayDeadlineStatus,
+              deadlineAbortLog,
+              harvestLogsSample: harvestLogs.slice(0, 3),
+              fallbackActiveServer: deadlineState?.activeServerName,
+              fallbackCurrentTime: deadlineState?.currentTime,
+              totalFallbackElapsedMs,
+              cooldownSecondCallMs: cooldownElapsedMs,
+              cooldownSecondCallStatus: cooldownResp.status,
+              distinctUaKeys,
+              pcManifestUrl: rPc?.manifestUrl,
+              mobileManifestUrl: rMobile?.manifestUrl,
             },
           },
           resultado: allPass ? 'PASA' : 'FALLA',

@@ -14,14 +14,18 @@ const REAL_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
 
 const UI_TTL_MS = 6 * 60 * 60 * 1000; // 6 h
-const SERVERS_CACHE_TTL_MS = 4 * 60 * 1000; // 4 min
+const SERVERS_CACHE_TTL_MS = 4 * 60 * 1000; // 4 min (lista positiva)
+const NEGATIVE_SERVERS_TTL_MS = 24 * 60 * 60 * 1000; // 24 h (servers: [])
+const DEADLINE_COOLDOWN_TTL_MS = 10 * 60 * 1000; // 10 min tras deadline vencido
 const SNAPSHOT_TTL_MS = 4 * 60 * 60 * 1000; // 4 h
 const SNAPSHOT_MAX_ENTRIES = 40;
-const HARVEST_TIMEOUT_MS = 12_000;
-const FETCH_TIMEOUT_MS = 10_000;
+const HARVEST_TIMEOUT_MS = 6_000; // Deadline duro cosecha: 6 s
+const MINT_DEADLINE_MS = 3_000; // Deadline duro mint: 3 s
+const SERVERS_FETCH_TIMEOUT_MS = 4_000;
 const MAX_MINT_ATTEMPTS = 3;
 
 const UI_DISK_CACHE_PATH = path.join(os.tmpdir(), 'cinecast-mm-ui-cache-v1.json');
+const NEG_DISK_CACHE_PATH = path.join(os.tmpdir(), 'cinecast-mm-neg-cache-v1.json');
 
 export type MovieMasterMediaType = 'movie' | 'tv';
 export type NormalizedMmLang = 'latino' | 'castellano' | 'subtitulado';
@@ -49,6 +53,7 @@ export interface NormalizedMovieMasterServer {
 
 export interface SnapshotEntry {
   key: string;
+  uaHash: string;
   text: string;
   lang: NormalizedMmLang;
   serverName: string;
@@ -69,31 +74,49 @@ interface UiCacheEntry {
 interface ServersCacheEntry {
   servers: NormalizedMovieMasterServer[];
   at: number;
+  negative?: boolean;
 }
 
 const uiCache = new Map<number, UiCacheEntry>();
 const uiHarvestMutex = new Map<number, Promise<string | null>>();
 const serversCache = new Map<string, ServersCacheEntry>();
+const negativeServersCache = new Map<string, number>(); // cacheKey -> timestamp (TTL 24h)
+const deadlineCooldownCache = new Map<string, number>(); // cacheKey -> expiresAt (TTL 10m)
 const snapshotCache = new Map<string, SnapshotEntry>();
 
-function loadUiDiskCache(): void {
+function loadDiskCaches(): void {
+  const now = Date.now();
   try {
-    if (!fs.existsSync(UI_DISK_CACHE_PATH)) return;
-    const raw = JSON.parse(fs.readFileSync(UI_DISK_CACHE_PATH, 'utf8'));
-    const now = Date.now();
-    if (raw && typeof raw === 'object') {
-      for (const [k, v] of Object.entries(raw)) {
-        const tmdb = Number(k);
-        const entry = v as UiCacheEntry;
-        if (
-          Number.isFinite(tmdb) &&
-          tmdb > 0 &&
-          entry &&
-          typeof entry.ui === 'string' &&
-          typeof entry.at === 'number' &&
-          now - entry.at < UI_TTL_MS
-        ) {
-          uiCache.set(tmdb, entry);
+    if (fs.existsSync(UI_DISK_CACHE_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(UI_DISK_CACHE_PATH, 'utf8'));
+      if (raw && typeof raw === 'object') {
+        for (const [k, v] of Object.entries(raw)) {
+          const tmdb = Number(k);
+          const entry = v as UiCacheEntry;
+          if (
+            Number.isFinite(tmdb) &&
+            tmdb > 0 &&
+            entry &&
+            typeof entry.ui === 'string' &&
+            typeof entry.at === 'number' &&
+            now - entry.at < UI_TTL_MS
+          ) {
+            uiCache.set(tmdb, entry);
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  try {
+    if (fs.existsSync(NEG_DISK_CACHE_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(NEG_DISK_CACHE_PATH, 'utf8'));
+      if (raw && typeof raw === 'object') {
+        for (const [k, v] of Object.entries(raw)) {
+          const at = Number(v);
+          if (k && Number.isFinite(at) && now - at < NEGATIVE_SERVERS_TTL_MS) {
+            negativeServersCache.set(k, at);
+          }
         }
       }
     }
@@ -113,7 +136,20 @@ function saveUiDiskCache(): void {
   } catch (_) {}
 }
 
-loadUiDiskCache();
+function saveNegDiskCache(): void {
+  try {
+    const obj: Record<string, number> = {};
+    const now = Date.now();
+    for (const [k, at] of negativeServersCache.entries()) {
+      if (now - at < NEGATIVE_SERVERS_TTL_MS) {
+        obj[k] = at;
+      }
+    }
+    fs.writeFileSync(NEG_DISK_CACHE_PATH, JSON.stringify(obj), 'utf8');
+  } catch (_) {}
+}
+
+loadDiskCaches();
 
 export function normalizeMmType(rawType?: string): MovieMasterMediaType {
   const t = String(rawType || 'movie').trim().toLowerCase();
@@ -135,14 +171,73 @@ export function getMmLangRank(lang: NormalizedMmLang): number {
   return 3;
 }
 
-function buildEmbedUrl(tmdb: number, type: MovieMasterMediaType, season = 1, episode = 1): string {
-  if (type === 'movie') {
-    return `https://api.moviemaster.lat/e/movie/${tmdb}?lang=LAT&autoplay=1`;
-  }
-  return `https://api.moviemaster.lat/e/tv/${tmdb}/${season}/${episode}?lang=LAT&autoplay=1`;
+export function buildUaHash(userAgent?: string, acceptLanguage?: string): string {
+  const cleanUa = (userAgent ? userAgent.replace('HeadlessChrome/', 'Chrome/') : REAL_UA).trim();
+  const cleanLang = String(acceptLanguage || '').trim();
+  return crypto
+    .createHash('sha1')
+    .update(`${cleanUa}|${cleanLang}`)
+    .digest('hex');
 }
 
-async function harvestUiViaElectron(embedUrl: string, tmdb: number): Promise<string | null> {
+export function buildSnapshotKey(
+  tmdb: number,
+  type: MovieMasterMediaType,
+  s: number,
+  e: number,
+  srvName: string,
+  uaHash: string
+): string {
+  return crypto
+    .createHash('sha1')
+    .update(`${tmdb}|${type}|${s}|${e}|${srvName}|${uaHash}`)
+    .digest('hex');
+}
+
+function isUnderDeadlineCooldown(cacheKey: string): boolean {
+  const expiresAt = deadlineCooldownCache.get(cacheKey);
+  if (!expiresAt) return false;
+  if (Date.now() >= expiresAt) {
+    deadlineCooldownCache.delete(cacheKey);
+    return false;
+  }
+  return true;
+}
+
+function markDeadlineCooldown(cacheKey: string): void {
+  deadlineCooldownCache.set(cacheKey, Date.now() + DEADLINE_COOLDOWN_TTL_MS);
+}
+
+function isNegativelyCached(cacheKey: string): boolean {
+  const at = negativeServersCache.get(cacheKey);
+  if (!at) return false;
+  if (Date.now() - at >= NEGATIVE_SERVERS_TTL_MS) {
+    negativeServersCache.delete(cacheKey);
+    return false;
+  }
+  return true;
+}
+
+function markNegativelyCached(cacheKey: string): void {
+  negativeServersCache.set(cacheKey, Date.now());
+  saveNegDiskCache();
+}
+
+let testHarvestBaseUrlOverride: string | null = null;
+
+function buildEmbedUrl(tmdb: number, type: MovieMasterMediaType, season = 1, episode = 1): string {
+  const base = (testHarvestBaseUrlOverride || process.env.CINECAST_MM_HARVEST_BASE_URL || 'https://api.moviemaster.lat').replace(/\/+$/, '');
+  if (type === 'movie') {
+    return `${base}/e/movie/${tmdb}?lang=LAT&autoplay=1`;
+  }
+  return `${base}/e/tv/${tmdb}/${season}/${episode}?lang=LAT&autoplay=1`;
+}
+
+async function harvestUiViaElectron(
+  embedUrl: string,
+  tmdb: number,
+  deadlineMs: number = HARVEST_TIMEOUT_MS
+): Promise<{ ui: string | null; timedOut: boolean }> {
   const electron = requireModule('electron');
   const { BrowserWindow, session } = electron;
   const partition = `mm-harvest-${tmdb}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -150,18 +245,18 @@ async function harvestUiViaElectron(embedUrl: string, tmdb: number): Promise<str
   let win: any = null;
 
   try {
-    return await new Promise<string | null>((resolve) => {
+    return await new Promise<{ ui: string | null; timedOut: boolean }>((resolve) => {
       let settled = false;
-      const finish = (val: string | null) => {
+      const finish = (val: string | null, timedOut = false) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve(val);
+        resolve({ ui: val, timedOut });
       };
 
       const timer = setTimeout(() => {
-        finish(null);
-      }, HARVEST_TIMEOUT_MS);
+        finish(null, true);
+      }, deadlineMs);
 
       ses.webRequest.onBeforeRequest(
         { urls: ['*://*/*'] },
@@ -192,7 +287,7 @@ async function harvestUiViaElectron(embedUrl: string, tmdb: number): Promise<str
             const u = new URL(details.url);
             const ui = u.searchParams.get('ui');
             if (ui && ui.trim()) {
-              finish(ui.trim());
+              finish(ui.trim(), false);
             }
           } catch (_) {}
         }
@@ -232,7 +327,7 @@ async function harvestUiViaElectron(embedUrl: string, tmdb: number): Promise<str
           );
         })
         .catch(() => {
-          finish(null);
+          finish(null, false);
         });
     });
   } finally {
@@ -268,7 +363,10 @@ async function getSharedPlaywrightBrowser(): Promise<any> {
   return sharedPlaywrightBrowserPromise;
 }
 
-async function harvestUiViaPlaywright(embedUrl: string): Promise<string | null> {
+async function harvestUiViaPlaywright(
+  embedUrl: string,
+  deadlineMs: number = HARVEST_TIMEOUT_MS
+): Promise<{ ui: string | null; timedOut: boolean }> {
   let ctx: any = null;
   try {
     const browser = await getSharedPlaywrightBrowser();
@@ -293,18 +391,18 @@ async function harvestUiViaPlaywright(embedUrl: string): Promise<string | null> 
       return route.continue();
     });
 
-    return await new Promise<string | null>((resolve) => {
+    return await new Promise<{ ui: string | null; timedOut: boolean }>((resolve) => {
       let settled = false;
-      const finish = (val: string | null) => {
+      const finish = (val: string | null, timedOut = false) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve(val);
+        resolve({ ui: val, timedOut });
       };
 
       const timer = setTimeout(() => {
-        finish(null);
-      }, HARVEST_TIMEOUT_MS);
+        finish(null, true);
+      }, deadlineMs);
 
       const checkUrl = (rawUrl: string) => {
         if (!rawUrl || !rawUrl.includes('api.moviemaster.lat/servers')) return;
@@ -312,7 +410,7 @@ async function harvestUiViaPlaywright(embedUrl: string): Promise<string | null> 
           const u = new URL(rawUrl);
           const ui = u.searchParams.get('ui');
           if (ui && ui.trim()) {
-            finish(ui.trim());
+            finish(ui.trim(), false);
           }
         } catch (_) {}
       };
@@ -322,11 +420,11 @@ async function harvestUiViaPlaywright(embedUrl: string): Promise<string | null> 
 
       page
         .setContent(`<iframe src="${embedUrl}" width="800" height="450"></iframe>`)
-        .catch(() => finish(null));
+        .catch(() => finish(null, false));
     });
   } catch (err: any) {
     console.warn(`[MM] Error cosechando ui via Playwright:`, err?.message || err);
-    return null;
+    return { ui: null, timedOut: false };
   } finally {
     try {
       if (ctx) await ctx.close();
@@ -339,19 +437,33 @@ export interface HarvestUiOptions {
   season?: number;
   episode?: number;
   forceRefresh?: boolean;
+  deadlineMs?: number;
 }
 
 /**
  * harvestUi(tmdb): ventana oculta, webRequest.onCompleted sobre /servers?, extrae ui.
- * Caché Map<tmdb, {ui, at}> TTL 6 h, mutex por tmdb, ventana destruida siempre.
+ * Deadline duro 6 s. Log [MM] harvest ms=... ui=cache|harvest y [MM] abortado por deadline.
  */
 export async function harvestUi(tmdb: number, opts: HarvestUiOptions = {}): Promise<string | null> {
   const cleanTmdb = Math.floor(Number(tmdb));
   if (!Number.isFinite(cleanTmdb) || cleanTmdb <= 0) return null;
 
+  const t0 = Date.now();
+  const type = opts.type || 'tv';
+  const season = opts.season || 1;
+  const episode = opts.episode || 1;
+  const sKey = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(season) || 1));
+  const eKey = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(episode) || 1));
+  const titleCacheKey = `${cleanTmdb}|${type}|${sKey}|${eKey}`;
+
+  if (isUnderDeadlineCooldown(titleCacheKey)) {
+    return null;
+  }
+
   if (!opts.forceRefresh) {
     const cached = uiCache.get(cleanTmdb);
     if (cached && Date.now() - cached.at < UI_TTL_MS) {
+      console.log(`[MM] harvest ms=${Date.now() - t0} ui=cache`);
       return cached.ui;
     }
   } else {
@@ -364,31 +476,30 @@ export async function harvestUi(tmdb: number, opts: HarvestUiOptions = {}): Prom
     return existing;
   }
 
-  const type = opts.type || 'tv';
-  const season = opts.season || 1;
-  const episode = opts.episode || 1;
+  const deadlineMs = opts.deadlineMs ?? HARVEST_TIMEOUT_MS;
 
   const task = (async () => {
     const isElectron = Boolean(process.versions && process.versions.electron);
     const primaryUrl = buildEmbedUrl(cleanTmdb, type, season, episode);
 
-    let ui = isElectron
-      ? await harvestUiViaElectron(primaryUrl, cleanTmdb)
-      : await harvestUiViaPlaywright(primaryUrl);
+    const res = isElectron
+      ? await harvestUiViaElectron(primaryUrl, cleanTmdb, deadlineMs)
+      : await harvestUiViaPlaywright(primaryUrl, deadlineMs);
 
-    if (!ui && !opts.type) {
-      const altType: MovieMasterMediaType = type === 'tv' ? 'movie' : 'tv';
-      const altUrl = buildEmbedUrl(cleanTmdb, altType, season, episode);
-      ui = isElectron
-        ? await harvestUiViaElectron(altUrl, cleanTmdb)
-        : await harvestUiViaPlaywright(altUrl);
+    const elapsed = Date.now() - t0;
+
+    if (res.timedOut || !res.ui) {
+      if (res.timedOut) {
+        console.log('[MM] abortado por deadline');
+        markDeadlineCooldown(titleCacheKey);
+      }
+      return null;
     }
 
-    if (ui) {
-      uiCache.set(cleanTmdb, { ui, at: Date.now() });
-      saveUiDiskCache();
-    }
-    return ui;
+    console.log(`[MM] harvest ms=${elapsed} ui=harvest`);
+    uiCache.set(cleanTmdb, { ui: res.ui, at: Date.now() });
+    saveUiDiskCache();
+    return res.ui;
   })();
 
   uiHarvestMutex.set(cleanTmdb, task);
@@ -404,13 +515,17 @@ async function fetchServersWithUi(
   type: MovieMasterMediaType,
   s: number,
   e: number,
-  ui: string
+  ui: string,
+  signal?: AbortSignal
 ): Promise<{ status: number; body: any }> {
   const qs =
     type === 'movie'
       ? `tmdb=${tmdb}&type=movie&ui=${encodeURIComponent(ui)}`
       : `tmdb=${tmdb}&type=tv&season=${s}&episode=${e}&ui=${encodeURIComponent(ui)}`;
   const url = `https://api.moviemaster.lat/servers?${qs}`;
+
+  const timeoutSig = AbortSignal.timeout(SERVERS_FETCH_TIMEOUT_MS);
+  const effectiveSignal = signal ? AbortSignal.any([signal, timeoutSig]) : timeoutSig;
 
   const res = await fetch(url, {
     method: 'GET',
@@ -419,7 +534,7 @@ async function fetchServersWithUi(
       Accept: '*/*',
       Referer: 'https://api.moviemaster.lat/',
     },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: effectiveSignal,
   });
 
   const text = await res.text();
@@ -434,7 +549,7 @@ async function fetchServersWithUi(
 
 /**
  * getServers(tmdb, type, s, e): caché de lista 4 min, clave tmdb|type|s|e.
- * servers.length === 0 -> indisponible.
+ * servers.length === 0 -> indisponible, guardado en caché negativa 24 h por tmdb|type|s|e.
  * En 403 con body.error === 'pass_scope' o 'no permitido' -> invalidar y re-cosechar una sola vez.
  */
 export async function getServers(
@@ -442,7 +557,7 @@ export async function getServers(
   rawType: string = 'tv',
   season: number = 1,
   episode: number = 1,
-  opts: { forceRefresh?: boolean } = {}
+  opts: { forceRefresh?: boolean; harvestDeadlineMs?: number } = {}
 ): Promise<NormalizedMovieMasterServer[]> {
   const cleanTmdb = Math.floor(Number(tmdb));
   if (!Number.isFinite(cleanTmdb) || cleanTmdb <= 0) return [];
@@ -452,10 +567,20 @@ export async function getServers(
   const e = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(episode) || 1));
   const cacheKey = `${cleanTmdb}|${type}|${s}|${e}`;
 
+  if (isUnderDeadlineCooldown(cacheKey)) {
+    return [];
+  }
+
   if (!opts.forceRefresh) {
+    if (isNegativelyCached(cacheKey)) {
+      return [];
+    }
     const cached = serversCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < SERVERS_CACHE_TTL_MS) {
-      return cached.servers;
+    if (cached) {
+      const ttl = cached.negative ? NEGATIVE_SERVERS_TTL_MS : SERVERS_CACHE_TTL_MS;
+      if (Date.now() - cached.at < ttl) {
+        return cached.servers;
+      }
     }
   } else {
     serversCache.delete(cacheKey);
@@ -466,6 +591,7 @@ export async function getServers(
     season: s || 1,
     episode: e || 1,
     forceRefresh: false,
+    deadlineMs: opts.harvestDeadlineMs,
   });
   if (!ui) return [];
 
@@ -484,13 +610,17 @@ export async function getServers(
       season: s || 1,
       episode: e || 1,
       forceRefresh: true,
+      deadlineMs: opts.harvestDeadlineMs,
     });
     if (!ui) return [];
     resp = await fetchServersWithUi(cleanTmdb, type, s || 1, e || 1, ui);
   }
 
   if (resp.status !== 200 || !Array.isArray(resp.body?.servers) || resp.body.servers.length === 0) {
-    serversCache.set(cacheKey, { servers: [], at: Date.now() });
+    if (resp.status === 200 && Array.isArray(resp.body?.servers) && resp.body.servers.length === 0) {
+      markNegativelyCached(cacheKey);
+      serversCache.set(cacheKey, { servers: [], at: Date.now(), negative: true });
+    }
     return [];
   }
 
@@ -515,24 +645,17 @@ export async function getServers(
     });
   }
 
-  // Ordenar por cadena de idioma LAT -> ESP -> SUB preservando el orden relativo de cada idioma
   normalized.sort((a, b) => getMmLangRank(a.lang) - getMmLangRank(b.lang));
 
-  serversCache.set(cacheKey, { servers: normalized, at: Date.now() });
-  return normalized;
-}
+  if (normalized.length === 0) {
+    markNegativelyCached(cacheKey);
+    serversCache.set(cacheKey, { servers: [], at: Date.now(), negative: true });
+    return [];
+  }
 
-export function buildSnapshotKey(
-  tmdb: number,
-  type: MovieMasterMediaType,
-  s: number,
-  e: number,
-  srvName: string
-): string {
-  return crypto
-    .createHash('sha1')
-    .update(`${tmdb}|${type}|${s}|${e}|${srvName}`)
-    .digest('hex');
+  negativeServersCache.delete(cacheKey);
+  serversCache.set(cacheKey, { servers: normalized, at: Date.now(), negative: false });
+  return normalized;
 }
 
 function putSnapshotLru(entry: SnapshotEntry): void {
@@ -572,6 +695,7 @@ function findCachedSnapshotForTitle(
   type: MovieMasterMediaType,
   s: number,
   e: number,
+  uaHash: string,
   preferredServerName?: string,
   preferredLang?: NormalizedMmLang
 ): SnapshotEntry | null {
@@ -581,7 +705,13 @@ function findCachedSnapshotForTitle(
       snapshotCache.delete(k);
       continue;
     }
-    if (entry.tmdb === tmdb && entry.type === type && entry.season === s && entry.episode === e) {
+    if (
+      entry.tmdb === tmdb &&
+      entry.type === type &&
+      entry.season === s &&
+      entry.episode === e &&
+      entry.uaHash === uaHash
+    ) {
       if (preferredServerName && entry.serverName.toLowerCase() !== preferredServerName.toLowerCase()) {
         continue;
       }
@@ -599,8 +729,9 @@ function findCachedSnapshotForTitle(
 async function fetchValidM3u8(
   url: string,
   userAgent?: string,
-  acceptLanguage?: string
-): Promise<{ ok: true; text: string; finalUrl: string } | { ok: false; reason: string }> {
+  acceptLanguage?: string,
+  signal?: AbortSignal
+): Promise<{ ok: true; text: string; finalUrl: string } | { ok: false; reason: string; aborted?: boolean }> {
   try {
     const cleanUa = userAgent ? userAgent.replace('HeadlessChrome/', 'Chrome/') : REAL_UA;
     const headers: Record<string, string> = {
@@ -615,7 +746,7 @@ async function fetchValidM3u8(
       method: 'GET',
       redirect: 'follow',
       headers,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal,
     });
 
     const ct = (res.headers.get('content-type') || '').toLowerCase();
@@ -636,7 +767,8 @@ async function fetchValidM3u8(
     }
     return { ok: true, text, finalUrl: res.url || url };
   } catch (err: any) {
-    return { ok: false, reason: err?.message || 'fetch error' };
+    const isAbort = err?.name === 'AbortError' || err?.name === 'TimeoutError' || Boolean(signal?.aborted);
+    return { ok: false, reason: err?.message || 'fetch error', aborted: isAbort };
   }
 }
 
@@ -742,15 +874,15 @@ export interface MintSnapshotOptions {
   simulateFirstServer502?: boolean;
   userAgent?: string;
   acceptLanguage?: string;
+  harvestDeadlineMs?: number;
+  mintDeadlineMs?: number;
 }
 
 /**
  * mintSnapshot(tmdb, type, s, e): cadena de idioma LAT -> ESP -> SUB.
- * Por cada servidor: GET video, exigir 200, content-type con mpegurl y body que empiece con #EXTM3U
- * (si empieza con <, es el 502 del servidor 3 y se descarta).
- * Seguir el primer #EXT-X-STREAM-INF a la variante, exigir lo mismo.
- * Máximo 3 intentos por título.
- * Devuelve { key, text, lang, serverName, durationSec, segs } con durationSec = suma de los #EXTINF.
+ * Deadline duro: cosecha 6 s, mint 3 s (AbortController). Al vencer: log [MM] abortado por deadline
+ * y marca MovieMaster no disponible para ese título durante 10 min.
+ * snapshotKey = sha1(tmdb|type|s|e|srv|uaHash) con uaHash = sha1(ua + '|' + acceptLanguage).
  */
 export async function mintSnapshot(
   tmdb: number,
@@ -765,9 +897,23 @@ export async function mintSnapshot(
   const type = normalizeMmType(rawType);
   const s = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(season) || 1));
   const e = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(episode) || 1));
+  const cacheKey = `${cleanTmdb}|${type}|${s}|${e}`;
+  const uaHash = buildUaHash(opts.userAgent, opts.acceptLanguage);
+
+  if (isUnderDeadlineCooldown(cacheKey)) {
+    return null;
+  }
 
   if (!opts.forceRefresh && !opts.simulateFirstServer502) {
-    const existing = findCachedSnapshotForTitle(cleanTmdb, type, s, e, opts.serverName, opts.lang);
+    const existing = findCachedSnapshotForTitle(
+      cleanTmdb,
+      type,
+      s,
+      e,
+      uaHash,
+      opts.serverName,
+      opts.lang
+    );
     if (existing) {
       console.log(
         `[MM] lang=${existing.lang} srv=${existing.serverName} segs=${existing.segs} dur=${existing.durationSec}`
@@ -778,6 +924,7 @@ export async function mintSnapshot(
 
   let servers = await getServers(cleanTmdb, type, s || 1, e || 1, {
     forceRefresh: opts.forceRefresh,
+    harvestDeadlineMs: opts.harvestDeadlineMs,
   });
   if (servers.length === 0) {
     return null;
@@ -800,79 +947,133 @@ export async function mintSnapshot(
   const maxAttempts = Math.min(MAX_MINT_ATTEMPTS, candidates.length);
   let refreshedListOn410 = false;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const srv = candidates[attempt];
+  const mintDeadlineMs = opts.mintDeadlineMs ?? MINT_DEADLINE_MS;
+  const mintAbortController = new AbortController();
+  let mintDeadlineExpired = false;
+  const mintTimer = setTimeout(() => {
+    mintDeadlineExpired = true;
+    mintAbortController.abort();
+  }, mintDeadlineMs);
 
-    if (opts.simulateFirstServer502 && attempt === 0) {
-      console.warn(
-        `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): HTTP 502 HTML payload (<) [simulated]`
-      );
-      continue;
-    }
-
-    let masterRes = await fetchValidM3u8(srv.video, opts.userAgent, opts.acceptLanguage);
-
-    if (!masterRes.ok && masterRes.reason.includes('410') && !refreshedListOn410) {
-      refreshedListOn410 = true;
-      servers = await getServers(cleanTmdb, type, s || 1, e || 1, { forceRefresh: true });
-      const refreshedMatch =
-        servers.find((x) => x.name === srv.name && x.lang === srv.lang) || servers[attempt];
-      if (refreshedMatch) {
-        masterRes = await fetchValidM3u8(refreshedMatch.video, opts.userAgent, opts.acceptLanguage);
+  try {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (mintDeadlineExpired || mintAbortController.signal.aborted) {
+        console.log('[MM] abortado por deadline');
+        markDeadlineCooldown(cacheKey);
+        return null;
       }
-    }
 
-    if (!masterRes.ok) {
-      console.warn(
-        `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en master "${srv.name}" (${srv.lang}): ${masterRes.reason}`
-      );
-      continue;
-    }
+      const srv = candidates[attempt];
 
-    const variantUrl = extractFirstVariantUrl(masterRes.text, masterRes.finalUrl);
-    let variantText = masterRes.text;
-    let variantFinalUrl = masterRes.finalUrl;
-
-    if (variantUrl) {
-      const varRes = await fetchValidM3u8(variantUrl, opts.userAgent, opts.acceptLanguage);
-      if (!varRes.ok) {
+      if (opts.simulateFirstServer502 && attempt === 0) {
         console.warn(
-          `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en variante "${srv.name}" (${srv.lang}): ${varRes.reason}`
+          `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): HTTP 502 HTML payload (<) [simulated]`
         );
         continue;
       }
-      variantText = varRes.text;
-      variantFinalUrl = varRes.finalUrl;
-    }
 
-    const normalized = normalizeAndMeasureVariantM3u8(variantText, variantFinalUrl);
-    if (normalized.segs === 0 || normalized.durationSec <= 0) {
-      console.warn(
-        `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): 0 segmentos`
+      let masterRes = await fetchValidM3u8(
+        srv.video,
+        opts.userAgent,
+        opts.acceptLanguage,
+        mintAbortController.signal
       );
-      continue;
+
+      if (mintDeadlineExpired || (!masterRes.ok && masterRes.aborted)) {
+        console.log('[MM] abortado por deadline');
+        markDeadlineCooldown(cacheKey);
+        return null;
+      }
+
+      if (!masterRes.ok && masterRes.reason.includes('410') && !refreshedListOn410) {
+        refreshedListOn410 = true;
+        servers = await getServers(cleanTmdb, type, s || 1, e || 1, {
+          forceRefresh: true,
+          harvestDeadlineMs: opts.harvestDeadlineMs,
+        });
+        const refreshedMatch =
+          servers.find((x) => x.name === srv.name && x.lang === srv.lang) || servers[attempt];
+        if (refreshedMatch) {
+          masterRes = await fetchValidM3u8(
+            refreshedMatch.video,
+            opts.userAgent,
+            opts.acceptLanguage,
+            mintAbortController.signal
+          );
+        }
+      }
+
+      if (mintDeadlineExpired || (!masterRes.ok && masterRes.aborted)) {
+        console.log('[MM] abortado por deadline');
+        markDeadlineCooldown(cacheKey);
+        return null;
+      }
+
+      if (!masterRes.ok) {
+        console.warn(
+          `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en master "${srv.name}" (${srv.lang}): ${masterRes.reason}`
+        );
+        continue;
+      }
+
+      const variantUrl = extractFirstVariantUrl(masterRes.text, masterRes.finalUrl);
+      let variantText = masterRes.text;
+      let variantFinalUrl = masterRes.finalUrl;
+
+      if (variantUrl) {
+        const varRes = await fetchValidM3u8(
+          variantUrl,
+          opts.userAgent,
+          opts.acceptLanguage,
+          mintAbortController.signal
+        );
+        if (mintDeadlineExpired || (!varRes.ok && varRes.aborted)) {
+          console.log('[MM] abortado por deadline');
+          markDeadlineCooldown(cacheKey);
+          return null;
+        }
+        if (!varRes.ok) {
+          console.warn(
+            `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en variante "${srv.name}" (${srv.lang}): ${varRes.reason}`
+          );
+          continue;
+        }
+        variantText = varRes.text;
+        variantFinalUrl = varRes.finalUrl;
+      }
+
+      const normalized = normalizeAndMeasureVariantM3u8(variantText, variantFinalUrl);
+      if (normalized.segs === 0 || normalized.durationSec <= 0) {
+        console.warn(
+          `[MM] Intento ${attempt + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): 0 segmentos`
+        );
+        continue;
+      }
+
+      const key = buildSnapshotKey(cleanTmdb, type, s, e, srv.name, uaHash);
+      const entry: SnapshotEntry = {
+        key,
+        uaHash,
+        text: normalized.text,
+        lang: srv.lang,
+        serverName: srv.name,
+        durationSec: normalized.durationSec,
+        segs: normalized.segs,
+        at: Date.now(),
+        tmdb: cleanTmdb,
+        type,
+        season: s,
+        episode: e,
+      };
+
+      putSnapshotLru(entry);
+      console.log(
+        `[MM] lang=${entry.lang} srv=${entry.serverName} segs=${entry.segs} dur=${entry.durationSec}`
+      );
+      return entry;
     }
-
-    const key = buildSnapshotKey(cleanTmdb, type, s, e, srv.name);
-    const entry: SnapshotEntry = {
-      key,
-      text: normalized.text,
-      lang: srv.lang,
-      serverName: srv.name,
-      durationSec: normalized.durationSec,
-      segs: normalized.segs,
-      at: Date.now(),
-      tmdb: cleanTmdb,
-      type,
-      season: s,
-      episode: e,
-    };
-
-    putSnapshotLru(entry);
-    console.log(
-      `[MM] lang=${entry.lang} srv=${entry.serverName} segs=${entry.segs} dur=${entry.durationSec}`
-    );
-    return entry;
+  } finally {
+    clearTimeout(mintTimer);
   }
 
   return null;
@@ -999,6 +1200,39 @@ export function createMovieMasterRouter(): Router {
     const rawKey = String(req.params.key || '').replace(/\.m3u8$/i, '').trim();
     const removed = expireSnapshotByKey(rawKey);
     res.json({ ok: true, removed });
+  });
+
+  // Endpoints auxiliares para pruebas de deadline de cosecha (6 s)
+  router.get('/mm/test-hang/*', (_req: Request, res: Response) => {
+    const timer = setTimeout(() => {
+      if (!res.headersSent) res.status(504).end();
+    }, 30_000);
+    res.on('close', () => clearTimeout(timer));
+  });
+
+  router.post('/mm/test-config', (req: Request, res: Response) => {
+    const b = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
+    if ('harvestBaseUrl' in b) {
+      testHarvestBaseUrlOverride =
+        typeof b.harvestBaseUrl === 'string' && b.harvestBaseUrl.trim()
+          ? b.harvestBaseUrl.trim()
+          : null;
+    }
+    if (b.clearTmdb) {
+      const t = Math.floor(Number(b.clearTmdb));
+      uiCache.delete(t);
+      for (const k of Array.from(serversCache.keys())) {
+        if (k.startsWith(`${t}|`)) serversCache.delete(k);
+      }
+      for (const k of Array.from(deadlineCooldownCache.keys())) {
+        if (k.startsWith(`${t}|`)) deadlineCooldownCache.delete(k);
+      }
+      for (const k of Array.from(snapshotCache.keys())) {
+        const snap = snapshotCache.get(k);
+        if (snap && snap.tmdb === t) snapshotCache.delete(k);
+      }
+    }
+    res.json({ ok: true, harvestBaseUrl: testHarvestBaseUrlOverride });
   });
 
   return router;

@@ -219,7 +219,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const n = Number(raw);
         if (Number.isFinite(n)) vol01 = n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n));
       }
-    } catch (_) {}
+    } catch (_) { }
     return {
       autoPlayNext: true,
       autoSkipIntro: true,
@@ -238,7 +238,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (Number.isFinite(n)) vol01 = n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n));
       }
       muted = typeof window !== 'undefined' && localStorage.getItem('cinecast_muted_v1') === 'true';
-    } catch (_) {}
+    } catch (_) { }
     return {
       volume: Math.round(vol01 * 100),
       isMuted: muted,
@@ -261,7 +261,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const cached = deviceSync.getCachedPlaybackState();
           if (cached?.mediaItem) return cached.mediaItem;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     return null;
   });
@@ -273,7 +273,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const cached = deviceSync.getCachedPlaybackState();
           if (cached?.episodeItem) return cached.episodeItem;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     return null;
   });
@@ -285,7 +285,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (role !== 'remote' && wasPlaying) {
           return true;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     return false;
   });
@@ -297,7 +297,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const cached = deviceSync.getCachedPlaybackState();
           if (cached?.currentTime && cached.currentTime > 0) return cached.currentTime;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     return 0;
   });
@@ -317,7 +317,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       } else if (deviceRole === 'screen') {
         sessionStorage.removeItem('cinecast_screen_active_playing');
       }
-    } catch (_) {}
+    } catch (_) { }
   }, [isPlayingLocally, deviceRole]);
 
   // TAREA 5: Sincronización central de "Continuar Viendo" entre PC y Celular
@@ -592,7 +592,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         let vol01: number | undefined;
         if (typeof rawVol === 'number' && Number.isFinite(rawVol)) {
           vol01 = rawVol > 1 ? Math.max(0, Math.min(1, rawVol / 100)) : Math.max(0, Math.min(1, rawVol));
-          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) {}
+          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) { }
         }
         if (state.audioSettings) {
           setAudioSettings({
@@ -1279,7 +1279,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         try {
           localStorage.setItem('cinecast_volume_v1', String(vol01));
           localStorage.setItem('cinecast_muted_v1', 'false');
-        } catch (_) {}
+        } catch (_) { }
         setPlaybackSettings((prev) => ({ ...prev, volume: vol01 }));
         setAudioSettings((prev) => ({ ...prev, volume: volPct, isMuted: false }));
         if (!(isPlayingLocally && activeHub === 'cinecast')) {
@@ -1291,7 +1291,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       case 'toggleMute': {
         setAudioSettings((prev) => {
           const nextMuted = !prev.isMuted;
-          try { localStorage.setItem('cinecast_muted_v1', String(nextMuted)); } catch (_) {}
+          try { localStorage.setItem('cinecast_muted_v1', String(nextMuted)); } catch (_) { }
           if (!(isPlayingLocally && activeHub === 'cinecast')) {
             window.electronAPI?.setMasterVolume?.({ volume: prev.volume, isMuted: nextMuted });
           }
@@ -1307,14 +1307,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             ? Math.max(0, Math.min(1, newSettings.volume / 100))
             : Math.max(0, Math.min(1, newSettings.volume));
           const volPct = Math.round(vol01 * 100);
-          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) {}
+          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) { }
           setPlaybackSettings((prev) => ({ ...prev, volume: vol01 }));
           setAudioSettings((prev) => ({ ...prev, ...newSettings, volume: volPct }));
         } else {
           setAudioSettings((prev) => ({ ...prev, ...newSettings }));
         }
         if (typeof newSettings.isMuted === 'boolean') {
-          try { localStorage.setItem('cinecast_muted_v1', String(newSettings.isMuted)); } catch (_) {}
+          try { localStorage.setItem('cinecast_muted_v1', String(newSettings.isMuted)); } catch (_) { }
         }
         if (newSettings.preset) {
           triggerNotification(`📱 Efecto de audio: ${newSettings.preset.toUpperCase()}`);
@@ -1328,7 +1328,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             ? Math.max(0, Math.min(1, newSettings.volume / 100))
             : Math.max(0, Math.min(1, newSettings.volume));
           const volPct = Math.round(vol01 * 100);
-          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) {}
+          try { localStorage.setItem('cinecast_volume_v1', String(vol01)); } catch (_) { }
           setPlaybackSettings((prev) => ({ ...prev, ...newSettings, volume: vol01 }));
           setAudioSettings((prev) => ({ ...prev, volume: volPct }));
         } else {
