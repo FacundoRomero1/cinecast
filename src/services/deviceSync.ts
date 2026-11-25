@@ -1,4 +1,5 @@
 import { DeviceInfo, DeviceType, PlaybackState, RemoteCommand } from '../types';
+import { getActiveApiBase, getActiveWsUrl, isAndroidTvDevice, isCapacitorNative } from './apiOrigin';
 
 export type CommandHandler = (command: RemoteCommand, fromDevice?: string) => void;
 export type StateSyncHandler = (state: PlaybackState, fromDevice?: string) => void;
@@ -215,6 +216,9 @@ export class DeviceSyncService {
   }
 
   public getApiBase(): string {
+    if (isCapacitorNative()) {
+      return getActiveApiBase();
+    }
     if (typeof window !== 'undefined' && window.location.protocol !== 'file:' && window.location.host) {
       return '';
     }
@@ -318,14 +322,38 @@ export class DeviceSyncService {
       }
 
       const roleFromUrl = params.get('role');
+      const savedRole =
+        typeof localStorage !== 'undefined'
+          ? (localStorage.getItem('cinecast_device_role') as DeviceType | null)
+          : null;
+      const isTv = isAndroidTvDevice();
+      const isNative = isCapacitorNative();
       const isMobileUA = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
-      if (roleFromUrl === 'remote') {
+      if (isTv) {
+        this.deviceType = 'screen';
+        this.deviceName = 'CineCast TV (Android TV)';
+      } else if (roleFromUrl === 'remote') {
         this.deviceType = 'remote';
         this.deviceName = 'Celular Control';
       } else if (roleFromUrl === 'screen') {
         this.deviceType = 'screen';
         this.deviceName = 'PC / Pantalla Principal';
+      } else if (roleFromUrl === 'hybrid') {
+        this.deviceType = 'hybrid';
+        this.deviceName = 'Celular CineCast';
+      } else if (savedRole === 'hybrid' || savedRole === 'remote' || savedRole === 'screen') {
+        this.deviceType = savedRole;
+        this.deviceName =
+          savedRole === 'hybrid'
+            ? 'Celular CineCast'
+            : savedRole === 'remote'
+              ? 'Celular Control'
+              : 'PC / Pantalla Principal';
+      } else if (isNative) {
+        // APK móvil: por defecto híbrido (reproductor independiente + control remoto)
+        this.deviceType = 'hybrid';
+        this.deviceName = 'Celular CineCast';
       } else if (isMobileUA) {
         this.deviceType = 'remote';
         this.deviceName = 'Celular Control';
@@ -341,6 +369,26 @@ export class DeviceSyncService {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('cinecast_device_type', this.deviceType);
       localStorage.setItem('cinecast_device_name', this.deviceName);
+    }
+  }
+
+  public setDeviceRole(role: DeviceType) {
+    this.deviceType = role;
+    this.deviceName =
+      role === 'hybrid'
+        ? 'Celular CineCast'
+        : role === 'remote'
+          ? 'Celular Control'
+          : isAndroidTvDevice()
+            ? 'CineCast TV (Android TV)'
+            : 'PC / Pantalla Principal';
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('cinecast_device_role', role);
+      localStorage.setItem('cinecast_device_type', this.deviceType);
+      localStorage.setItem('cinecast_device_name', this.deviceName);
+    }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.sendJoin();
     }
   }
 
@@ -712,7 +760,7 @@ export class DeviceSyncService {
       const ip = this.getLanIp() || 'localhost';
       host = `${ip}:${this.lanPort || 3000}`;
     }
-    const wsUrl = `${protocol}//${host}/ws`;
+    const wsUrl = isCapacitorNative() ? getActiveWsUrl() : `${protocol}//${host}/ws`;
 
     // Evitar cerrar un WebSocket que ya está conectando o abierto al mismo /ws y sala
     if (this.ws && this.ws.url === wsUrl) {

@@ -54,3 +54,15 @@
 input[type="range"] {
   accent-color: #e50914;
 }
+
+/* Android TV D-Pad high-contrast focus indicator */
+.cinecast-tv-mode button:focus-visible,
+.cinecast-tv-mode a:focus-visible,
+.cinecast-tv-mode input:focus-visible,
+.cinecast-tv-mode [tabindex]:focus-visible {
+  outline: 3px solid #e50914 !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(229, 9, 20, 0.28);
+  transform: scale(1.03);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}

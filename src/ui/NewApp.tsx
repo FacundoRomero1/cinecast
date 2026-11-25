@@ -51,6 +51,7 @@ const SportsMatchesTab = React.lazy(() => import('../components/SportsMatchesTab
 const SportsLiveGrid = React.lazy(() => import('../components/SportsLiveGrid').then((m) => ({ default: m.SportsLiveGrid })));
 const SpotifyHub = React.lazy(() => import('../components/SpotifyHub').then((m) => ({ default: m.SpotifyHub })));
 import { SpotifyDevice, SpotifySettingsSection } from './SpotifyDevice';
+import { BackendServerSettings } from './BackendServerSettings';
 const YouTubeHub = React.lazy(() => import('../components/YouTubeHub').then((m) => ({ default: m.YouTubeHub })));
 import { SPOTIFY_TRACKS } from '../data/spotifyCatalog';
 import { YOUTUBE_VIDEOS } from '../data/youtubeCatalog';
@@ -1449,6 +1450,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
     connectedScreenName,
     devices,
     deviceRole,
+    setDeviceRole,
     setIsAudioModalOpen,
     setIsGuestModalOpen,
     triggerNotification,
@@ -1884,6 +1886,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
         )}
       </div>
 
+      {/* Modo del dispositivo (Independiente / Control Remoto / TV) y Servidor Híbrido */}
+      <BackendServerSettings deviceRole={deviceRole} setDeviceRole={setDeviceRole} />
+
       {/* Sección Spotify (dispositivo CineCast) */}
       <SpotifySettingsSection isScreen={deviceRole === 'screen' || deviceRole === 'hybrid'} />
 
@@ -1973,6 +1978,7 @@ const HubRouteSynchronizer: React.FC = () => {
 const SpotifyView: React.FC = () => {
   const {
     deviceRole,
+    setDeviceRole,
     connectedScreenName,
     activeSpotifyTrack,
     setActiveSpotifyTrack,
@@ -2077,6 +2083,7 @@ const SpotifyView: React.FC = () => {
 const YouTubeView: React.FC = () => {
   const {
     deviceRole,
+    setDeviceRole,
     connectedScreenName,
     activeYouTubeVideo,
     setActiveYouTubeVideo,

@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { NewApp } from './ui/NewApp.tsx';
 import './index.css';
 import { initTimeTracker } from './app/timeTracker';
+import { installApiFetchInterceptor } from './services/apiOrigin';
+import { initTvDpadNavigation } from './app/tvDpad';
 
 // P1.5 — Marcador de fidelidad de build en runtime
 (window as any).__cinecastBuild = import.meta.env.VITE_BUILD_SHA ?? 'dev';
@@ -31,6 +33,10 @@ try {
     });
   }
 } catch (_) {}
+
+// Interceptar /api/*, /mm/*, /auth/* en APK Capacitor (híbrido LAN WiFi + Nube) y habilitar D-Pad en Android TV
+installApiFetchInterceptor();
+initTvDpadNavigation();
 
 const RootContainer: React.FC = () => {
   return <NewApp />;
