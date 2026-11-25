@@ -606,6 +606,19 @@ export function isTrustworthyIptvCandidate(ch: {
 
   const mirrorCheck = assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl });
   if (!mirrorCheck.trusted) {
+    // Permitir relays IP directos provenientes del catálogo oficial de deportes de iptv-org
+    // cuando pertenecen a países/señales hispanohablantes (ESPN LatAm, TNT Sports, Win+, Claro Sports, Sky Sports, FUTV, etc.)
+    const countryUp = (ch.country || '').toUpperCase();
+    const HISPANIC_SET = new Set(['AR', 'MX', 'ES', 'CO', 'CL', 'UY', 'PE', 'VE', 'EC', 'CR', 'PA', 'DO', 'PR', 'GT', 'HN', 'PY', 'BO', 'SV', 'NI']);
+    const isHispanicSports =
+      HISPANIC_SET.has(countryUp) ||
+      /espa[nñ]ol|latino|latam|latin\s*america|colombia|mexico|m[eé]xico|argentina|chile|peru|per[uú]|spain|espn|fox\s*deportes|tudn|win\s*\+?|claro\s*sports|sky\s*sports|futv|l1\s*max|tyc|tnt\s*sports/i.test(
+        `${ch.name} ${ch.id}`
+      );
+    const isKnownBroken = /45\.134\.141\.161:2200\/ARG\/ESPN_Premium/i.test(ch.streamUrl || '');
+    if (!isKnownBroken && isHispanicSports && (isSportsGroup || nameMatchesSports) && /host IP crudo/i.test(mirrorCheck.reason)) {
+      return { ok: true, reason: 'relay IP deportivo hispanohablante (iptv-org)' };
+    }
     return { ok: false, reason: mirrorCheck.reason };
   }
 

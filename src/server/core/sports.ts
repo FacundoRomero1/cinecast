@@ -11,7 +11,7 @@ import type { StreamServer } from '../../types.ts';
 
 export const SPORTS_M3U_URL = 'https://iptv-org.github.io/iptv/categories/sports.m3u';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora para descarga cruda de iptv-org
-const SPORTS_VALIDATOR_VERSION = 2;
+const SPORTS_VALIDATOR_VERSION = 3;
 
 let deadUrlsSet: Set<string> | null = null;
 export function getDeadSportsUrls(): Set<string> {
@@ -310,6 +310,14 @@ async function probeChannelWithMirrors(
   for (const srv of candidateServers) {
     const trust = assessMirrorTrust(ch, srv);
     if (!trust.trusted) {
+      const candOk =
+        extraCandidates.length === 0 &&
+        srv.url === ch.streamUrl &&
+        isTrustworthyIptvCandidate(ch).ok;
+      if (candOk) {
+        trustedMirrors.push({ srv, score: 40, reason: 'canal deportivo hispanohablante (iptv-org)' });
+        continue;
+      }
       rejectedLogs.push(`${srv.name} [${srv.url}]: ${trust.reason}`);
       continue;
     }
@@ -332,7 +340,7 @@ async function probeChannelWithMirrors(
 
   const mirrorResults = await Promise.all(
     trustedMirrors.map(async (entry) => {
-      const ok = await validateHlsStream(entry.srv.url, 2500, {
+      const ok = await validateHlsStream(entry.srv.url, 3500, {
         referrer: entry.srv.referrer ?? ch.referrer,
         userAgent: entry.srv.userAgent ?? ch.userAgent,
       });
@@ -397,7 +405,7 @@ function toBaseVerifiedChannels(): ParsedSportsChannel[] {
 export async function getValidatedSportsChannels(
   basePayload: SportsChannelsPayload,
   cacheDir?: string,
-  maxDynamicToValidate = 20,
+  maxDynamicToValidate = 70,
   forceRefresh = false
 ): Promise<SportsChannelsPayload> {
   const now = Date.now();
@@ -450,10 +458,18 @@ export async function getValidatedSportsChannels(
       }
     }
 
-    // Filtrado anti-basura para canales dinámicos adicionales de iptv-org
+    // Filtrado anti-basura para canales dinámicos adicionales de iptv-org (priorizando habla hispana)
+    const HISPANIC_PRIORITY = ['AR', 'MX', 'ES', 'CO', 'CL', 'UY', 'PE', 'VE', 'EC', 'CR', 'PA', 'DO', 'BO', 'PY', 'GT', 'HN', 'US'];
+    const sortedRawIptv = [...rawIptv].sort((a, b) => {
+      const ia = HISPANIC_PRIORITY.indexOf((a.country || '').toUpperCase());
+      const ib = HISPANIC_PRIORITY.indexOf((b.country || '').toUpperCase());
+      const ra = ia === -1 ? 99 : ia;
+      const rb = ib === -1 ? 99 : ib;
+      return ra - rb;
+    });
     const seenDynamicUrls = new Set<string>();
     const dynamicCandidates: ParsedSportsChannel[] = [];
-    for (const ch of rawIptv) {
+    for (const ch of sortedRawIptv) {
       const baseId = (ch.id || '').split('.')[0].split('@')[0].toLowerCase();
       if (verifiedBaseIds.has(baseId)) continue;
       if (seenDynamicUrls.has(ch.streamUrl)) continue;
@@ -531,7 +547,7 @@ export async function getOrFetchSportsChannels(
 
   if (!forceRefresh && inMemoryChannelsCache && now - lastCacheTime < CACHE_TTL_MS) {
     if (validate) {
-      return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir, 20, false);
+      return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir, 70, false);
     }
     return inMemoryChannelsCache;
   }
@@ -600,13 +616,13 @@ export async function getOrFetchSportsChannels(
     }
 
     if (validate) {
-      return await getValidatedSportsChannels(payload, cacheDir, 20, forceRefresh);
+      return await getValidatedSportsChannels(payload, cacheDir, 70, forceRefresh);
     }
     return payload;
   } catch (err) {
     if (inMemoryChannelsCache) {
       if (validate) {
-        return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir, 20, forceRefresh);
+        return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir, 70, forceRefresh);
       }
       return inMemoryChannelsCache;
     }
