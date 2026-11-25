@@ -2247,6 +2247,22 @@ ipcMain.handle('open-external', (_event, url) => {
       console.warn(`[open-external] Protocolo rechazado: ${parsed.protocol} (${url})`);
       return false;
     }
+    if (parsed.protocol === 'spotify:') {
+      if (process.platform === 'win32') {
+        const spotifyCandidates = [
+          path.join(process.env.APPDATA || '', 'Spotify', 'Spotify.exe'),
+          path.join(process.env.LOCALAPPDATA || '', 'Spotify', 'Spotify.exe'),
+          path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', 'Spotify.exe'),
+        ];
+        const foundExe = spotifyCandidates.find((p) => p && fs.existsSync(p));
+        if (foundExe) {
+          shell.openPath(foundExe);
+          return true;
+        }
+      }
+      shell.openExternal(parsed.toString());
+      return true;
+    }
     shell.openExternal(parsed.toString());
     return true;
   } catch (_) {
