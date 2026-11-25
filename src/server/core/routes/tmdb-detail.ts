@@ -143,6 +143,7 @@ export function formatSeasonEpisodes(
     episode?: number;
     overview?: string;
     runtime?: number;
+    air_date?: string | null;
     still_path?: string | null;
     stillUrl?: string | null;
     vote_average?: number;
@@ -150,7 +151,16 @@ export function formatSeasonEpisodes(
   }>,
   seasonNumber: number = 1
 ): TvEpisodePayload[] {
-  return (rawEpisodes || []).map((e) => {
+  // Filtrar episodios futuros aún no emitidos (ej. animes en emisión donde TMDB lista E20..E26 futuros)
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const airedEpisodes = (rawEpisodes || []).filter((e) => {
+    const ad = typeof e.air_date === 'string' ? e.air_date.trim().slice(0, 10) : '';
+    if (!ad || !/^\d{4}-\d{2}-\d{2}$/.test(ad)) return true;
+    return ad <= todayIso;
+  });
+  const listToUse = airedEpisodes.length > 0 ? airedEpisodes : (rawEpisodes || []);
+
+  return listToUse.map((e) => {
     const sNum = e.season_number ?? e.season ?? seasonNumber;
     const epNum = e.episode_number ?? e.episode ?? 1;
     const epName = e.name || e.title || `Episodio ${epNum}`;

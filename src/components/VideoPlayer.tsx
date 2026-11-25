@@ -5063,6 +5063,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </button>
             )}
 
+            {/* Botón 1-click para marcar series/episodios/canales con fallo de reproducción */}
+            <button
+              type="button"
+              onClick={() => {
+                const srv = activeServerRef.current;
+                fetch('/api/report-broken', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    tmdbId: tmdbIdToUse || null,
+                    title: media.title,
+                    type: resolveType,
+                    season: isSeriesOrAnime ? selectedSeasonRef.current : undefined,
+                    episode: isSeriesOrAnime ? selectedEpisodeRef.current : undefined,
+                    serverName: srv?.name || '',
+                    serverUrl: srv?.url || videoSrc || '',
+                    buildMarker: (window as any).__cinecastBuild || undefined,
+                  }),
+                })
+                  .then((r) => (r.ok ? triggerSignalToast('🚩 Reporte guardado en broken-media-reports.json') : triggerSignalToast('No se pudo guardar el reporte')))
+                  .catch(() => triggerSignalToast('No se pudo guardar el reporte'));
+              }}
+              className="px-2.5 py-1 rounded-xl bg-zinc-900/80 hover:bg-red-950/80 text-zinc-300 hover:text-red-300 border border-zinc-700/60 hover:border-red-500/50 transition backdrop-blur-md flex items-center gap-1.5 text-xs font-bold shadow-md cursor-pointer"
+              title="Marcar este contenido/episodio como roto o con fallo de reproducción"
+            >
+              <span>🚩</span>
+              <span className="hidden lg:inline">Reportar</span>
+            </button>
+
             {/* TAREA 1: Botón Ocultar Barra (icono ojo/chevron) */}
             <button
               type="button"

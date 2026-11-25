@@ -59,18 +59,11 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/ESPN_Premium_logo.png/512px-ESPN_Premium_logo.png',
-    streamUrl: 'http://45.134.141.161:2200/ARG/ESPN_Premium_Argentina_HD/tracks-v1a1/mono.m3u8',
+    streamUrl: '',
     quality: '1080p HD',
     category: 'Fútbol Argentino (Pack Fútbol)',
     isOnline: false,
-    servers: [
-      {
-        name: 'ESPN Premium Argentina HD',
-        url: 'http://45.134.141.161:2200/ARG/ESPN_Premium_Argentina_HD/tracks-v1a1/mono.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
+    servers: [],
   },
   {
     id: 'DSports2.ar',

@@ -892,7 +892,18 @@ export async function fetchTudeporteAgenda(cacheDir?: string, forceRefresh = fal
       const rawTime = String(evt.time || '00:00').trim();
       const timeLocal = convertColombiaTimeToLocal(rawTime);
       const category = String(evt.category || 'Fútbol & Deportes').trim();
-      const status = String(evt.status || 'pronto').trim();
+      let status = String(evt.status || 'pronto').trim();
+      // Derivar EN VIVO según reloj local si el evento empezó hace <= 130 min (o empieza en <= 10 min)
+      const tm = timeLocal.match(/^(\d{1,2}):(\d{2})$/);
+      if (tm && status.toLowerCase() !== 'finalizado') {
+        const nowD = new Date();
+        const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
+        const evtMin = parseInt(tm[1]!, 10) * 60 + parseInt(tm[2]!, 10);
+        const diff = nowMin - evtMin;
+        if (diff >= -10 && diff <= 130) {
+          status = 'en_vivo';
+        }
+      }
 
       const { name: chBaseName, server } = normalizeTudeporteChannelName(cleanLink);
 
