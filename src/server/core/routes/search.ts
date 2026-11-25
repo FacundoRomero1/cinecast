@@ -44,6 +44,9 @@ export function getMediaKind(item: {
   category?: string;
   mediaType?: string;
 }): 'series' | 'movie' {
+  if (item.type === 'movie' || item.mediaType === 'movie') {
+    return 'movie';
+  }
   if (
     item.type === 'series' ||
     item.category === 'series' ||

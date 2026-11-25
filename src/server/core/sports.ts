@@ -1,8 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import {
+  VERIFIED_SPORTS_CHANNELS,
+  rankSportsChannels,
+  assessMirrorTrust,
+  isTrustworthyIptvCandidate,
+  canPromoteCandidateToVerified,
+} from '../../data/verifiedSportsChannels.ts';
+import type { StreamServer } from '../../types.ts';
 
 export const SPORTS_M3U_URL = 'https://iptv-org.github.io/iptv/categories/sports.m3u';
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora para descarga cruda de iptv-org
+const SPORTS_VALIDATOR_VERSION = 2;
 
 let deadUrlsSet: Set<string> | null = null;
 export function getDeadSportsUrls(): Set<string> {
@@ -39,12 +48,20 @@ export interface ParsedSportsChannel {
   quality: string;
   category: string;
   groupTitle?: string;
+  isOnline?: boolean;
+  lastVerified?: number;
+  referrer?: string | null;
+  userAgent?: string | null;
+  servers?: StreamServer[];
 }
 
 export interface SportsChannelsPayload {
   updatedAt: string;
   source: string;
   total: number;
+  validated?: boolean;
+  validatorVersion?: number;
+  cacheTtlMs?: number;
   channels: ParsedSportsChannel[];
 }
 
@@ -80,6 +97,8 @@ export function parseSportsM3u(m3uContent: string): ParsedSportsChannel[] {
     groupTitle: string;
     quality: string;
     country: string;
+    userAgent?: string | null;
+    referrer?: string | null;
   } | null = null;
 
   for (let i = 0; i < lines.length; i++) {
@@ -91,6 +110,8 @@ export function parseSportsM3u(m3uContent: string): ParsedSportsChannel[] {
       const nameMatch = line.match(/tvg-name="([^"]*)"/i);
       const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
       const groupMatch = line.match(/group-title="([^"]*)"/i);
+      const uaMatch = line.match(/http-user-agent="([^"]*)"/i);
+      const refMatch = line.match(/http-referrer="([^"]*)"/i);
 
       const commaIdx = line.lastIndexOf(',');
       let rawName = commaIdx >= 0 ? line.slice(commaIdx + 1).trim() : '';
@@ -119,7 +140,15 @@ export function parseSportsM3u(m3uContent: string): ParsedSportsChannel[] {
         groupTitle: groupMatch?.[1] || 'Sports',
         quality,
         country,
+        userAgent: uaMatch?.[1] || null,
+        referrer: refMatch?.[1] || null,
       };
+    } else if (line.startsWith('#EXTVLCOPT:') && currentMeta) {
+      if (line.toLowerCase().startsWith('#extvlcopt:http-user-agent=')) {
+        currentMeta.userAgent = line.slice('#EXTVLCOPT:http-user-agent='.length).trim() || currentMeta.userAgent;
+      } else if (line.toLowerCase().startsWith('#extvlcopt:http-referrer=')) {
+        currentMeta.referrer = line.slice('#EXTVLCOPT:http-referrer='.length).trim() || currentMeta.referrer;
+      }
     } else if (line.startsWith('http://') || line.startsWith('https://')) {
       if (currentMeta) {
         const countryInfo = COUNTRY_MAP[currentMeta.country] || {
@@ -138,6 +167,8 @@ export function parseSportsM3u(m3uContent: string): ParsedSportsChannel[] {
           quality: currentMeta.quality,
           category: 'Fútbol & Deportes en Vivo',
           groupTitle: currentMeta.groupTitle,
+          referrer: currentMeta.referrer ?? null,
+          userAgent: currentMeta.userAgent ?? null,
         });
         currentMeta = null;
       }
@@ -152,57 +183,238 @@ let lastCacheTime = 0;
 
 let inMemoryValidatedCache: SportsChannelsPayload | null = null;
 let lastValidatedTime = 0;
-const VALIDATED_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutos
+let validatedInFlightPromise: Promise<SportsChannelsPayload> | null = null;
+export const VALIDATED_CACHE_TTL_MS = 7 * 60 * 1000; // 7 minutos
 
-export async function validateHlsStream(url: string, timeoutMs = 3000): Promise<boolean> {
+const DEFAULT_SPORTS_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+
+export async function validateHlsStream(
+  url: string,
+  timeoutMs = 2500,
+  headers?: { referrer?: string | null; userAgent?: string | null }
+): Promise<boolean> {
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
     return false;
   }
+  const reqHeaders: Record<string, string> = {
+    'User-Agent': headers?.userAgent || DEFAULT_SPORTS_UA,
+    Accept: '*/*',
+  };
+  if (headers?.referrer) {
+    reqHeaders['Referer'] = headers.referrer;
+  }
+
   try {
     const res = await fetch(url, {
       method: 'GET',
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      },
+      headers: reqHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return false;
-    const ct = (res.headers.get('content-type') || '').toLowerCase();
-    if (
-      ct.includes('mpegurl') ||
-      ct.includes('application/x-mpegurl') ||
-      ct.includes('application/vnd.apple.mpegurl') ||
-      ct.includes('audio/x-mpegurl') ||
-      ct.includes('video/mp2t') ||
-      ct.includes('application/octet-stream')
-    ) {
-      return true;
-    }
+
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('text/html')) return false;
+
     const sample = await res.text();
-    return sample.includes('#EXTM3U');
+    const trimmedSample = sample.trimStart();
+    if (!trimmedSample.startsWith('#EXTM3U') || /^<!doctype\s+html|^<html/i.test(trimmedSample)) {
+      return false;
+    }
+
+    // Si es master playlist (#EXT-X-STREAM-INF), comprobar también la primera variante real
+    if (sample.includes('#EXT-X-STREAM-INF')) {
+      const lines = sample.split(/\r?\n/).map((l) => l.trim());
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? '';
+        if (line.startsWith('#EXT-X-STREAM-INF')) {
+          const nextUri = lines.slice(i + 1).find((l) => Boolean(l) && !l.startsWith('#'));
+          if (nextUri) {
+            try {
+              const variantUrl = new URL(nextUri, res.url || url).toString();
+              const variantRes = await fetch(variantUrl, {
+                method: 'GET',
+                headers: reqHeaders,
+                signal: AbortSignal.timeout(Math.min(timeoutMs, 1500)),
+              });
+              if (!variantRes.ok) return false;
+              const vCt = (variantRes.headers.get('content-type') || '').toLowerCase();
+              if (vCt.includes('text/html')) return false;
+              const variantBody = await variantRes.text();
+              if (/^<!doctype\s+html|^<html/i.test(variantBody.trimStart())) return false;
+              return (
+                variantBody.includes('#EXTM3U') ||
+                variantBody.includes('#EXTINF') ||
+                variantBody.includes('#EXT-X-')
+              );
+            } catch {
+              return false;
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    return true;
   } catch {
     return false;
   }
 }
 
+async function probeChannelWithMirrors(
+  ch: ParsedSportsChannel,
+  extraCandidates: ParsedSportsChannel[] = []
+): Promise<ParsedSportsChannel | null> {
+  const candidateServers: StreamServer[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const s of ch.servers || []) {
+    if (!s?.url || seenUrls.has(s.url)) continue;
+    seenUrls.add(s.url);
+    candidateServers.push(s);
+  }
+  if (ch.streamUrl && !seenUrls.has(ch.streamUrl)) {
+    seenUrls.add(ch.streamUrl);
+    candidateServers.unshift({
+      name: `${ch.name} (${ch.quality || 'HD'})`,
+      url: ch.streamUrl,
+      type: 'hls',
+      language: 'En Vivo',
+      referrer: ch.referrer ?? null,
+      userAgent: ch.userAgent ?? null,
+    });
+  }
+
+  // Intentar promover espejos de iptv-org solo si coinciden en identidad y pasan filtro anti-basura
+  const rejectedLogs: string[] = [];
+  for (const cand of extraCandidates) {
+    if (!cand?.streamUrl || seenUrls.has(cand.streamUrl)) continue;
+    const promoCheck = canPromoteCandidateToVerified(ch, cand);
+    if (!promoCheck.ok) {
+      rejectedLogs.push(`iptv-org(${cand.name}): ${promoCheck.reason}`);
+      continue;
+    }
+    seenUrls.add(cand.streamUrl);
+    candidateServers.push({
+      name: `${cand.name} (iptv-org ${cand.quality || 'HD'})`,
+      url: cand.streamUrl,
+      type: 'hls',
+      language: 'En Vivo',
+      referrer: cand.referrer ?? null,
+      userAgent: cand.userAgent ?? null,
+    });
+  }
+
+  const trustedMirrors: Array<{ srv: StreamServer; score: number; reason: string }> = [];
+  for (const srv of candidateServers) {
+    const trust = assessMirrorTrust(ch, srv);
+    if (!trust.trusted) {
+      rejectedLogs.push(`${srv.name} [${srv.url}]: ${trust.reason}`);
+      continue;
+    }
+    trustedMirrors.push({ srv, score: trust.score, reason: trust.reason });
+  }
+
+  // Priorizar espejos cuyo path/host coincida mejor con el canal
+  trustedMirrors.sort((a, b) => b.score - a.score);
+
+  if (trustedMirrors.length === 0) {
+    console.log(
+      `[Sports Validator] Canal "${ch.name}" (${ch.id}): OFFLINE (sin mirrors confiables)` +
+        (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
+    );
+    return null;
+  }
+
+  const mirrorResults = await Promise.all(
+    trustedMirrors.map(async (entry) => {
+      const ok = await validateHlsStream(entry.srv.url, 2500, {
+        referrer: entry.srv.referrer ?? ch.referrer,
+        userAgent: entry.srv.userAgent ?? ch.userAgent,
+      });
+      if (!ok) {
+        rejectedLogs.push(`${entry.srv.name}: stream caído o HTML/no-HLS`);
+      }
+      return ok ? entry : null;
+    })
+  );
+
+  const aliveEntries = mirrorResults.filter(
+    (entry): entry is { srv: StreamServer; score: number; reason: string } => Boolean(entry)
+  );
+  if (aliveEntries.length === 0) {
+    console.log(
+      `[Sports Validator] Canal "${ch.name}" (${ch.id}): OFFLINE (ningún mirror confiable respondió #EXTM3U)` +
+        (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
+    );
+    return null;
+  }
+
+  const primaryEntry = aliveEntries[0]!;
+  const primary = primaryEntry.srv;
+  console.log(
+    `[Sports Validator] Canal "${ch.name}" (${ch.id}): ELEGIDO "${primary.name}" -> ${primary.url} (score=${primaryEntry.score}, motivo=${primaryEntry.reason})` +
+      (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
+  );
+
+  return {
+    ...ch,
+    streamUrl: primary.url,
+    referrer: primary.referrer ?? ch.referrer ?? null,
+    userAgent: primary.userAgent ?? ch.userAgent ?? null,
+    servers: aliveEntries.map((e) => e.srv),
+    isOnline: true,
+    lastVerified: Date.now(),
+  };
+}
+
+function toBaseVerifiedChannels(): ParsedSportsChannel[] {
+  return VERIFIED_SPORTS_CHANNELS.map((ch) => ({
+    id: ch.id,
+    name: ch.name,
+    logo: ch.logo,
+    streamUrl: ch.streamUrl,
+    country: ch.country,
+    countryName: ch.countryName || ch.country,
+    countryFlag: ch.countryFlag || '📺',
+    quality: ch.quality || 'HD',
+    category: ch.category || 'Fútbol & Deportes en Vivo',
+    isOnline: false,
+    referrer: ch.referrer ?? null,
+    userAgent: ch.userAgent ?? null,
+    servers: ch.servers,
+  }));
+}
+
 export async function getValidatedSportsChannels(
   basePayload: SportsChannelsPayload,
   cacheDir?: string,
-  maxToValidate = 60
+  maxDynamicToValidate = 20,
+  forceRefresh = false
 ): Promise<SportsChannelsPayload> {
   const now = Date.now();
-  if (inMemoryValidatedCache && now - lastValidatedTime < VALIDATED_CACHE_TTL_MS) {
+  if (
+    !forceRefresh &&
+    inMemoryValidatedCache &&
+    inMemoryValidatedCache.validatorVersion === SPORTS_VALIDATOR_VERSION &&
+    now - lastValidatedTime < VALIDATED_CACHE_TTL_MS
+  ) {
     return inMemoryValidatedCache;
   }
 
   const diskCacheFile = cacheDir ? path.join(cacheDir, 'iptv_sports_validated.json') : null;
-  if (diskCacheFile && fs.existsSync(diskCacheFile)) {
+  if (!forceRefresh && diskCacheFile && fs.existsSync(diskCacheFile)) {
     try {
       const stats = fs.statSync(diskCacheFile);
       if (now - stats.mtimeMs < VALIDATED_CACHE_TTL_MS) {
         const parsed = JSON.parse(fs.readFileSync(diskCacheFile, 'utf8')) as SportsChannelsPayload;
-        if (parsed && Array.isArray(parsed.channels) && parsed.channels.length > 0) {
+        if (
+          parsed &&
+          Array.isArray(parsed.channels) &&
+          parsed.validated === true &&
+          parsed.validatorVersion === SPORTS_VALIDATOR_VERSION
+        ) {
           inMemoryValidatedCache = parsed;
           lastValidatedTime = stats.mtimeMs;
           return parsed;
@@ -211,53 +423,105 @@ export async function getValidatedSportsChannels(
     } catch (_) {}
   }
 
-  const candidates = basePayload.channels.slice(0, maxToValidate);
-  const validatedChannels: ParsedSportsChannel[] = [];
-  const BATCH_SIZE = 10;
-
-  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-    const batch = candidates.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(async (ch) => {
-        const ok = await validateHlsStream(ch.streamUrl, 3000);
-        return ok ? ch : null;
-      })
-    );
-    for (const ch of results) {
-      if (ch) validatedChannels.push(ch);
-    }
+  if (!forceRefresh && validatedInFlightPromise) {
+    return validatedInFlightPromise;
   }
 
-  const payload: SportsChannelsPayload = {
-    updatedAt: new Date().toISOString(),
-    source: 'iptv-org (sports.m3u - validated)',
-    total: validatedChannels.length,
-    channels: validatedChannels,
+  const runValidation = async (): Promise<SportsChannelsPayload> => {
+    const verifiedBase = toBaseVerifiedChannels();
+    const verifiedBaseIds = new Set(verifiedBase.map((c) => c.id.split('.')[0].toLowerCase()));
+    const deadSet = getDeadSportsUrls();
+
+    const rawIptv = (basePayload.channels || []).filter((ch) => ch.streamUrl && !deadSet.has(ch.streamUrl));
+
+    // Agrupar candidatos IPTV potencialmente promovibles por canal curado (solo mismos canales, nunca TNT Novelas/Series)
+    const promotedMap = new Map<string, ParsedSportsChannel[]>();
+    for (const verifiedCh of verifiedBase) {
+      const matching = rawIptv.filter((cand) => canPromoteCandidateToVerified(verifiedCh, cand).ok);
+      if (matching.length > 0) {
+        promotedMap.set(verifiedCh.id, matching);
+      }
+    }
+
+    // Filtrado anti-basura para canales dinámicos adicionales de iptv-org
+    const seenDynamicUrls = new Set<string>();
+    const dynamicCandidates: ParsedSportsChannel[] = [];
+    for (const ch of rawIptv) {
+      const baseId = (ch.id || '').split('.')[0].split('@')[0].toLowerCase();
+      if (verifiedBaseIds.has(baseId)) continue;
+      if (seenDynamicUrls.has(ch.streamUrl)) continue;
+      const candCheck = isTrustworthyIptvCandidate(ch);
+      if (!candCheck.ok) {
+        continue;
+      }
+      seenDynamicUrls.add(ch.streamUrl);
+      dynamicCandidates.push(ch);
+      if (dynamicCandidates.length >= maxDynamicToValidate) break;
+    }
+
+    const validatedChannels: ParsedSportsChannel[] = [];
+    const BATCH_SIZE = 40;
+
+    const tasks: Array<{ ch: ParsedSportsChannel; extra: ParsedSportsChannel[] }> = [
+      ...verifiedBase.map((ch) => ({ ch, extra: promotedMap.get(ch.id) || [] })),
+      ...dynamicCandidates.map((ch) => ({ ch, extra: [] })),
+    ];
+
+    for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+      const batch = tasks.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map((t) => probeChannelWithMirrors(t.ch, t.extra))
+      );
+      for (const ch of results) {
+        if (ch) validatedChannels.push(ch);
+      }
+    }
+
+    const sortedChannels = rankSportsChannels(validatedChannels);
+
+    const payload: SportsChannelsPayload = {
+      updatedAt: new Date().toISOString(),
+      source: 'verified+iptv-org (validated)',
+      total: sortedChannels.length,
+      validated: true,
+      validatorVersion: SPORTS_VALIDATOR_VERSION,
+      cacheTtlMs: VALIDATED_CACHE_TTL_MS,
+      channels: sortedChannels,
+    };
+
+    inMemoryValidatedCache = payload;
+    lastValidatedTime = Date.now();
+
+    if (diskCacheFile) {
+      try {
+        fs.mkdirSync(path.dirname(diskCacheFile), { recursive: true });
+        fs.writeFileSync(diskCacheFile, JSON.stringify(payload, null, 2), 'utf8');
+      } catch (_) {}
+    }
+
+    return payload;
   };
 
-  inMemoryValidatedCache = payload;
-  lastValidatedTime = now;
-
-  if (diskCacheFile) {
-    try {
-      fs.mkdirSync(path.dirname(diskCacheFile), { recursive: true });
-      fs.writeFileSync(diskCacheFile, JSON.stringify(payload, null, 2), 'utf8');
-    } catch (_) {}
+  if (forceRefresh) {
+    return runValidation();
   }
 
-  return payload;
+  validatedInFlightPromise = runValidation().finally(() => {
+    validatedInFlightPromise = null;
+  });
+  return validatedInFlightPromise;
 }
 
 export async function getOrFetchSportsChannels(
   cacheDir?: string,
   forceRefresh = false,
-  validate = false
+  validate = true
 ): Promise<SportsChannelsPayload> {
   const now = Date.now();
 
   if (!forceRefresh && inMemoryChannelsCache && now - lastCacheTime < CACHE_TTL_MS) {
     if (validate) {
-      return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir);
+      return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir, 20, false);
     }
     return inMemoryChannelsCache;
   }
@@ -277,7 +541,7 @@ export async function getOrFetchSportsChannels(
           inMemoryChannelsCache = parsed;
           lastCacheTime = stats.mtimeMs;
           if (validate) {
-            return await getValidatedSportsChannels(parsed, cacheDir);
+            return await getValidatedSportsChannels(parsed, cacheDir, 20, false);
           }
           return parsed;
         }
@@ -326,13 +590,13 @@ export async function getOrFetchSportsChannels(
     }
 
     if (validate) {
-      return await getValidatedSportsChannels(payload, cacheDir);
+      return await getValidatedSportsChannels(payload, cacheDir, 20, forceRefresh);
     }
     return payload;
   } catch (err) {
     if (inMemoryChannelsCache) {
       if (validate) {
-        return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir);
+        return await getValidatedSportsChannels(inMemoryChannelsCache, cacheDir, 20, forceRefresh);
       }
       return inMemoryChannelsCache;
     }
@@ -341,11 +605,20 @@ export async function getOrFetchSportsChannels(
         const parsed = JSON.parse(fs.readFileSync(diskCacheFile, 'utf8')) as SportsChannelsPayload;
         if (parsed?.channels) {
           if (validate) {
-            return await getValidatedSportsChannels(parsed, cacheDir);
+            return await getValidatedSportsChannels(parsed, cacheDir, 20, forceRefresh);
           }
           return parsed;
         }
       } catch (_) {}
+    }
+    if (validate) {
+      const emptyBase: SportsChannelsPayload = {
+        updatedAt: new Date().toISOString(),
+        source: 'verified (iptv-org unavailable)',
+        total: 0,
+        channels: [],
+      };
+      return await getValidatedSportsChannels(emptyBase, cacheDir, 0, forceRefresh);
     }
     throw err;
   }

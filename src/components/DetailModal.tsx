@@ -14,6 +14,7 @@ import {
   Youtube
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
+import { sanitizeCardTitle } from '../services/catalogCache';
 import { deviceSync } from '../services/deviceSync';
 import { generateServersForMedia } from '../services/embedService';
 import { Episode, MediaItem } from '../types';
@@ -81,13 +82,14 @@ export const DetailModal: React.FC<DetailModalProps> = ({
   });
 
   const toggleMarathonMode = () => {
-    setMarathonMode((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('cinecast_marathon_mode', String(next));
-      } catch (_) { }
-      return next;
-    });
+    const next = !marathonMode;
+    try {
+      localStorage.setItem('cinecast_marathon_mode', String(next));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('cinecast:marathon', { detail: { enabled: next } }));
+      }
+    } catch (_) { }
+    setMarathonMode(next);
   };
 
   // Cargar detalles completos desde /api/media/:type/:id
@@ -236,7 +238,14 @@ export const DetailModal: React.FC<DetailModalProps> = ({
     }, 900);
   };
 
-  const effectiveTitle = detailedData?.titleEs || media.titleEs || media.originalTitle || detailedData?.title || media.title;
+  const effectiveTitle =
+    sanitizeCardTitle(detailedData?.titleEs) ||
+    sanitizeCardTitle(detailedData?.title) ||
+    sanitizeCardTitle(media.titleEs) ||
+    sanitizeCardTitle(media.title) ||
+    sanitizeCardTitle(detailedData?.originalTitle) ||
+    sanitizeCardTitle(media.originalTitle) ||
+    'Título no disponible';
   const effectiveOriginalTitle = detailedData?.originalTitle || media.originalTitle;
   const effectiveOverview = detailedData?.overview || media.overview;
   const effectiveDirector = detailedData?.director || media.creatorOrDirector;

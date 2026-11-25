@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Eye, EyeOff,
   FastForward,
+  Info,
   Maximize, Minimize,
   Pause,
   Play,
@@ -14,6 +15,7 @@ import {
   Server,
   SkipForward,
   Sliders,
+  Tv,
   Volume2, VolumeX,
   X
 } from 'lucide-react';
@@ -22,10 +24,11 @@ import { ResumeController, type ResumeState } from '../app/resumeController';
 import { globalAudioEngine } from '../services/audioEngine';
 import { audioPrefs, normalizeVolume01 } from '../services/audioPrefs';
 import { diagnosticService } from '../services/diagnosticService';
-import { applyProviderRanking, extractCleanRouteAndEp, generateServersForMedia } from '../services/embedService';
+import { applyProviderRanking, extractCleanRouteAndEp, filterSpanishOnlyServers, generateServersForMedia } from '../services/embedService';
+import { iptvService } from '../services/iptvService';
 import { reportServerPlaybackPenalty, resolveServerPlay } from '../services/resolveService';
 import { watchHistoryService } from '../services/watchHistoryService';
-import { AudioSettings, Episode, MediaItem, PlaybackSettings, RemoteCommand, StreamServer } from '../types';
+import { AudioSettings, Episode, LiveSportsChannel, MediaItem, PlaybackSettings, RemoteCommand, StreamServer } from '../types';
 
 interface VideoPlayerProps {
   media: MediaItem;
@@ -38,12 +41,15 @@ interface VideoPlayerProps {
   onPrevEpisode?: () => void;
   hasNextEpisode?: boolean;
   onRequestEpisodeChange?: (targetSeason: number, targetEpisode: number) => void;
+  onSwitchLiveChannel?: (channelMedia: MediaItem) => void;
   onBroadcastState?: (stateUpdate: any) => void;
   remoteCommandNotification?: string | null;
   onOpenAudioSettings?: () => void;
   remoteCommandTrigger?: { cmd: RemoteCommand; timestamp: number } | null;
   initialTime?: number;
   onBeforeAutoAdvance?: (chapterKey: string) => boolean;
+  onOpenDetail?: (media: MediaItem) => void;
+  isDetailOpen?: boolean;
 }
 
 const FALLBACK_SRC = 'https://vjs.zencdn.net/v/oceans.mp4';
@@ -155,6 +161,8 @@ const WebViewPlayer: React.FC<WebViewPlayerProps> = ({
     // Detecta si Cloudflare o un error de red bloquea la carga
     const handleFailLoad = (event: any) => {
       if (event.errorCode === -3) return; // ERR_ABORTED normal al navegar
+      // Subframes (anuncios bloqueados / redirects cancelados de terceros) no son fallo del embed
+      if (event.isMainFrame === false) return;
       const desc = String(event.errorDescription || '');
       if (
         desc.includes('GUEST_VIEW_MANAGER_CALL') ||
@@ -354,6 +362,16 @@ function normalizeServerUrl(rawUrl: string): string {
   }
 }
 
+async function readMmPlay(r: Response, ctx: string): Promise<any | null> {
+  if (r.ok) return r.json();
+  let body = '';
+  try {
+    body = (await r.text()).slice(0, 500);
+  } catch (_) { }
+  console.error(`[MM] /api/mm/play FALLO (${ctx}) status=${r.status} body=${body}`);
+  return null;
+}
+
 function deduplicateServers(servers: StreamServer[], episodeKey: string = ''): StreamServer[] {
   const uniqueMap = new Map<string, StreamServer>();
   for (const srv of servers) {
@@ -385,9 +403,9 @@ function deduplicateServers(servers: StreamServer[], episodeKey: string = ''): S
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   media, episode, audioSettings, playbackSettings, onUpdateAudio, onClose,
-  onNextEpisode, onPrevEpisode, hasNextEpisode = false, onRequestEpisodeChange, onBroadcastState,
-  remoteCommandNotification, onOpenAudioSettings, remoteCommandTrigger, initialTime = 0,
-  onBeforeAutoAdvance,
+  onNextEpisode, onPrevEpisode, hasNextEpisode = false, onRequestEpisodeChange, onSwitchLiveChannel,
+  onBroadcastState, remoteCommandNotification, onOpenAudioSettings, remoteCommandTrigger, initialTime = 0,
+  onBeforeAutoAdvance, onOpenDetail, isDetailOpen = false,
 }) => {
   const autoAdvancedChapterGuardRef = useRef<string | null>(null);
   const tryAutoAdvanceEpisodeRef = useRef<(() => void) | null>(null);
@@ -507,9 +525,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   showControlsRef.current = showControls;
   isTopBarHiddenRef.current = isTopBarHidden;
 
+  // Pausar video HTML5 al abrir la ficha desde el reproductor (sin destruir el estado)
+  useEffect(() => {
+    if (isDetailOpen && videoRef.current && !videoRef.current.paused) {
+      try {
+        videoRef.current.pause();
+      } catch (_) {}
+    }
+  }, [isDetailOpen]);
+
   // B5: Atajos de teclado en window con capture:true (H abre/cierra panel, N siguiente, P anterior, Escape salir)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isDetailOpen) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -554,7 +582,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [setTopBarHiddenPersisted, onClose, isEpisodic]);
+  }, [setTopBarHiddenPersisted, onClose, isEpisodic, isDetailOpen]);
 
   // Tarea A: Extracción robusta de TMDB ID que soporta tmdb-series-1418_s1_e15, slugs y números
   const tmdbIdToUse = useMemo(() => {
@@ -609,6 +637,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const mmRemintAttemptedKeyRef = useRef<string | null>(null);
   const mmRemintInFlightRef = useRef<boolean>(false);
   const pendingMmReseekTimeRef = useRef<number>(0);
+  const isAdvancingEpisodeRef = useRef<boolean>(false);
 
   const getServerEpisodeKey = useCallback((srv?: StreamServer | null) => {
     const idPart = (srv as any)?.providerId || (srv as any)?.id || srv?.name || 'unknown';
@@ -617,6 +646,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const serversEpochRef = useRef<number>(0);
   const [serversEpoch, setServersEpoch] = useState<number>(0);
   const [resolvedServers, setResolvedServers] = useState<StreamServer[] | null>(null);
+  // true = MovieMaster confirmo que este titulo/episodio NO tiene audio Latino ni Castellano
+  const [noSpanishAudio, setNoSpanishAudio] = useState<boolean>(false);
   const [forceShowServerSelector, setForceShowServerSelector] = useState<boolean>(false);
   const [isGhostExtracting, setIsGhostExtracting] = useState<boolean>(false);
   const [captchaRequired, setCaptchaRequired] = useState<boolean>(false);
@@ -684,7 +715,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const hasHlsFav = useMemo(() => {
     if (tmdbIdToUse <= 0) return false;
     const pref = getPersistedSuccessServer(media, isSeriesOrAnime ? 'series' : 'movie');
-    return Boolean(pref && (pref.playable === 'hls' || pref.type === 'hls'));
+    const isMm = Boolean(
+      pref &&
+      ((pref as any).providerId === 'moviemaster' ||
+        String(pref.id || '').startsWith('mm-') ||
+        (pref.name || '').toLowerCase().includes('moviemaster'))
+    );
+    return Boolean(!isMm && pref && (pref.playable === 'hls' || pref.type === 'hls'));
   }, [media, tmdbIdToUse, isSeriesOrAnime]);
 
   const availableServers: StreamServer[] = useMemo(() => {
@@ -713,8 +750,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     // 1. Si resolveService o Direct HLS ya resolvió servidores para este título con TMDB
-    if (tmdbIdToUse > 0 && resolvedServers !== null && resolvedServers.length > 0) {
-      return deduplicateServers(resolvedServers, episodeKey);
+    // Peliculas/series: solo audio Latino o Castellano (anime conserva latino + subs).
+    const spanishResolved =
+      resolvedServers && !isAnime ? filterSpanishOnlyServers(resolvedServers, 'player.resolvedServers') : resolvedServers;
+    if (tmdbIdToUse > 0 && spanishResolved !== null && spanishResolved.length > 0) {
+      return deduplicateServers(spanishResolved, episodeKey);
     }
 
     // 2. Para series o anime con TMDB: regenerar siempre con la temporada y episodio seleccionados
@@ -726,6 +766,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         type: isAnime ? 'anime' : 'series',
         season: selectedSeason,
         episode: selectedEpisode,
+        skipMmHls: noSpanishAudio,
       });
     }
 
@@ -741,6 +782,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         type: 'movie',
         season: selectedSeason,
         episode: selectedEpisode,
+        skipMmHls: noSpanishAudio,
       });
     }
 
@@ -754,7 +796,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       type: isEmbed ? 'iframe' : 'mp4',
       language: 'Principal',
     }];
-  }, [media, episode, currentVideoUrl, isSeriesOrAnime, tmdbIdToUse, selectedSeason, selectedEpisode, resolvedServers]);
+  }, [media, episode, currentVideoUrl, isSeriesOrAnime, tmdbIdToUse, selectedSeason, selectedEpisode, resolvedServers, noSpanishAudio]);
 
   const [selectedServerName, setSelectedServerName] = useState<string>(() => {
     if (tmdbIdToUse > 0) return '';
@@ -1013,21 +1055,72 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setIsResolving(true);
     }
 
-    const loadTraditionalServers = () => {
-      const persisted = getPersistedSuccessServer(media, resolveType);
-      const hasHlsFav = Boolean(persisted && (persisted.playable === 'hls' || persisted.type === 'hls'));
-      const nonMmTraditional = generateServersForMedia({
+    let mmMintFailed = false;
+    let mmSpanishVerified = false;
+    setNoSpanishAudio(false);
+    const buildTraditionalSplit = () => {
+      const generated = generateServersForMedia({
         tmdbId: tmdbIdToUse,
         title: media.title,
         type: resolveType === 'anime' ? 'anime' : resolveType,
         season: selectedSeason,
         episode: selectedEpisode,
-      }).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
+        includeMmEmbed: mmSpanishVerified,
+      }).filter((s) => s.id !== 'direct-hls');
+      const unmintedMm = mmMintFailed
+        ? []
+        : generated.filter((s) => (s as any).providerId === 'moviemaster' && !s.url);
+      const nonMm = generated.filter(
+        (s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url)
+      );
+      return { unmintedMm, nonMm };
+    };
+
+    const mergePreservingMovieMaster = (
+      workingServers: StreamServer[],
+      existingServers: StreamServer[] = []
+    ): StreamServer[] => {
+      const { unmintedMm, nonMm } = buildTraditionalSplit();
+      const preservedUnmintedMm: StreamServer[] = [...unmintedMm];
+      const nonMmExisting = (existingServers || []).filter((s) => {
+        if ((s as any).providerId === 'moviemaster' && !s.url) {
+          preservedUnmintedMm.push(s);
+          return false;
+        }
+        return true;
+      });
+      const workingNonUnmintedMm = (workingServers || []).filter((s) => {
+        if ((s as any).providerId === 'moviemaster' && !s.url) {
+          preservedUnmintedMm.push(s);
+          return false;
+        }
+        return true;
+      });
+      const rankedWorking = applyProviderRanking([
+        ...workingNonUnmintedMm,
+        ...nonMmExisting,
+        ...nonMm,
+      ]);
+      // Si el acuñado ya fallo, no se ofrece MovieMaster con url vacia: quedan los fallbacks Latino/ES reales
+      return deduplicateServers([...rankedWorking, ...(mmMintFailed ? [] : preservedUnmintedMm)], episodeKey);
+    };
+
+    const loadTraditionalServers = () => {
+      const persisted = getPersistedSuccessServer(media, resolveType);
+      const persistedIsMm = Boolean(
+        persisted &&
+        ((persisted as any).providerId === 'moviemaster' ||
+          String(persisted.id || '').startsWith('mm-') ||
+          (persisted.name || '').toLowerCase().includes('moviemaster'))
+      );
+      const hasHlsFav = Boolean(
+        !persistedIsMm && persisted && (persisted.playable === 'hls' || persisted.type === 'hls')
+      );
+      const { nonMm: nonMmTraditional } = buildTraditionalSplit();
 
       setResolvedServers((prev) => {
         if (serversEpochRef.current !== epoch) return prev;
-        const validPrev = (prev || []).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
-        return deduplicateServers(applyProviderRanking([...validPrev, ...nonMmTraditional]), episodeKey);
+        return mergePreservingMovieMaster([], prev || []);
       });
 
       if (hasHlsFav) {
@@ -1045,12 +1138,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         setIsResolving(false);
       }
 
-      console.log(`[VideoPlayer] Solicitando /api/resolve/play para "${currentTitle}" (tmdbId=${tmdbIdToUse}, tipo=${resolveType}, lang=latino, preferredId=${persisted?.id})...`);
+      const preferredIdForResolve = persistedIsMm ? undefined : persisted?.id;
+      const preferredNameForResolve = persistedIsMm ? undefined : persisted?.name;
+      console.log(`[VideoPlayer] Solicitando /api/resolve/play para "${currentTitle}" (tmdbId=${tmdbIdToUse}, tipo=${resolveType}, lang=latino, preferredId=${preferredIdForResolve})...`);
 
       resolveServerPlay({
-        providerId: (persisted as any)?.providerId || 'vidlink.pro',
-        preferredServerId: persisted?.id,
-        preferredServerName: persisted?.name,
+        providerId: persistedIsMm ? 'vidlink.pro' : ((persisted as any)?.providerId || 'vidlink.pro'),
+        preferredServerId: preferredIdForResolve,
+        preferredServerName: preferredNameForResolve,
         params: {
           type: resolveType,
           tmdbId: tmdbIdToUse,
@@ -1085,9 +1180,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
             setResolvedServers((prev) => {
               if (serversEpochRef.current !== epoch) return prev;
-              const validPrev = (prev || []).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
-              const combined = applyProviderRanking([...mapped, ...validPrev, ...nonMmTraditional]);
-              return deduplicateServers(combined, episodeKey);
+              return mergePreservingMovieMaster(mapped, prev || []);
             });
 
             const freshlyAcuñado: StreamServer = {
@@ -1125,7 +1218,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             if (serversEpochRef.current === epoch) {
               setIsResolving(false);
               if (!playRes?.servers?.length) {
-                setResolvedServers(deduplicateServers(nonMmTraditional, episodeKey));
+                setResolvedServers((prev) =>
+                  serversEpochRef.current !== epoch ? prev : mergePreservingMovieMaster([], prev || [])
+                );
               }
             }
           }
@@ -1133,7 +1228,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         .catch((err) => {
           if (!isMounted || serversEpochRef.current !== epoch) return;
           setIsResolving(false);
-          setResolvedServers(deduplicateServers(nonMmTraditional, episodeKey));
+          setResolvedServers((prev) =>
+            serversEpochRef.current !== epoch ? prev : mergePreservingMovieMaster([], prev || [])
+          );
           console.warn(`[VideoPlayer] Excepción en /api/resolve/play:`, err?.message);
         });
     };
@@ -1158,20 +1255,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               validated: true,
             };
             setDirectCaptions(Array.isArray(data.captions) ? data.captions : []);
-            const traditionalServers = generateServersForMedia({
-              tmdbId: tmdbIdToUse,
-              title: media.title,
-              type: resolveType === 'anime' ? 'anime' : resolveType,
-              season: selectedSeason,
-              episode: selectedEpisode,
-            }).filter((s) => s.id !== 'direct-hls' && ((s as any).providerId !== 'moviemaster' || Boolean(s.url)));
             setSelectedServerName(directSrv.name);
             setVideoSrc(data.url);
             setResolvedServers((prev) => {
               if (serversEpochRef.current !== epoch) return prev;
-              const validPrev = (prev || []).filter((s) => (s as any).providerId !== 'moviemaster' || Boolean(s.url));
-              const combined = applyProviderRanking([directSrv, ...validPrev, ...traditionalServers]);
-              return deduplicateServers(combined, episodeKey);
+              return mergePreservingMovieMaster([directSrv], prev || []);
             });
             setIsResolving(false);
             setIsPlaying(true);
@@ -1190,13 +1278,45 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
     loadDirectStreamRef.current = loadDirectStream;
 
+    // Acuñado HLS fallido: solo se ofrece el embed de MovieMaster si la lista realmente trae Latino/Castellano.
+    // Si solo hay subtitulado/EN, se avisa claro y NO se finge Latino.
+    const handleMmUnavailable = (reason: string) => {
+      mmMintFailed = true;
+      const qs = `tmdb=${tmdbIdToUse}&type=${directType}&season=${selectedSeason}&episode=${selectedEpisode}`;
+      fetch(`/api/mm/servers?${qs}`, { signal: abortController.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!isMounted || serversEpochRef.current !== epoch) return;
+          const langs: string[] = Array.isArray(d?.servers) ? d.servers.map((x: any) => String(x.lang)) : [];
+          const hasEs = langs.some((l) => l === 'latino' || l === 'castellano');
+          console.warn(`[MM] sin acuñado (${reason}) tmdb=${tmdbIdToUse} s${selectedSeason}e${selectedEpisode} langs=[${langs.join(',')}] latino/castellano=${hasEs}`);
+          if (hasEs) {
+            mmSpanishVerified = true;
+          } else if (langs.length > 0) {
+            // Confirmado: MovieMaster respondio lista real pero solo tiene subtitulado/EN
+            setNoSpanishAudio(true);
+            triggerSignalToast('Este episodio no tiene audio Latino/Castellano en MovieMaster');
+          } else {
+            // Lista vacia por error/timeout de red: permitir fallback embed Latino en vez de mentir que es solo ingles
+            mmSpanishVerified = true;
+            triggerSignalToast('MovieMaster demoró en responder, abriendo reproductor alternativo...');
+          }
+          loadTraditionalServers();
+        })
+        .catch(() => {
+          if (!isMounted || serversEpochRef.current !== epoch) return;
+          console.warn(`[MM] sin acuñado (${reason}) y no se pudo verificar idiomas`);
+          loadTraditionalServers();
+        });
+    };
+
     const loadMovieMasterDirect = () => {
       const mmDeadlineController = new AbortController();
       let deadlineExpired = false;
       const deadlineTimer = setTimeout(() => {
         deadlineExpired = true;
         mmDeadlineController.abort();
-      }, 9500);
+      }, 15000);
       const onParentAbort = () => mmDeadlineController.abort();
       abortController.signal.addEventListener('abort', onParentAbort, { once: true });
 
@@ -1208,14 +1328,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           type: directType,
           season: selectedSeason,
           episode: selectedEpisode,
+          lang: 'latino',
+          onlyLangs: ['latino', 'castellano'],
         }),
         signal: mmDeadlineController.signal,
       })
-        .then(async (r) => (r.ok ? r.json() : null))
+        .then((r) => readMmPlay(r, 'inicial'))
         .then((mmData) => {
           clearTimeout(deadlineTimer);
           abortController.signal.removeEventListener('abort', onParentAbort);
           if (!isMounted || serversEpochRef.current !== epoch) return;
+          if (mmData?.manifestUrl && mmData.lang === 'subtitulado') {
+            console.warn('[MM] Solo hay audio subtitulado: se descarta en peliculas/series.');
+            handleMmUnavailable('solo subtitulado');
+            return;
+          }
           if (mmData?.manifestUrl) {
             console.log(
               `[MM] lang=${mmData.lang} srv=${mmData.serverName} segs=${mmData.segs} dur=${mmData.durationSec}`
@@ -1225,10 +1352,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             const mapAudioLangs = (l: string) =>
               l === 'castellano' ? ['es'] : l === 'subtitulado' ? ['sub'] : ['latino'];
 
-            const rawList: Array<{ id?: string; name: string; lang: string; site?: string }> =
+            const rawListAll: Array<{ id?: string; name: string; lang: string; site?: string }> =
               Array.isArray(mmData.servers) && mmData.servers.length > 0
                 ? mmData.servers
                 : [{ id: `mm-minted-${tmdbIdToUse}`, name: mmData.serverName || 'Servidor 1', lang: mmData.lang || 'latino' }];
+            // Nunca ofrecer MovieMaster subtitulado en peliculas/series
+            const rawList = rawListAll.filter((x) => x.lang === 'latino' || x.lang === 'castellano');
 
             let mintedAssigned = false;
             const mmServers: StreamServer[] = rawList.map((s, idx) => {
@@ -1254,9 +1383,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               } as any;
             });
 
-            if (!mintedAssigned && mmServers.length > 0) {
-              mmServers[0].url = mmData.manifestUrl;
-              (mmServers[0] as any).validated = true;
+            if (!mintedAssigned) {
+              // El acuñado no coincide con ningun item de la lista: se agrega como item propio (con su idioma real)
+              // en vez de pisarle la url a un servidor de otro idioma.
+              const lbl = mapLangLabel(mmData.lang);
+              mmServers.unshift({
+                id: `mm-minted-${tmdbIdToUse}-${selectedSeason}-${selectedEpisode}`,
+                providerId: 'moviemaster',
+                name: `MovieMaster ${mmData.serverName || 'Servidor 1'} (${lbl})`,
+                mmServerName: mmData.serverName,
+                mmLang: mmData.lang,
+                url: mmData.manifestUrl,
+                type: 'hls',
+                playable: 'hls',
+                language: lbl,
+                audioLangs: mapAudioLangs(mmData.lang),
+                validated: true,
+                durationSec: mmData.durationSec,
+              } as any);
             }
 
             const mintedSrv = mmServers.find((s) => Boolean(s.url)) || mmServers[0];
@@ -1283,17 +1427,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             return;
           }
 
-          // MovieMaster sin servidores para este título -> caer a otros HLS y luego embeds
-          loadDirectStream();
+          // MovieMaster sin servidores Latino/Castellano -> resolver (solo ES) en vez de ofrecer streams EN
+          handleMmUnavailable('sin manifest');
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error('[MM] /api/mm/play excepcion/timeout (inicial):', err?.message || err);
+          mmMintFailed = true;
           clearTimeout(deadlineTimer);
           abortController.signal.removeEventListener('abort', onParentAbort);
           if (!isMounted || serversEpochRef.current !== epoch) return;
           if (deadlineExpired) {
             console.log('[MM] abortado por deadline');
           }
-          loadDirectStream();
+          handleMmUnavailable('excepcion/timeout');
         });
     };
 
@@ -1369,6 +1515,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const [tvSignalDown, setTvSignalDown] = useState<boolean>(false);
   const [allServersExhausted, setAllServersExhausted] = useState<boolean>(false);
+  const isLiveTv = media.category === 'live_tv';
+  const [liveChannelsList, setLiveChannelsList] = useState<LiveSportsChannel[]>([]);
+  const [showLiveChannelDrawer, setShowLiveChannelDrawer] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isLiveTv) return;
+    let active = true;
+    iptvService
+      .getSportsChannels()
+      .then((channels) => {
+        if (active && Array.isArray(channels)) {
+          setLiveChannelsList(channels);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [isLiveTv]);
   const autoSkipCountRef = useRef<number>(0);
   const consecutiveUnavailableCountRef = useRef<number>(0);
   const iframeLoadedAtRef = useRef<number>(Date.now());
@@ -1704,14 +1869,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   });
 
   const toggleMarathonMode = () => {
-    setMarathonMode((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('cinecast_marathon_mode', String(next));
-      } catch (_) { }
-      triggerSignalToast(next ? '🏃 Modo Maratón ACTIVADO' : 'Modo Maratón Desactivado');
-      return next;
-    });
+    const next = !marathonMode;
+    try {
+      localStorage.setItem('cinecast_marathon_mode', String(next));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('cinecast:marathon', { detail: { enabled: next } }));
+      }
+    } catch (_) { }
+    setMarathonMode(next);
+    triggerSignalToast(next ? '🏃 Modo Maratón ACTIVADO' : 'Modo Maratón Desactivado');
   };
 
   useEffect(() => {
@@ -1814,6 +1980,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setIframeReloadKey((k) => k + 1);
     }
     prevEpisodeKeyRef.current = nextEpisodeKey;
+    isAdvancingEpisodeRef.current = false;
+    if (hlsErrorTimeoutRef.current) {
+      clearTimeout(hlsErrorTimeoutRef.current);
+      hlsErrorTimeoutRef.current = null;
+    }
     setCurrentTime(0);
     setHasAutoSkippedIntro(false);
     setCountdownToNext(null);
@@ -1866,6 +2037,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setVideoSrc(activeServer.url);
     }
   }, [activeServer]);
+
+  // ── Cambio de canal en vivo sin desmontar el reproductor (PC) ────────────
+  useEffect(() => {
+    if (!isLiveTv) return;
+    const primarySrv = media.servers?.[0];
+    const nextUrl = primarySrv?.url || media.videoUrl || '';
+    if (primarySrv?.name) {
+      setSelectedServerName(primarySrv.name);
+    } else if (media.title) {
+      setSelectedServerName(media.title);
+    }
+    if (nextUrl) {
+      setVideoSrc(nextUrl);
+    }
+    setTvSignalDown(false);
+    setAllServersExhausted(false);
+    setUnavailableWarning(false);
+    setFallbackActive(false);
+    setIsPlaying(true);
+  }, [isLiveTv, media.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSwitchChannelInPlace = useCallback(
+    (ch: LiveSportsChannel) => {
+      const nextMedia = iptvService.channelToMediaItem(ch);
+      if (onSwitchLiveChannel) {
+        onSwitchLiveChannel(nextMedia);
+      } else {
+        const primary = nextMedia.servers?.[0];
+        if (primary) setSelectedServerName(primary.name);
+        if (nextMedia.videoUrl) setVideoSrc(nextMedia.videoUrl);
+        setIsPlaying(true);
+      }
+      triggerSignalToast(`Viendo ${ch.name}`);
+    },
+    [onSwitchLiveChannel, triggerSignalToast]
+  );
 
   // ── Cabeceras del stream IPTV (referrer / user_agent de iptv-org) ────────
   useEffect(() => {
@@ -2006,6 +2213,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     if (tmdbIdToUse > 0 && !srv.url) {
       if ((srv as any)?.providerId === 'moviemaster' && srv.type === 'hls') {
+        const clickedName = srv.name;
+        const clickedId = (srv as any).id;
         fetch('/api/mm/play', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2014,11 +2223,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             type: isSeriesOrAnime ? 'tv' : 'movie',
             season: selectedSeason,
             episode: selectedEpisode,
-            serverName: (srv as any).mmServerName || srv.name,
-            lang: (srv as any).mmLang,
+            serverName: (srv as any).mmServerName || undefined,
+            lang: (srv as any).mmLang || 'latino',
+            onlyLangs: isSeriesOrAnime && resolveType === 'anime' ? undefined : ['latino', 'castellano'],
+            forceRefresh: !(srv as any).mmServerName,
           }),
         })
-          .then((r) => (r.ok ? r.json() : null))
+          .then((r) => readMmPlay(r, 'click ' + clickedName))
           .then((mmData) => {
             if (mmData?.manifestUrl) {
               console.log(
@@ -2026,15 +2237,37 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               );
               srv.url = mmData.manifestUrl;
               (srv as any).validated = true;
+              setResolvedServers((prev) =>
+                prev
+                  ? prev.map((item) =>
+                      item.name === clickedName || (clickedId && (item as any).id === clickedId)
+                        ? { ...item, url: mmData.manifestUrl, validated: true, durationSec: mmData.durationSec }
+                        : item
+                    )
+                  : prev
+              );
               setCorsMode(true);
               corsRetryRef.current = 0;
               setVideoSrc(mmData.manifestUrl);
               if (typeof mmData.durationSec === 'number' && mmData.durationSec > 0) {
                 setDuration(mmData.durationSec);
               }
+            } else {
+              // Acuñado fallido: no dejar un servidor con url vacia en la lista (daba "Invalid URL")
+              triggerSignalToast('MovieMaster no disponible para este capítulo');
+              setResolvedServers((prev) =>
+                prev ? prev.filter((item) => !(item.name === clickedName && !item.url)) : prev
+              );
+              advanceToNextServerRef.current('MovieMaster sin acuñado');
             }
           })
-          .catch(() => { });
+          .catch(() => {
+            triggerSignalToast('Error al conectar con MovieMaster');
+            setResolvedServers((prev) =>
+              prev ? prev.filter((item) => !(item.name === clickedName && !item.url)) : prev
+            );
+            advanceToNextServerRef.current('MovieMaster error de red');
+          });
       } else {
         const srvId = (srv as any).id ?? srv.name;
         resolveServerPlay({
@@ -2134,6 +2367,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // ── Requisito 3: Auto-avance (máximo 3 avances, con logging de id del servidor) ──
   const advanceToNextServer = useCallback((reason: string) => {
+    if (isAdvancingEpisodeRef.current || videoRef.current?.ended) {
+      console.log(`[AutoAdvance] Ignorado durante transición o fin de episodio (${reason})`);
+      return;
+    }
+
     // Si el error proviene de GUEST_VIEW_MANAGER_CALL o Script failed to execute, ignorar por completo
     const lowerReason = (reason || '').toLowerCase();
     if (
@@ -2181,6 +2419,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         providerId: (currentSrv as any)?.providerId || 'vidlink.pro',
         tmdbId: tmdbIdToUse,
         type: resolveType,
+        season: isSeriesOrAnime ? selectedSeasonRef.current : undefined,
+        episode: isSeriesOrAnime ? selectedEpisodeRef.current : undefined,
         serverId: currentId,
         penaltyMs: 15000,
         reason,
@@ -2223,6 +2463,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     for (let offset = 1; offset <= servers.length; offset++) {
       const candidateIdx = (currentIdx + offset) % servers.length;
       const candidateSrv = servers[candidateIdx];
+      if (!candidateSrv) continue;
+      if (!candidateSrv.url && (candidateSrv as any)?.providerId === 'moviemaster') {
+        continue;
+      }
       const candidateKey = getServerEpisodeKey(candidateSrv);
       if (!failedServersForEpisodeRef.current.has(candidateKey)) {
         nextIdx = candidateIdx;
@@ -2247,7 +2491,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     triggerSignalToast(`Avance #${autoAdvanceCountRef.current}: Conectando a ${nextSrv.name}...`);
 
-    if (tmdbIdToUse > 0 && !nextSrv.url) {
+    if (tmdbIdToUse > 0 && !nextSrv.url && (nextSrv as any)?.providerId !== 'moviemaster') {
       console.log(`[AutoAdvance] Acuñando servidor id="${nextId}" (${nextSrv?.name}) en /api/resolve/play...`);
       resolveServerPlay({
         providerId: (nextSrv as any)?.providerId || 'vidlink.pro',
@@ -2288,7 +2532,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     handleSelectServer(nextIdx, { auto: true });
-  }, [handleSelectServer, triggerSignalToast, tmdbIdToUse, resolveType, selectedSeason, selectedEpisode]);
+  }, [handleSelectServer, triggerSignalToast, tmdbIdToUse, resolveType, selectedSeason, selectedEpisode, isSeriesOrAnime]);
   advanceToNextServerRef.current = advanceToNextServer;
 
   // ── PASO 2 (CENSURA): Rotación inmediata al siguiente servidor espejo ──
@@ -2298,6 +2542,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // ── Error de vídeo: reintento sin CORS y luego fallback / auto-rotación ──
   const handleVideoError = useCallback((err?: any) => {
+    if (isAdvancingEpisodeRef.current || videoRef.current?.ended) {
+      return;
+    }
     if (isIframeMode) {
       console.warn('[VideoPlayer] Error ignorado en modo iframe (GUEST_VIEW_MANAGER_CALL o fallo webview):', err);
       return;
@@ -2538,7 +2785,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           };
 
           const markHlsFailure = (reason: string) => {
-            if (isHlsSettled || isCancelled) return;
+            if (isHlsSettled || isCancelled || isAdvancingEpisodeRef.current || videoRef.current?.ended) return;
 
             // TAREA A: Si ocurre un error en HLS nativo, no mostrar cartel inmediatamente ni abortar.
             // Usar un setTimeout de 5 segundos. Si en 5s currentTime > 0, ignorar el error y quitar cartel.
@@ -2559,8 +2806,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             console.log(`[VideoPlayer] Error HLS recibido (${reason}). Esperando 5s para verificar si el video avanza...`);
             hlsErrorTimeoutRef.current = setTimeout(() => {
               hlsErrorTimeoutRef.current = null;
-              if (isCancelled || isHlsSettled) return;
+              if (isCancelled || isHlsSettled || isAdvancingEpisodeRef.current) return;
               const currentVideo = videoRef.current;
+              if (currentVideo?.ended) return;
               if (currentVideo && currentVideo.currentTime > 0) {
                 console.log(`[VideoPlayer] Video HLS avanzó a currentTime=${currentVideo.currentTime}s tras 5s: descartando error (${reason}).`);
                 setAllServersExhausted(false);
@@ -2576,11 +2824,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
               const srv = activeServerRef.current;
               // Requisito 3: Penalización adaptativa (memoria, TTL 1h)
-              if (tmdbIdToUse > 0) {
+              if (tmdbIdToUse > 0 && !isAdvancingEpisodeRef.current && !currentVideo?.ended) {
                 reportServerPlaybackPenalty({
                   providerId: (srv as any)?.providerId || 'vidlink.pro',
                   tmdbId: tmdbIdToUse,
                   type: resolveType,
+                  season: isSeriesOrAnime ? selectedSeasonRef.current : undefined,
+                  episode: isSeriesOrAnime ? selectedEpisodeRef.current : undefined,
                   serverId: (srv as any).id ?? srv.name,
                   penaltyMs: 15000,
                   reason,
@@ -2695,6 +2945,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
             // B8: En Hls.Events.ERROR con response.code 410 (snapshot caducado) o 403 (segmento firmado), un solo re-mint y reseek a currentTime
             if ((respCode === 410 || respCode === 403) && videoSrc.includes('/api/mm/manifest/')) {
+              if (isAdvancingEpisodeRef.current || videoRef.current?.ended) {
+                return;
+              }
               const remintKey = `${media.id}:s${selectedSeasonRef.current}:e${selectedEpisodeRef.current}`;
               if (mmRemintAttemptedKeyRef.current !== remintKey) {
                 mmRemintAttemptedKeyRef.current = remintKey;
@@ -2729,12 +2982,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     season: selectedSeasonRef.current,
                     episode: selectedEpisodeRef.current,
                     forceRefresh: true,
+                    onlyLangs: resolveType === 'anime' ? undefined : ['latino', 'castellano'],
                   }),
                 })
                   .then((r) => (r.ok ? r.json() : null))
                   .then((mmRes) => {
                     mmRemintInFlightRef.current = false;
-                    if (isCancelled || !mmRes?.manifestUrl) {
+                    if (isCancelled || isAdvancingEpisodeRef.current || videoRef.current?.ended) return;
+                    if (!mmRes?.manifestUrl) {
                       advanceToNextServerRef.current(`Fallo re-mint ${respCode} MovieMaster`);
                       return;
                     }
@@ -2746,7 +3001,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   })
                   .catch(() => {
                     mmRemintInFlightRef.current = false;
-                    if (!isCancelled) advanceToNextServerRef.current(`Excepción re-mint ${respCode} MovieMaster`);
+                    if (!isCancelled && !isAdvancingEpisodeRef.current && !videoRef.current?.ended) {
+                      advanceToNextServerRef.current(`Excepción re-mint ${respCode} MovieMaster`);
+                    }
                   });
                 return;
               }
@@ -3107,6 +3364,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         `[SEASON] canHaveNextSeason=${canHaveNextSeason} numberOfSeasons=${numberOfSeasons || 'missing'} currentSeasonEpisodes=${currentSeasonEpisodes} tmdb=${tmdbIdToUse}`
       );
 
+      isAdvancingEpisodeRef.current = true;
+      if (!isIframeMode && videoRef.current) {
+        try {
+          videoRef.current.pause();
+        } catch (_) { }
+      }
+
       const resolveRollover = async () => {
         const localNextEps = (media.episodes || []).filter(
           (e) => Number(e.seasonNumber ?? (e as any).season ?? 1) === nextSeason
@@ -3146,6 +3410,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           return;
         }
 
+        isAdvancingEpisodeRef.current = false;
         triggerSignalToast('Fin de la serie');
         setIsPlaying(false);
         onNextEpisode?.();
@@ -3157,24 +3422,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (selectedEpisodeRef.current <= 1) {
         onPrevEpisode?.();
       } else {
+        isAdvancingEpisodeRef.current = true;
         onRequestEpisodeChange?.(selectedSeasonRef.current, selectedEpisodeRef.current - 1);
       }
     } else {
       const nextEp = selectedEpisodeRef.current + delta;
+      isAdvancingEpisodeRef.current = true;
       onRequestEpisodeChange?.(selectedSeasonRef.current, nextEp);
     }
     simulatedTimeRef.current = 0;
     setCurrentTime(0);
-    if (!isIframeMode && videoRef.current) {
-      try {
-        videoRef.current.currentTime = 0;
-        if (delta > 0) {
-          const p = videoRef.current.play();
-          if (p && typeof p.catch === 'function') p.catch(() => { });
-        }
-      } catch (_) { }
+    if (onRequestEpisodeChange && isEpisodic && delta !== 0) {
+      if (!isIframeMode && videoRef.current) {
+        try {
+          videoRef.current.pause();
+        } catch (_) { }
+      }
+    } else {
+      if (!isIframeMode && videoRef.current) {
+        try {
+          videoRef.current.currentTime = 0;
+          if (delta > 0) {
+            const p = videoRef.current.play();
+            if (p && typeof p.catch === 'function') p.catch(() => { });
+          }
+        } catch (_) { }
+      }
+      setIframeReloadKey((k) => k + 1);
     }
-    setIframeReloadKey((k) => k + 1);
     broadcastImmediate();
   }, [isEpisodic, realEpisodes, media.episodes, media.seasons, media.seasonsCount, realSeasons, marathonMode, triggerSignalToast, onRequestEpisodeChange, onNextEpisode, onPrevEpisode, isIframeMode, broadcastImmediate]);
   handleAdvanceEpisodeRef.current = handleAdvanceEpisode;
@@ -3692,6 +3967,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
     autoAdvancedChapterGuardRef.current = chapterKey;
+    isAdvancingEpisodeRef.current = true;
     handleAdvanceEpisode(1);
   }, [media.id, onBeforeAutoAdvance, handleAdvanceEpisode]);
   tryAutoAdvanceEpisodeRef.current = tryAutoAdvanceEpisode;
@@ -3783,6 +4059,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       data-season={selectedSeason}
       data-episode={selectedEpisode}
       data-title={currentTitle}
+      style={isDetailOpen ? { visibility: 'hidden' } : undefined}
       className="relative w-full h-screen bg-black overflow-hidden select-none flex items-center justify-center font-sans">
 
       {/* Franjas invisibles de detección de mouse para cuando el iframe captura el cursor */}
@@ -3798,6 +4075,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4 shadow-lg shadow-red-900/40" />
           <h3 className="text-white text-base font-bold tracking-wide">Resolviendo mejores servidores...</h3>
           <p className="text-zinc-400 text-xs mt-1">Buscando fuentes HLS y alternativas validadas en Latino</p>
+        </div>
+      )}
+
+      {noSpanishAudio && !isResolving && !(resolvedServers || []).some((s) => Boolean(s.url)) && (
+        <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center z-50 text-center p-6 pointer-events-auto">
+          <h3 className="text-white text-lg font-bold mb-2">Sin audio Latino ni Castellano</h3>
+          <p className="text-zinc-400 text-sm max-w-md mb-5">
+            Los servidores solo ofrecen este episodio subtitulado o en inglés. No se muestra como Latino para no engañarte.
+          </p>
+          <button type="button" onClick={onClose} className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm">
+            Volver
+          </button>
         </div>
       )}
 
@@ -3978,7 +4267,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             handleVideoError();
           }}
           onEnded={() => {
-            if (isEpisodic && hasNextEpisode && playbackSettings.autoPlayNext) tryAutoAdvanceEpisode();
+            if (isEpisodic && hasNextEpisode && (playbackSettings.autoPlayNext || marathonMode)) tryAutoAdvanceEpisode();
             else setIsPlaying(false);
           }}
           onClick={togglePlay}
@@ -4303,7 +4592,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <button
               onClick={onClose}
               className="p-1.5 sm:p-2 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white transition backdrop-blur-md border border-zinc-700/60 shrink-0"
-              title="Volver atrás"
+              title={isLiveTv ? 'Volver a la grilla' : 'Volver atrás'}
               aria-label="Cerrar Reproductor"
               data-testid="close-player"
             >
@@ -4311,9 +4600,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </button>
 
             <div className="min-w-0 flex items-center gap-2 flex-wrap sm:flex-nowrap">
-              <h2 className="text-xs sm:text-sm md:text-base font-bold text-white drop-shadow truncate max-w-[130px] sm:max-w-xs md:max-w-md">
-                {currentTitle}
-              </h2>
+              {isLiveTv && (
+                <span
+                  data-testid="live-watching-badge"
+                  className="px-2 py-0.5 rounded-full bg-red-600/90 text-white text-[10px] font-extrabold tracking-wide flex items-center gap-1.5 shrink-0 shadow"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                  VIENDO EN VIVO
+                </span>
+              )}
+              {onOpenDetail && !isLiveTv ? (
+                <button
+                  type="button"
+                  data-testid="player-title-detail"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenDetail(media);
+                  }}
+                  title="Ver ficha, sinopsis y episodios"
+                  aria-label={`Ver ficha de ${media.title}`}
+                  className="group flex items-center gap-1.5 min-w-0 max-w-[160px] sm:max-w-xs md:max-w-md text-left cursor-pointer rounded-lg px-1.5 py-0.5 -mx-1.5 hover:bg-white/10 transition"
+                >
+                  <h2 className="text-xs sm:text-sm md:text-base font-bold text-white group-hover:text-red-400 group-hover:underline drop-shadow truncate transition-colors">
+                    {currentTitle}
+                  </h2>
+                  <Info className="w-3.5 h-3.5 text-zinc-400 group-hover:text-red-400 shrink-0 transition-colors" />
+                </button>
+              ) : (
+                <h2 className="text-xs sm:text-sm md:text-base font-bold text-white drop-shadow truncate max-w-[130px] sm:max-w-xs md:max-w-md">
+                  {currentTitle}
+                </h2>
+              )}
+
+              {isLiveTv && liveChannelsList.length > 0 && (
+                <button
+                  type="button"
+                  data-testid="live-channel-switcher-btn"
+                  onClick={() => setShowLiveChannelDrawer((prev) => !prev)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 border shadow-lg shrink-0 cursor-pointer ${
+                    showLiveChannelDrawer
+                      ? 'bg-red-600 text-white border-red-400'
+                      : 'bg-zinc-900/90 text-zinc-200 border-zinc-700/80 hover:bg-zinc-800 hover:text-white'
+                  }`}
+                  title="Cambiar de canal sin salir del reproductor"
+                >
+                  <Tv className="w-3.5 h-3.5 text-red-400" />
+                  <span>Cambiar canal ({liveChannelsList.length})</span>
+                </button>
+              )}
 
               {isEpisodic && (
                 <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-700/80 px-2 py-0.5 rounded-xl shadow-lg shrink-0">
@@ -4399,6 +4733,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
 
               {/* Selector Rápido Latino / Sub */}
+              {!isLiveTv && (
               <div className="flex items-center bg-zinc-900/90 border border-zinc-700/80 p-0.5 rounded-xl shadow-lg shrink-0">
                 <button
                   type="button"
@@ -4442,6 +4777,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   <span>💬</span><span className="hidden sm:inline">Sub</span>
                 </button>
               </div>
+              )}
 
               {/* TAREA 6 & B8: Badge de idioma activo */}
               {!isIframeMode && activeServer?.language && (
@@ -4591,6 +4927,64 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             );
           })}
         </div>
+      )}
+
+      {/* Panel flotante in-player para cambiar de canal en vivo sin volver a la grilla */}
+      {isLiveTv && showLiveChannelDrawer && (
+        <aside
+          data-testid="live-channel-switcher-panel"
+          className="fixed top-16 right-4 z-[101] w-72 sm:w-80 max-h-[70vh] rounded-2xl bg-zinc-950/95 backdrop-blur-xl border border-zinc-700/80 shadow-2xl flex flex-col overflow-hidden pointer-events-auto"
+        >
+          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wider font-extrabold text-red-400">
+                Canales en vivo
+              </p>
+              <p className="text-xs font-bold text-white truncate">
+                Viendo: {media.originalTitle || media.title}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowLiveChannelDrawer(false)}
+              aria-label="Cerrar selector de canales"
+              className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="p-2 overflow-y-auto space-y-1">
+            {liveChannelsList.map((ch) => {
+              const isCurrent = `iptv_${ch.id}` === media.id;
+              return (
+                <button
+                  key={ch.id}
+                  type="button"
+                  data-testid={`live-channel-item-${ch.id}`}
+                  onClick={() => handleSwitchChannelInPlace(ch)}
+                  className={`w-full px-3 py-2 rounded-xl text-left flex items-center gap-2.5 transition cursor-pointer border ${
+                    isCurrent
+                      ? 'bg-red-600/20 border-red-500/60 text-white'
+                      : 'bg-zinc-900/70 hover:bg-zinc-800 border-zinc-800/80 text-zinc-200'
+                  }`}
+                >
+                  <span className="text-sm shrink-0">{ch.countryFlag || '📺'}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold truncate">{ch.name}</p>
+                    <p className="text-[10px] text-zinc-400 truncate">
+                      {ch.countryName || ch.country} · {ch.quality || 'HD'}
+                    </p>
+                  </div>
+                  {isCurrent && (
+                    <span className="px-1.5 py-0.5 rounded bg-red-600 text-white text-[9px] font-extrabold shrink-0">
+                      Viendo
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </aside>
       )}
 
       {!isIframeMode && (

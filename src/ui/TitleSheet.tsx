@@ -2,6 +2,7 @@ import { ExternalLink, Film, Star, Tv, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { localCatalogProvider } from '../providers/localCatalogProvider';
 import type { CardItem, MediaDetailItem } from '../providers/types';
+import { sanitizeCardTitle } from '../services/catalogCache';
 
 export interface TitleSheetProps {
   item: CardItem | null;
@@ -44,9 +45,16 @@ export const TitleSheet: React.FC<TitleSheetProps> = ({
   if (!item) return null;
 
   const isSeries =
-    item.type === 'series' || item.category === 'series' || item.category === 'anime';
+    item.type !== 'movie' &&
+    (item.type === 'series' || item.category === 'series' || item.category === 'anime');
   const displayTitle =
-    detail?.titleEs || item.titleEs || detail?.originalTitle || (item as any).originalTitle || item.title;
+    sanitizeCardTitle(detail?.titleEs) ||
+    sanitizeCardTitle(detail?.title) ||
+    sanitizeCardTitle(item.titleEs) ||
+    sanitizeCardTitle(item.title) ||
+    sanitizeCardTitle(detail?.originalTitle) ||
+    sanitizeCardTitle((item as { originalTitle?: unknown }).originalTitle) ||
+    'Título no disponible';
   const synopsis =
     detail?.overview && detail.overview.trim().length > 0
       ? detail.overview

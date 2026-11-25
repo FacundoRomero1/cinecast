@@ -1,11 +1,20 @@
+import {
+  VERIFIED_SPORTS_CHANNELS,
+  rankSportsChannels,
+  assessMirrorTrust,
+  isTrustworthyIptvCandidate,
+} from '../data/verifiedSportsChannels';
 import { LiveSportsChannel, MediaItem, StreamServer } from '../types';
+
+export { VERIFIED_SPORTS_CHANNELS };
 
 const CHANNELS_API = 'https://iptv-org.github.io/api/channels.json';
 const STREAMS_API = 'https://iptv-org.github.io/api/streams.json';
 const LOGOS_API = 'https://iptv-org.github.io/api/logos.json';
 const PLUTO_API = 'https://api.pluto.tv/v2/channels.json';
-const CACHE_KEY = 'cinecast_iptv_sports_cache_v4';
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 horas
+const CACHE_KEY = 'cinecast_iptv_sports_cache_v6';
+const LEGACY_CACHE_KEYS = ['cinecast_iptv_sports_cache_v4', 'cinecast_iptv_sports_cache_v5'];
+const CACHE_TTL_MS = 7 * 60 * 1000; // 7 minutos
 
 export const SPANISH_COUNTRIES_MAP: Record<string, { name: string; flag: string }> = {
   AR: { name: 'Argentina', flag: '🇦🇷' },
@@ -30,481 +39,6 @@ export const SPANISH_COUNTRIES_MAP: Record<string, { name: string; flag: string 
   DE: { name: 'Alemania', flag: '🇩🇪' },
   INT: { name: 'Internacional', flag: '🌍' },
 };
-
-/**
- * Catálogo verificado de canales de deportes y fútbol en español de alta disponibilidad.
- * Garantiza arranque instantáneo (0ms) con fallbacks sólidos.
- */
-export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
-  {
-    id: 'TyCSports.ar',
-    name: 'TyC Sports',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/TyC_Sports_logo_2020.svg/512px-TyC_Sports_logo_2020.svg.png',
-    streamUrl: 'https://amg26268-amg26268c14-freelivesports-emea-10267.playouts.now.amagi.tv/ts-us-e2-n2/playlist/amg26268-sportsstudio-tycsports-freelivesportsemea/playlist.m3u8',
-    quality: '1080p HD',
-    category: 'Fútbol Argentino & Deportes',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'TyC Sports (Señal Principal HD)',
-        url: 'https://amg26268-amg26268c14-freelivesports-emea-10267.playouts.now.amagi.tv/ts-us-e2-n2/playlist/amg26268-sportsstudio-tycsports-freelivesportsemea/playlist.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-      {
-        name: 'TyC Sports (VODGC 24/7)',
-        url: 'https://live-04-11-tyc-app-web.vodgc.net/tyc24/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-      {
-        name: 'TyC Sports (Señal Alternativa)',
-        url: 'http://45.170.130.224:8000/play/a020/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: 'TVPublica.ar',
-    name: 'TV Pública',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Televisi%C3%B3n_P%C3%BAblica_Argentina_logo_2024.png/512px-Televisi%C3%B3n_P%C3%BAblica_Argentina_logo_2024.png',
-    streamUrl: 'https://nd106.republicaservers.com/hls/c8094/index.m3u8',
-    quality: '1080p HD',
-    category: 'Aire & Fútbol Libre',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'TV Pública (República Servers HD)',
-        url: 'https://nd106.republicaservers.com/hls/c8094/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-      {
-        name: 'TV Pública (Centaury Oficial)',
-        url: 'https://ca.centaurychile.com:2443/hls/mediospublicos.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: 'DeporTV.ar',
-    name: 'DeporTV',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/DeporTV_logo_2020.png/512px-DeporTV_logo_2020.png',
-    streamUrl: 'http://158.172.155.130:8000/play/a09y/index.m3u8',
-    quality: '1080p HD',
-    category: 'Deportes Argentina',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'DeporTV (Señal Oficial HD)',
-        url: 'http://158.172.155.130:8000/play/a09y/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://158.172.155.130:8000/',
-      },
-    ],
-  },
-  {
-    id: 'FoxSports.ar',
-    name: 'Fox Sports',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/37/Fox_Sports_logo_2017.svg/512px-Fox_Sports_logo_2017.svg.png',
-    streamUrl: 'http://158.172.155.130:8000/play/a09x/index.m3u8',
-    quality: '1080p HD',
-    category: 'Libertadores & Champions',
-    isOnline: true,
-    referrer: 'http://158.172.155.130:8000/',
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'Fox Sports (Señal HD)',
-        url: 'http://158.172.155.130:8000/play/a09x/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://158.172.155.130:8000/',
-      },
-      {
-        name: 'Fox Sports (Espejo 2)',
-        url: 'http://138.59.227.20:8000/play/a085/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://138.59.227.20:8000/',
-      },
-    ],
-  },
-  {
-    id: 'ESPN.ar',
-    name: 'ESPN Argentina',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
-    streamUrl: 'http://158.172.155.130:8000/play/a008/index.m3u8',
-    quality: '1080p HD',
-    category: 'Fútbol & Polideportivo',
-    isOnline: true,
-    referrer: 'http://158.172.155.130:8000/',
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'ESPN (Señal Principal HD)',
-        url: 'http://158.172.155.130:8000/play/a008/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://158.172.155.130:8000/',
-      },
-    ],
-  },
-  {
-    id: 'ESPN2.ar',
-    name: 'ESPN 2',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
-    streamUrl: 'http://158.172.155.130:8000/play/a009/index.m3u8',
-    quality: '1080p HD',
-    category: 'Fútbol & Polideportivo',
-    isOnline: true,
-    referrer: 'http://158.172.155.130:8000/',
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'ESPN 2 (Señal Principal HD)',
-        url: 'http://158.172.155.130:8000/play/a009/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://158.172.155.130:8000/',
-      },
-      {
-        name: 'ESPN 2 (Espejo 2)',
-        url: 'http://190.61.47.54:8000/play/a005/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://190.61.47.54:8000/',
-      },
-    ],
-  },
-  {
-    id: 'ESPN3.ar',
-    name: 'ESPN 3',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
-    streamUrl: 'http://190.61.47.54:8000/play/a010/index.m3u8',
-    quality: '1080p HD',
-    category: 'Polideportivo & Tenis',
-    isOnline: true,
-    referrer: 'http://190.61.47.54:8000/',
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'ESPN 3 (Señal HD)',
-        url: 'http://190.61.47.54:8000/play/a010/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://190.61.47.54:8000/',
-      },
-    ],
-  },
-  {
-    id: 'ESPNPremium.ar',
-    name: 'ESPN Premium',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/ESPN_Premium_logo.png/512px-ESPN_Premium_logo.png',
-    streamUrl: 'http://158.172.155.130:8000/play/a005/index.m3u8',
-    quality: '1080p HD',
-    category: 'Fútbol Argentino (Pack Fútbol)',
-    isOnline: true,
-    referrer: 'http://158.172.155.130:8000/',
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'ESPN Premium (Señal 1 HD)',
-        url: 'http://158.172.155.130:8000/play/a005/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://158.172.155.130:8000/',
-      },
-      {
-        name: 'ESPN Premium (Espejo 2)',
-        url: 'http://190.61.47.54:8000/play/a004/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://190.61.47.54:8000/',
-      },
-    ],
-  },
-  {
-    id: 'TNTSports.ar',
-    name: 'TNT Sports',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/TNT_Sports_%28Argentina%29_logo_2021.png/512px-TNT_Sports_%28Argentina%29_logo_2021.png',
-    streamUrl: 'http://158.172.155.130:8000/play/a006/index.m3u8',
-    quality: '1080p HD',
-    category: 'Fútbol Argentino (Pack Fútbol)',
-    isOnline: true,
-    referrer: 'http://158.172.155.130:8000/',
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'TNT Sports (Señal 1 HD)',
-        url: 'http://158.172.155.130:8000/play/a006/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://158.172.155.130:8000/',
-      },
-      {
-        name: 'TNT Sports (Espejo 2)',
-        url: 'http://190.61.47.54:8000/play/a011/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://190.61.47.54:8000/',
-      },
-    ],
-  },
-  {
-    id: 'DSports.ar',
-    name: 'DSports',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/ba/DSports_logo_2022.svg/512px-DSports_logo_2022.svg.png',
-    streamUrl: 'http://158.172.155.130:8000/play/a007/index.m3u8',
-    quality: '1080p HD',
-    category: 'Sudamericana & Deportes Exclusivos',
-    isOnline: true,
-    referrer: 'http://158.172.155.130:8000/',
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'DSports (Señal 1 HD)',
-        url: 'http://158.172.155.130:8000/play/a007/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://158.172.155.130:8000/',
-      },
-      {
-        name: 'DSports (Espejo 2)',
-        url: 'http://190.61.47.54:8000/play/a012/index.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-        referrer: 'http://190.61.47.54:8000/',
-      },
-    ],
-  },
-  {
-    id: 'CronicaTV.ar',
-    name: 'Crónica TV',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/Cr%C3%B3nica_TV_logo_2021.png/512px-Cr%C3%B3nica_TV_logo_2021.png',
-    streamUrl: 'https://ca.centaurychile.com:2443/hls/mediospublicos.m3u8',
-    quality: '720p HD',
-    category: 'Noticias & Fútbol de Ascenso',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'Crónica TV (En Vivo)',
-        url: 'https://ca.centaurychile.com:2443/hls/mediospublicos.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: 'C5N.ar',
-    name: 'C5N',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/C5N_logo_2020.png/512px-C5N_logo_2020.png',
-    streamUrl: 'https://ca.centaurychile.com:2443/hls/mediospublicos.m3u8',
-    quality: '720p HD',
-    category: 'Noticias & Actualidad',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'C5N (En Vivo)',
-        url: 'https://ca.centaurychile.com:2443/hls/mediospublicos.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: 'NetTV.ar',
-    name: 'Net TV Argentina',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Net_TV_logo_2018.svg/512px-Net_TV_logo_2018.svg.png',
-    streamUrl: 'https://unlimited6-cl.dps.live/nettv/nettv.smil/playlist.m3u8',
-    quality: '1080p HD',
-    category: 'Aire & Deportes Argentina',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'Net TV (Señal Oficial HD)',
-        url: 'https://unlimited6-cl.dps.live/nettv/nettv.smil/playlist.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: '5TVCorrientes.ar',
-    name: '5TV Corrientes',
-    country: 'AR',
-    countryName: 'Argentina',
-    countryFlag: '🇦🇷',
-    logo: 'https://i.imgur.com/4gTtAlf.jpeg',
-    streamUrl: 'https://617c5175c970b.streamlock.net:4444/tvcinco/live1/playlist.m3u8',
-    quality: '720p HD',
-    category: 'Noticias & Deportes Argentina',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: '5TV Corrientes (Streamlock HD)',
-        url: 'https://617c5175c970b.streamlock.net:4444/tvcinco/live1/playlist.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: '8NTV.mx',
-    name: '8NTV México',
-    country: 'MX',
-    countryName: 'México',
-    countryFlag: '🇲🇽',
-    logo: 'https://i.imgur.com/4gTtAlf.jpeg',
-    streamUrl: 'https://60417ddeaf0d9.streamlock.net/ntv/videontv/playlist.m3u8',
-    quality: '720p HD',
-    category: 'Noticias & Deportes México',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: '8NTV (Streamlock HD)',
-        url: 'https://60417ddeaf0d9.streamlock.net/ntv/videontv/playlist.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: '12TV.es',
-    name: '12TV España',
-    country: 'ES',
-    countryName: 'España',
-    countryFlag: '🇪🇸',
-    logo: 'https://i.imgur.com/4gTtAlf.jpeg',
-    streamUrl: 'https://cloud.streamingconnect.tv/hls/12tv/12tv2.m3u8',
-    quality: '1080p HD',
-    category: 'Noticias & Polideportivo España',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: '12TV (StreamingConnect HD)',
-        url: 'https://cloud.streamingconnect.tv/hls/12tv/12tv2.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: '3CatInfo.es',
-    name: '3Cat Info',
-    country: 'ES',
-    countryName: 'España',
-    countryFlag: '🇪🇸',
-    logo: 'https://i.imgur.com/4gTtAlf.jpeg',
-    streamUrl: 'https://directes-tv-int.3catdirectes.cat/live-origin/canal324-hls/master.m3u8',
-    quality: '1080p HD',
-    category: 'Noticias & Actualidad',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: '3Cat Info (Directes HD)',
-        url: 'https://directes-tv-int.3catdirectes.cat/live-origin/canal324-hls/master.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: '8LaMarinaTV.es',
-    name: '8 La Marina TV',
-    country: 'ES',
-    countryName: 'España',
-    countryFlag: '🇪🇸',
-    logo: 'https://i.imgur.com/4gTtAlf.jpeg',
-    streamUrl: 'https://streaming005.gestec-video.com/hls/canal24.m3u8',
-    quality: '1080p HD',
-    category: 'Polideportivo & Noticias',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: '8 La Marina TV (Gestec HD)',
-        url: 'https://streaming005.gestec-video.com/hls/canal24.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-  {
-    id: 'RedBullTV.int',
-    name: 'Red Bull TV',
-    country: 'INT',
-    countryName: 'Internacional',
-    countryFlag: '🌍',
-    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Red_Bull_TV_logo.svg/512px-Red_Bull_TV_logo.svg.png',
-    streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
-    quality: '1080p HD',
-    category: 'Deportes Extremos & F1',
-    isOnline: true,
-    lastVerified: Date.now(),
-    servers: [
-      {
-        name: 'Red Bull TV (Akamai HD)',
-        url: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
-        type: 'hls',
-        language: 'En Vivo',
-      },
-    ],
-  },
-];
-
 
 interface RawChannel {
   id: string;
@@ -551,39 +85,103 @@ const streamScore = (s: RawStream): number => qualityScore(s.quality) - (isGeoBl
 
 class IPTVService {
   private memoryCache: LiveSportsChannel[] | null = null;
+  private lastCacheTimestamp = 0;
   private isFetching: boolean = false;
+  private lastFetchFailed: boolean = false;
+
+  hasLastFetchError(): boolean {
+    return this.lastFetchFailed;
+  }
 
   private async filterOnlineStreams(channels: LiveSportsChannel[]): Promise<LiveSportsChannel[]> {
-    if (typeof window !== 'undefined' && window.electronAPI?.probeStreams) {
-      try {
-        const urls = channels.map((c) => c.streamUrl).filter(Boolean);
-        const results = await window.electronAPI.probeStreams(urls);
-        const validated: LiveSportsChannel[] = [];
-        const unverified: LiveSportsChannel[] = [];
+    if (typeof window === 'undefined' || !window.electronAPI?.probeStreams) {
+      return [];
+    }
+    try {
+      const trustedByChannel = new Map<
+        string,
+        Array<{ srv: StreamServer; score: number; reason: string }>
+      >();
+      const allUrlsSet = new Set<string>();
 
-        for (const c of channels) {
-          const res = results[c.streamUrl];
-          if (res === true) {
-            validated.push({
-              ...c,
-              isOnline: true,
-              lastVerified: Date.now(),
-            });
-          } else if (res === undefined) {
-            unverified.push(c);
-          }
-          // Si res === false (manifiesto caído o sin #EXTM3U), se oculta
+      for (const ch of channels) {
+        const candidateServers: StreamServer[] = [];
+        const seen = new Set<string>();
+        for (const s of ch.servers || []) {
+          if (!s?.url || seen.has(s.url)) continue;
+          seen.add(s.url);
+          candidateServers.push(s);
+        }
+        if (ch.streamUrl && !seen.has(ch.streamUrl)) {
+          candidateServers.unshift({
+            name: `${ch.name} (${ch.quality || 'HD'})`,
+            url: ch.streamUrl,
+            type: 'hls',
+            language: 'En Vivo',
+            referrer: ch.referrer ?? null,
+            userAgent: ch.userAgent ?? null,
+          });
         }
 
-        // Ordenar: canales verificados primero, no verificados al final
-        const combined = [...validated, ...unverified];
-        return combined.length > 0 ? combined : channels;
-      } catch (e) {
-        console.warn('Probe streams error:', e);
-        return channels;
+        const trusted: Array<{ srv: StreamServer; score: number; reason: string }> = [];
+        const rejected: string[] = [];
+        for (const srv of candidateServers) {
+          const trust = assessMirrorTrust(ch, srv);
+          if (trust.trusted) {
+            trusted.push({ srv, score: trust.score, reason: trust.reason });
+            allUrlsSet.add(srv.url);
+          } else {
+            rejected.push(`${srv.name}: ${trust.reason}`);
+          }
+        }
+        trusted.sort((a, b) => b.score - a.score);
+        if (trusted.length > 0) {
+          trustedByChannel.set(ch.id, trusted);
+        } else if (rejected.length > 0) {
+          console.log(`[Sports Validator] Canal "${ch.name}" (${ch.id}): OFFLINE -> descartados=[${rejected.join('; ')}]`);
+        }
       }
+
+      const allUrls = Array.from(allUrlsSet);
+      if (allUrls.length === 0) return [];
+
+      const mergedResults: Record<string, boolean> = {};
+      for (let i = 0; i < allUrls.length; i += 60) {
+        const chunk = allUrls.slice(i, i + 60);
+        const partial = await window.electronAPI.probeStreams(chunk);
+        if (partial && typeof partial === 'object') {
+          Object.assign(mergedResults, partial);
+        }
+      }
+
+      const validated: LiveSportsChannel[] = [];
+      for (const c of channels) {
+        const trustedEntries = trustedByChannel.get(c.id);
+        if (!trustedEntries || trustedEntries.length === 0) continue;
+
+        const aliveEntries = trustedEntries.filter((entry) => mergedResults[entry.srv.url] === true);
+        if (aliveEntries.length > 0) {
+          const primaryEntry = aliveEntries[0]!;
+          console.log(
+            `[Sports Validator] Canal "${c.name}" (${c.id}): ELEGIDO "${primaryEntry.srv.name}" -> ${primaryEntry.srv.url} (score=${primaryEntry.score}, motivo=${primaryEntry.reason})`
+          );
+          validated.push({
+            ...c,
+            streamUrl: primaryEntry.srv.url,
+            referrer: primaryEntry.srv.referrer ?? c.referrer ?? null,
+            userAgent: primaryEntry.srv.userAgent ?? c.userAgent ?? null,
+            servers: aliveEntries.map((e) => e.srv),
+            isOnline: true,
+            lastVerified: Date.now(),
+          });
+        }
+      }
+
+      return rankSportsChannels(validated);
+    } catch (e) {
+      console.warn('Probe streams error:', e);
+      return [];
     }
-    return channels;
   }
 
   /**
@@ -650,29 +248,26 @@ class IPTVService {
   }
 
   /**
-   * Devuelve al instante los canales cacheados/verificados y refresca en segundo plano.
+   * Obtiene canales validados (caché de TTL corta 7 min o backend /api/sports/channels).
    */
   async getSportsChannels(): Promise<LiveSportsChannel[]> {
-    if (this.memoryCache && this.memoryCache.length > 0) {
+    const now = Date.now();
+    if (
+      this.memoryCache &&
+      this.memoryCache.length > 0 &&
+      now - this.lastCacheTimestamp < CACHE_TTL_MS
+    ) {
       return this.memoryCache;
     }
 
     const local = this.readFromStorage();
     if (local && local.length > 0) {
-      this.memoryCache = local;
-      this.fetchDynamicStreamsBackground();
-      return local;
+      this.memoryCache = rankSportsChannels(local);
+      this.lastCacheTimestamp = now;
+      return this.memoryCache;
     }
 
-    if (typeof window !== 'undefined' && window.electronAPI?.probeStreams) {
-      const online = await this.filterOnlineStreams(VERIFIED_SPORTS_CHANNELS);
-      this.memoryCache = online.length > 0 ? online : VERIFIED_SPORTS_CHANNELS;
-    } else {
-      this.memoryCache = VERIFIED_SPORTS_CHANNELS;
-    }
-
-    this.fetchDynamicStreamsBackground();
-    return this.memoryCache;
+    return await this.fetchDynamicStreams(false);
   }
 
   private async fetchJson<T>(url: string): Promise<T> {
@@ -682,53 +277,74 @@ class IPTVService {
   }
 
   /**
-   * Consume iptv-org (channels + streams + logos en paralelo), cruza logos reales,
-   * agrupa streams por canal, penaliza Geo-blocked, prioriza resolución y deduplica por URL.
+   * Consume /api/sports/channels (validación real + espejos en backend con TTL 7 min).
+   * Sin fallback silencioso a canales sin verificar.
    */
-  async fetchDynamicStreams(): Promise<LiveSportsChannel[]> {
+  async fetchDynamicStreams(forceRefresh = false): Promise<LiveSportsChannel[]> {
     try {
       this.isFetching = true;
+      this.lastFetchFailed = false;
 
-      // 1. Intentar consultar endpoint optimizado del servidor backend /api/sports/channels (M3U oficial iptv-org)
+      // 1. Consultar endpoint validado del servidor backend /api/sports/channels
       try {
         const apiBase = typeof window !== 'undefined' ? (window.location?.origin || '') : '';
-        const res = await fetch(`${apiBase}/api/sports/channels`, { signal: AbortSignal.timeout(8000) });
+        const query = forceRefresh ? '?refresh=true' : '';
+        const res = await fetch(`${apiBase}/api/sports/channels${query}`, {
+          signal: AbortSignal.timeout(20000),
+        });
         if (res.ok) {
           const data = await res.json();
-          if (Array.isArray(data?.channels) && data.channels.length > 0) {
+          if (data?.validated === true && Array.isArray(data?.channels)) {
             const mapped: LiveSportsChannel[] = data.channels.map((ch: any) => ({
               id: ch.id,
               name: ch.name,
               country: ch.country,
               countryName: ch.countryName,
               countryFlag: ch.countryFlag,
-              logo: ch.logo,
+              logo: ch.logo || '',
               streamUrl: ch.streamUrl,
               quality: ch.quality || '1080p HD',
               category: ch.category || 'Fútbol & Deportes',
-              isOnline: true,
-              servers: [
-                {
-                  name: `${ch.name} (${ch.quality || 'HD'})`,
-                  url: ch.streamUrl,
-                  type: 'hls',
-                  language: 'En Vivo',
-                },
-              ],
+              isOnline: Boolean(ch.isOnline ?? true),
+              lastVerified: typeof ch.lastVerified === 'number' ? ch.lastVerified : Date.now(),
+              referrer: ch.referrer ?? null,
+              userAgent: ch.userAgent ?? null,
+              servers:
+                Array.isArray(ch.servers) && ch.servers.length > 0
+                  ? ch.servers
+                  : [
+                      {
+                        name: `${ch.name} (${ch.quality || 'HD'})`,
+                        url: ch.streamUrl,
+                        type: 'hls',
+                        language: 'En Vivo',
+                        referrer: ch.referrer ?? null,
+                        userAgent: ch.userAgent ?? null,
+                      },
+                    ],
             }));
 
-            // Combinar con canales verificados locales prioritarios (TyC, TV Pública, DeporTV, etc.)
-            const existingIds = new Set(mapped.map((c) => c.id));
-            const verifiedUnique = VERIFIED_SPORTS_CHANNELS.filter((c) => !existingIds.has(c.id));
-            const combined = [...verifiedUnique, ...mapped];
-
-            this.memoryCache = combined;
-            this.saveToStorage(combined);
-            return combined;
+            const verifiedMapped = mapped.filter((ch) =>
+              assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl }).trusted
+            );
+            const ranked = rankSportsChannels(verifiedMapped);
+            this.memoryCache = ranked;
+            this.lastCacheTimestamp = Date.now();
+            this.saveToStorage(ranked);
+            return ranked;
           }
         }
       } catch (e) {
-        console.warn('Endpoint /api/sports/channels no respondió, usando scraping de respaldo:', e);
+        console.warn('Endpoint /api/sports/channels no respondió, probando verificación de respaldo:', e);
+      }
+
+      // 2. Respaldo sólo si hay probe real disponible en Electron (nunca marcar isOnline:true sin verificar)
+      if (typeof window === 'undefined' || !window.electronAPI?.probeStreams) {
+        this.lastFetchFailed = true;
+        this.memoryCache = [];
+        this.lastCacheTimestamp = Date.now();
+        this.saveToStorage([]);
+        return [];
       }
 
       const [channelsRes, streamsRes, logosRes] = await Promise.allSettled([
@@ -737,131 +353,155 @@ class IPTVService {
         this.fetchJson<RawLogo[]>(LOGOS_API),
       ]);
 
-      if (channelsRes.status !== 'fulfilled' || streamsRes.status !== 'fulfilled') {
-        throw new Error('No se pudieron obtener channels/streams de iptv-org');
-      }
+      const dynamicChannels: LiveSportsChannel[] = [];
+      if (channelsRes.status === 'fulfilled' && streamsRes.status === 'fulfilled') {
+        const channelsData = channelsRes.value;
+        const streamsData = streamsRes.value;
+        const logosData = logosRes.status === 'fulfilled' ? logosRes.value : [];
 
-      const channelsData = channelsRes.value;
-      const streamsData = streamsRes.value;
-      const logosData = logosRes.status === 'fulfilled' ? logosRes.value : [];
+        const esCountries = new Set(Object.keys(SPANISH_COUNTRIES_MAP));
+        const filteredChannels = channelsData.filter((c) => {
+          if (c.closed) return false;
+          if (!esCountries.has(c.country)) return false;
+          const isArgentina = c.country === 'AR';
+          const hasCategory = Array.isArray(c.categories) && c.categories.includes('sports');
+          const nameLower = (c.name || '').toLowerCase();
+          const isSports = hasCategory || SPORTS_KEYWORDS.some((k) => nameLower.includes(k));
+          return isArgentina || isSports;
+        });
 
-      const esCountries = new Set(Object.keys(SPANISH_COUNTRIES_MAP));
+        const logoMap = new Map<string, RawLogo>();
+        for (const l of logosData) {
+          if (!l.channel || !l.url) continue;
+          const prev = logoMap.get(l.channel);
+          if (
+            !prev ||
+            (l.in_use && !prev.in_use) ||
+            (Boolean(l.in_use) === Boolean(prev.in_use) && (l.width || 0) > (prev.width || 0))
+          ) {
+            logoMap.set(l.channel, l);
+          }
+        }
 
-      const filteredChannels = channelsData.filter((c) => {
-        if (c.closed) return false;
-        if (!esCountries.has(c.country)) return false;
-        const isArgentina = c.country === 'AR';
-        const hasCategory = Array.isArray(c.categories) && c.categories.includes('sports');
-        const nameLower = (c.name || '').toLowerCase();
-        const isSports = hasCategory || SPORTS_KEYWORDS.some((k) => nameLower.includes(k));
-        return isArgentina || isSports;
-      });
+        const streamsByChannel = new Map<string, RawStream[]>();
+        const seenUrls = new Set<string>();
+        for (const st of streamsData) {
+          if (!st.channel || !st.url || seenUrls.has(st.url)) continue;
+          seenUrls.add(st.url);
+          const arr = streamsByChannel.get(st.channel);
+          if (arr) arr.push(st);
+          else streamsByChannel.set(st.channel, [st]);
+        }
 
-      // Logos reales: preferir "in_use" y el de mayor ancho
-      const logoMap = new Map<string, RawLogo>();
-      for (const l of logosData) {
-        if (!l.channel || !l.url) continue;
-        const prev = logoMap.get(l.channel);
-        if (
-          !prev ||
-          (l.in_use && !prev.in_use) ||
-          (Boolean(l.in_use) === Boolean(prev.in_use) && (l.width || 0) > (prev.width || 0))
-        ) {
-          logoMap.set(l.channel, l);
+        for (const ch of filteredChannels) {
+          const streams = streamsByChannel.get(ch.id);
+          if (!streams || streams.length === 0) continue;
+
+          const trustedStreams = streams
+            .map((st) => ({
+              st,
+              trust: assessMirrorTrust(ch, { name: ch.name, url: st.url }),
+            }))
+            .filter((entry) => entry.trust.trusted)
+            .sort((a, b) => b.trust.score - a.trust.score || streamScore(b.st) - streamScore(a.st));
+
+          if (trustedStreams.length === 0) continue;
+
+          const best = trustedStreams[0]!.st;
+          const checkCand = isTrustworthyIptvCandidate({
+            id: ch.id,
+            name: ch.name,
+            streamUrl: best.url,
+            country: ch.country,
+            groupTitle: (ch.categories || []).join(';'),
+          });
+          if (!checkCand.ok) continue;
+
+          const countryInfo = SPANISH_COUNTRIES_MAP[ch.country] || { name: ch.country, flag: '⚽' };
+
+          const channelServers: StreamServer[] = trustedStreams.slice(0, 4).map(({ st }, idx) => ({
+            name: idx === 0 ? `${ch.name} (Principal ${st.quality || 'HD'})` : `${ch.name} (Opción ${idx + 1} ${st.quality || 'SD'})`,
+            url: st.url,
+            type: 'hls' as const,
+            language: 'En Vivo',
+            referrer: st.referrer ?? null,
+            userAgent: st.user_agent ?? null,
+          }));
+
+          dynamicChannels.push({
+            id: ch.id,
+            name: ch.name,
+            country: ch.country,
+            countryName: countryInfo.name,
+            countryFlag: countryInfo.flag,
+            logo: logoMap.get(ch.id)?.url || '',
+            streamUrl: best.url,
+            quality: best.quality ? `${best.quality}` : 'En Vivo',
+            category: 'Fútbol & Deportes',
+            isOnline: false,
+            referrer: best.referrer ?? null,
+            userAgent: best.user_agent ?? null,
+            geoBlocked: isGeoBlocked(best),
+            servers: channelServers,
+          });
         }
       }
 
-      // Agrupar todos los streams por canal (dedupe por URL)
-      const streamsByChannel = new Map<string, RawStream[]>();
-      const seenUrls = new Set<string>();
-      for (const st of streamsData) {
-        if (!st.channel || !st.url || seenUrls.has(st.url)) continue;
-        seenUrls.add(st.url);
-        const arr = streamsByChannel.get(st.channel);
-        if (arr) arr.push(st);
-        else streamsByChannel.set(st.channel, [st]);
-      }
-
-      const dynamicChannels: LiveSportsChannel[] = [];
-      for (const ch of filteredChannels) {
-        const streams = streamsByChannel.get(ch.id);
-        if (!streams || streams.length === 0) continue;
-
-        const sorted = [...streams].sort((a, b) => streamScore(b) - streamScore(a));
-        const best = sorted[0];
-        const countryInfo = SPANISH_COUNTRIES_MAP[ch.country] || { name: ch.country, flag: '⚽' };
-
-        const channelServers: StreamServer[] = sorted.slice(0, 4).map((st, idx) => ({
-          name: idx === 0 ? `${ch.name} (Principal ${st.quality || 'HD'})` : `${ch.name} (Opción ${idx + 1} ${st.quality || 'SD'})`,
-          url: st.url,
-          type: 'hls' as const,
-          language: 'En Vivo',
-          referrer: st.referrer ?? null,
-          userAgent: st.user_agent ?? null,
-        }));
-
-        dynamicChannels.push({
-          id: ch.id,
-          name: ch.name,
-          country: ch.country,
-          countryName: countryInfo.name,
-          countryFlag: countryInfo.flag,
-          logo: logoMap.get(ch.id)?.url || '',
-          streamUrl: best.url,
-          quality: best.quality ? `${best.quality}` : 'En Vivo',
-          category: 'Fútbol & Deportes',
-          isOnline: true,
-          referrer: best.referrer ?? null,
-          userAgent: best.user_agent ?? null,
-          geoBlocked: isGeoBlocked(best),
-          servers: channelServers,
-        });
-      }
-
-      // Verificados primero (sin duplicar), luego los dinámicos
-      const plutoChannels = await this.fetchPlutoChannels();
+      const plutoChannels = await this.fetchPlutoChannels().catch(() => []);
       const existingIds = new Set(VERIFIED_SPORTS_CHANNELS.map((c) => c.id));
       const uniqueDynamic = dynamicChannels.filter((c) => !existingIds.has(c.id));
-      const combined = [...VERIFIED_SPORTS_CHANNELS, ...plutoChannels, ...uniqueDynamic];
+      const combined = [
+        ...VERIFIED_SPORTS_CHANNELS.filter((c) => Boolean(c.streamUrl) || (c.servers && c.servers.length > 0)),
+        ...plutoChannels,
+        ...uniqueDynamic,
+      ];
 
-      let finalChannels = combined;
-      if (typeof window !== 'undefined' && window.electronAPI?.probeStreams) {
-        finalChannels = await this.filterOnlineStreams(combined);
-      }
-
+      const finalChannels = await this.filterOnlineStreams(combined);
       this.memoryCache = finalChannels;
+      this.lastCacheTimestamp = Date.now();
       this.saveToStorage(finalChannels);
       return finalChannels;
     } catch (err) {
-      console.warn('⚠️ [IPTV Service] Fallback a canales verificados:', err);
-      return this.memoryCache || VERIFIED_SPORTS_CHANNELS;
+      console.warn('⚠️ [IPTV Service] Error obteniendo canales deportivos:', err);
+      this.lastFetchFailed = true;
+      this.memoryCache = [];
+      this.lastCacheTimestamp = Date.now();
+      this.saveToStorage([]);
+      return [];
     } finally {
       this.isFetching = false;
     }
   }
 
-  private fetchDynamicStreamsBackground() {
-    if (this.isFetching) return;
-    this.fetchDynamicStreams().catch((err) => {
-      console.warn('Background IPTV update failed:', err);
-    });
-  }
-
   private readFromStorage(): LiveSportsChannel[] | null {
+    if (typeof window === 'undefined') return null;
     try {
-      const raw = localStorage.getItem(CACHE_KEY);
+      for (const oldKey of LEGACY_CACHE_KEYS) {
+        window.localStorage.removeItem(oldKey);
+      }
+      const raw = window.localStorage.getItem(CACHE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed.timestamp !== 'number' || !Array.isArray(parsed.channels)) {
+        return null;
+      }
       if (Date.now() - parsed.timestamp > CACHE_TTL_MS) return null;
-      return parsed.channels;
+      return parsed.channels.filter((ch: LiveSportsChannel) =>
+        assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl }).trusted
+      );
     } catch (_) {
       return null;
     }
   }
 
   private saveToStorage(channels: LiveSportsChannel[]) {
+    if (typeof window === 'undefined') return;
     try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), channels }));
+      if (channels.length === 0) {
+        window.localStorage.removeItem(CACHE_KEY);
+        return;
+      }
+      window.localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), channels }));
     } catch (_) {}
   }
 

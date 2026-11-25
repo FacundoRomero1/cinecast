@@ -190,6 +190,70 @@ export function rankProvidersByLanguage(providers: ProviderConfig[], _type?: str
   });
 }
 
+/**
+ * Filtro estricto peliculas/series: true solo si el servidor tiene audio Latino (es-419) o Castellano (es/es-ES).
+ * Servidores EN / multi / subtitulados / sin pista confiable devuelven false (no se borran los providers, solo no se listan).
+ */
+export function explainSpanishAudio(s: StreamServer): { ok: boolean; reason: string } {
+  if (!s) return { ok: false, reason: 'servidor nulo' };
+  const mm = String((s as any).mmLang || '').toLowerCase().trim();
+  if (mm) {
+    const ok = ['latino', 'lat', 'es-419', 'castellano', 'esp', 'es', 'es-es'].includes(mm);
+    return { ok, reason: `mmLang=${mm}` };
+  }
+  const audio = Array.isArray(s.audioLangs) ? s.audioLangs.map((x) => String(x).toLowerCase().trim()) : [];
+  if (audio.some((l) => ['latino', 'lat', 'es-419', 'es-mx', 'es', 'es-es', 'castellano', 'esp', 'spa'].includes(l))) {
+    return { ok: true, reason: `audioLangs=${audio.join(',')}` };
+  }
+  if (audio.some((l) => ['sub', 'subtitulado', 'en', 'eng', 'multi', 'original'].includes(l))) {
+    return { ok: false, reason: `audioLangs=${audio.join(',')} (sin latino/es)` };
+  }
+  const text = `${s.name || ''} ${s.language || ''}`.toLowerCase();
+  if (/subtitulad|\bsub\b/.test(text)) return { ok: false, reason: `etiqueta subtitulado: "${text.trim()}"` };
+  if (/latino|castellano|espa(ñ|n)ol|spanish|es-419|es-mx|es-es|\blat\b|\besp\b|\bes\b/.test(text)) {
+    return { ok: true, reason: `etiqueta es/latino: "${text.trim()}"` };
+  }
+  if (/multi|ingl|english|original|\ben\b/.test(text)) {
+    return { ok: false, reason: `etiqueta multi/EN: "${text.trim()}"` };
+  }
+  const prov = (providersData as ProviderConfig[]).find(
+    (p) => p.id === (s as any).providerId || p.name === s.name
+  );
+  if (prov) {
+    const rank = getAudioLangPriority(undefined, prov.languages, prov.langHintUnreliable);
+    return { ok: rank === 1 || rank === 2, reason: `provider ${prov.id} languages=${(prov.languages || []).join(',')} unreliable=${Boolean(prov.langHintUnreliable)} rank=${rank}` };
+  }
+  // Sin proveedor conocido ni etiqueta de idioma (URL puesta a mano): no se filtra.
+  return { ok: true, reason: 'sin pista de idioma ni provider (manual)' };
+}
+
+export function isSpanishAudioServer(s: StreamServer): boolean {
+  return explainSpanishAudio(s).ok;
+}
+
+const loggedFilterSignatures = new Set<string>();
+
+/** Deja solo Latino/Castellano. Log temporal [ServersFilter] con cantidades y motivo de cada descarte. */
+export function filterSpanishOnlyServers(servers: StreamServer[], label: string = ''): StreamServer[] {
+  const input = servers || [];
+  const kept: StreamServer[] = [];
+  const dropped: string[] = [];
+  for (const s of input) {
+    const ex = explainSpanishAudio(s);
+    if (ex.ok) kept.push(s);
+    else dropped.push(`  - "${s?.name}" [${s?.language || ''}] ${ex.reason}`);
+  }
+  const sig = `${label}|${input.map((s) => s?.name).join(',')}|${kept.length}`;
+  if (!loggedFilterSignatures.has(sig)) {
+    loggedFilterSignatures.add(sig);
+    console.log(
+      `[ServersFilter] ${label} entran=${input.length} quedan=${kept.length} descartados=${dropped.length}` +
+        (dropped.length ? '\n' + dropped.join('\n') : '')
+    );
+  }
+  return kept;
+}
+
 export interface GenerateServersOptions {
   tmdbId?: number;
   imdbId?: string;
@@ -199,6 +263,10 @@ export interface GenerateServersOptions {
   episode?: number;
   directMp4Url?: string;
   customServers?: StreamServer[];
+  /** El embed de MovieMaster solo se lista si ya se verifico que existe audio Latino/Castellano para el titulo. */
+  includeMmEmbed?: boolean;
+  /** No generar el placeholder HLS de MovieMaster (cuando ya se sabe que no hay audio Latino/ES). */
+  skipMmHls?: boolean;
 }
 
 const HEALTH_KEY = 'cinecast_provider_health_v1';
@@ -405,7 +473,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
     const rankedProviders = rankProvidersByLanguage(providersData as ProviderConfig[], type);
     for (const p of rankedProviders) {
       if (p.id === 'moviemaster' || p.type === 'hls') {
-        servers.push({
+        if (!options.skipMmHls) servers.push({
           id: `mm-direct-${tmdbId}-${season || 1}-${episode || 1}`,
           name: p.name,
           providerId: p.id,
@@ -415,6 +483,20 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
           language: 'Latino',
           audioLangs: ['latino'],
         } as StreamServer);
+        // Fallback real Latino: embed de MovieMaster (lang=LAT). No depende del acuñado HLS.
+        const mmEmbedUrl = buildProviderUrl(p, { tmdbId, type, season, episode });
+        if (mmEmbedUrl && options.includeMmEmbed) {
+          servers.push({
+            id: `mm-embed-${tmdbId}-${season || 1}-${episode || 1}`,
+            name: 'MovieMaster Embed (Latino)',
+            providerId: 'moviemaster-embed',
+            url: mmEmbedUrl,
+            type: 'iframe',
+            playable: 'iframe',
+            language: 'Latino',
+            audioLangs: ['latino'],
+          } as StreamServer);
+        }
         continue;
       }
 
@@ -474,7 +556,18 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
       return !lower.includes('tukiplay') && !lower.includes('videoapp') && !lower.includes('vimeo') && !lower.includes('streamhg');
     });
     servers.length = 0;
-    servers.push(...cleanServers);
+    // Peliculas/series: solo Latino o Castellano (los providers EN/multi siguen en providers.json, pero no se listan).
+    // Los servidores manuales (customServers / directMp4Url) no tienen providerId y no se tocan.
+    const keepAll = type !== 'movie' && type !== 'series';
+    if (keepAll) {
+      servers.push(...cleanServers);
+    } else {
+      const manual = cleanServers.filter((s) => !(s as any).providerId);
+      const generatedOnes = cleanServers.filter((s) => (s as any).providerId);
+      const keptOnes = filterSpanishOnlyServers(generatedOnes, `generateServersForMedia type=${type} tmdb=${tmdbId}`);
+      console.log(`[ServersFilter] generateServersForMedia type=${type} tmdb=${tmdbId} generados=${cleanServers.length} tras_filtro=${manual.length + keptOnes.length}`);
+      servers.push(...manual, ...keptOnes);
+    }
   }
 
   // 4. Señal directa embed (live TV, byseraguci, etc.) — se agrega al final, sin desordenar servidores principales
@@ -487,8 +580,8 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
     });
   }
 
-  // 5. Fallback absoluto
-  if (servers.length === 0) {
+  // 5. Fallback absoluto (solo si no se pidió omitir explícitamente porque no hay audio en español)
+  if (servers.length === 0 && !options.skipMmHls) {
     servers.push({
       name: 'Servidor Alternativo (HD)',
       url: 'https://vjs.zencdn.net/v/oceans.mp4',

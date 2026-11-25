@@ -1,7 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { mediaCatalog, sampleMovies } from '../data/mediaCatalog';
 import { tmdbService, fetchMoreByCategory } from '../services/tmdbService';
-import { getCachedCatalog, setCachedCatalog, compactMovie } from '../services/catalogCache';
+import {
+  getCachedCatalog,
+  setCachedCatalog,
+  compactMovie,
+  clearCachedCatalog,
+  fetchTmdbTitleForCard,
+  resolveSafeCardTitle,
+} from '../services/catalogCache';
 import { Movie } from '../types';
 
 const AUTO_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1 hora
@@ -44,11 +51,27 @@ export const useMediaCatalog = () => {
       const mergedMap = new Map<string, Movie>();
 
       for (const m of localMass) {
-        mergedMap.set(m.id, compactMovie(m));
+        const compacted = compactMovie(m);
+        if (resolveSafeCardTitle(compacted)) {
+          mergedMap.set(compacted.id, compacted);
+        } else if (compacted.tmdbId > 0) {
+          const isTv =
+            compacted.type !== 'movie' &&
+            (compacted.category === 'series' || compacted.category === 'anime' || compacted.type === 'series');
+          const healed = await fetchTmdbTitleForCard(isTv ? 'tv' : 'movie', compacted.tmdbId);
+          if (healed) {
+            compacted.title = healed;
+            compacted.titleEs = healed;
+            mergedMap.set(compacted.id, compacted);
+          } else {
+            await clearCachedCatalog().catch(() => {});
+          }
+        }
       }
 
       for (const cur of sampleMovies) {
-        mergedMap.set(cur.id, compactMovie(cur));
+        const compacted = compactMovie(cur);
+        mergedMap.set(compacted.id, compacted);
       }
 
       const mergedList = Array.from(mergedMap.values());

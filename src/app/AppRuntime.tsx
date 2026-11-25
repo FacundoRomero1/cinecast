@@ -1611,6 +1611,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             Number(e.episodeNumber || 1) === targetEpNum
         );
 
+      let updatedEpisodes = currentMedia.episodes;
       if (!foundEp && tmdbId > 0) {
         try {
           const res = await fetch(`/api/tv/${tmdbId}/season/${targetSeason}`, {
@@ -1623,7 +1624,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               const otherEps = (currentMedia.episodes || []).filter(
                 (e) => Number(e.seasonNumber ?? (e as any).season ?? 1) !== targetSeason
               );
-              currentMedia.episodes = [...otherEps, ...fetchedList];
+              updatedEpisodes = [...otherEps, ...fetchedList];
               foundEp = fetchedList.find((e) => Number(e.episodeNumber) === targetEpNum);
             }
           }
@@ -1648,22 +1649,32 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         servers: foundEp?.servers,
       };
 
+      const mediaTypeForServers = currentMedia.category === 'anime' ? 'anime' : 'series';
+      let updatedServers = currentMedia.servers;
       const hasTestServer = Boolean(
         currentMedia.servers?.some((s) => typeof s.url === 'string' && s.url.includes('/__test/'))
       );
       if (!hasTestServer && tmdbId > 0) {
-        currentMedia.servers = generateServersForMedia({
+        updatedServers = generateServersForMedia({
           tmdbId,
+          title: currentMedia.title,
           directMp4Url: currentMedia.videoUrl,
-          type: 'series',
+          type: mediaTypeForServers,
           season: targetSeason,
           episode: targetEpNum,
         });
       }
 
+      const updatedMedia: MediaItem = {
+        ...currentMedia,
+        episodes: updatedEpisodes,
+        servers: updatedServers,
+      };
+
       lastAutoAdvanceTriggeredAtRef.current = Date.now();
       lastObservedTimeRef.current = 0;
       stillTimeCounterRef.current = 0;
+      setActiveMedia(updatedMedia);
       setActiveEpisode(nextEp);
       setPlayerInitialTime(0);
       setIsPlayingLocally(true);
@@ -1672,11 +1683,11 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           ...prev,
           mediaId: sameMediaId,
           episodeId: nextEp.id,
-          mediaTitle: currentMedia.title,
+          mediaTitle: updatedMedia.title,
           seasonNumber: targetSeason,
           episodeNumber: targetEpNum,
           episodeTitle: nextEp.title,
-          mediaItem: currentMedia,
+          mediaItem: updatedMedia,
           episodeItem: nextEp,
           isPlaying: true,
           currentTime: 0,

@@ -1,4 +1,5 @@
 import type { CardItem, MediaDetailItem } from '../providers/types';
+import { resolveSafeCardTitle } from '../services/catalogCache';
 import { mediaSync } from '../services/mediaSync';
 import type { MediaItem, Movie, StreamServer } from '../types';
 
@@ -8,7 +9,7 @@ function toCategory(
 ): 'movie' | 'series' | 'anime' | 'live_tv' {
   if (category === 'anime') return 'anime';
   if (category === 'live_tv') return 'live_tv';
-  if (category === 'series' || type === 'series') return 'series';
+  if (type === 'series' || (type !== 'movie' && category === 'series')) return 'series';
   return 'movie';
 }
 
@@ -42,22 +43,33 @@ export function toMediaItem(
   card: CardItem,
   detail?: MediaDetailItem | null
 ): MediaItem {
-  const category = toCategory(
-    detail?.category || card.category,
-    detail?.type || card.type
-  );
-  const isSeries = category === 'series' || category === 'anime';
+  const effectiveType = detail?.type || card.type;
+  const category = toCategory(detail?.category || card.category, effectiveType);
+  const isSeries =
+    effectiveType !== 'movie' &&
+    (category === 'series' || category === 'anime' || effectiveType === 'series');
   const overview =
     detail?.overview && detail.overview.trim().length > 0
       ? detail.overview
       : '';
   const servers = mapDetailServers(detail);
+  const safeTitle =
+    resolveSafeCardTitle({
+      titleEs: detail?.titleEs || card.titleEs,
+      title: detail?.title || card.title,
+      originalTitle: detail?.originalTitle || card.originalTitle,
+    }) || card.title;
+  const safeOriginal =
+    resolveSafeCardTitle({
+      title: detail?.originalTitle || card.originalTitle || safeTitle,
+    }) || safeTitle;
 
   const movie: Movie = {
     id: card.id,
     tmdbId: card.tmdbId,
-    title: detail?.title || card.title,
-    originalTitle: detail?.originalTitle || card.title,
+    title: safeTitle,
+    titleEs: detail?.titleEs || card.titleEs || safeTitle,
+    originalTitle: safeOriginal,
     overview,
     posterPath: card.posterUrl,
     posterUrl: card.posterUrl,

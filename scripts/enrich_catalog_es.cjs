@@ -41,30 +41,32 @@ async function main() {
 
   // 2. Consultar páginas populares de TMDB en español (es-MX)
   console.log('📡 Consultando páginas de TMDB (es-MX) para títulos originales y lenguajes...');
-  const tmdbMap = new Map(); // id -> { title, original_title, original_language }
+  const tmdbMap = new Map(); // `${type}:${id}` -> { title, original_title, original_language }
 
   const endpoints = [];
   // Películas populares y mejor valoradas (es-MX)
   for (let p = 1; p <= 40; p++) {
-    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=popularity.desc&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=vote_count.desc&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=es&page=${p}`);
+    endpoints.push({ mediaType: 'movie', url: `${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=popularity.desc&page=${p}` });
+    endpoints.push({ mediaType: 'movie', url: `${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=vote_count.desc&page=${p}` });
+    endpoints.push({ mediaType: 'movie', url: `${BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=es&page=${p}` });
   }
   // Series y anime (es-MX)
   for (let p = 1; p <= 30; p++) {
-    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=popularity.desc&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_genres=16&page=${p}`);
-    endpoints.push(`${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=es&page=${p}`);
+    endpoints.push({ mediaType: 'tv', url: `${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&sort_by=popularity.desc&page=${p}` });
+    endpoints.push({ mediaType: 'tv', url: `${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_genres=16&page=${p}` });
+    endpoints.push({ mediaType: 'tv', url: `${BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&language=es-AR&with_original_language=es&page=${p}` });
   }
 
   const batchSize = 10;
   for (let i = 0; i < endpoints.length; i += batchSize) {
     const chunk = endpoints.slice(i, i + batchSize);
-    const results = await Promise.all(chunk.map((url) => fetchPage(url)));
-    for (const list of results) {
+    const results = await Promise.all(
+      chunk.map(async (ep) => ({ mediaType: ep.mediaType, list: await fetchPage(ep.url) }))
+    );
+    for (const { mediaType, list } of results) {
       for (const item of list) {
         if (!item || !item.id) continue;
-        const key = Number(item.id);
+        const key = `${mediaType}:${Number(item.id)}`;
         const titleEs = (item.title || item.name || '').trim();
         const origTitle = (item.original_title || item.original_name || titleEs).trim();
         const origLang = item.original_language || 'es';
@@ -82,7 +84,13 @@ async function main() {
   let enriched = 0;
   for (const item of catalog) {
     const tmdbId = Number(item.tmdbId || (item.id && String(item.id).replace(/\D+/g, '')) || 0);
-    const tmdbInfo = tmdbMap.get(tmdbId);
+    const mediaType =
+      item.type === 'movie'
+        ? 'movie'
+        : item.type === 'series' || item.mediaType === 'tv' || item.category === 'series' || item.category === 'anime'
+          ? 'tv'
+          : 'movie';
+    const tmdbInfo = tmdbMap.get(`${mediaType}:${tmdbId}`);
 
     if (tmdbInfo) {
       if (tmdbInfo.title) {

@@ -59,12 +59,26 @@ function toStringArray(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === 'string');
 }
 
+function sanitizeTitleValue(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  if (lower === 'sin título' || lower === 'sin titulo' || lower === 'undefined' || lower === 'null' || lower === 'untitled') {
+    return '';
+  }
+  if (/^https?:\/\//i.test(trimmed) || /^tmdb-(movie|series|anime)-\d+$/i.test(trimmed)) {
+    return '';
+  }
+  return trimmed;
+}
+
 function normalizeCardItem(raw: unknown): CardItem {
   if (!isRecord(raw)) {
     return {
       id: 'unknown',
       tmdbId: 0,
-      title: 'Sin Título',
+      title: '',
       posterUrl: '',
       backdropUrl: '',
       year: 2024,
@@ -80,12 +94,25 @@ function normalizeCardItem(raw: unknown): CardItem {
   const backdrop = toStringSafe(raw.backdropUrl) || toStringSafe(raw.backdropPath) || poster;
   const rating = toNumberSafe(raw.rating ?? raw.voteAverage, 7.0);
   const category = toStringSafe(raw.category, 'movie');
-  const type = toStringSafe(raw.type, category === 'series' || category === 'anime' ? 'series' : 'movie');
+  const rawType = toStringSafe(raw.type, '');
+  const type =
+    rawType === 'movie'
+      ? 'movie'
+      : rawType === 'series'
+        ? 'series'
+        : category === 'series' || category === 'anime'
+          ? 'series'
+          : 'movie';
+  const cleanTitleEs = sanitizeTitleValue(raw.titleEs);
+  const cleanOrigTitle = sanitizeTitleValue(raw.originalTitle);
+  const cleanTitle = sanitizeTitleValue(raw.title) || cleanTitleEs || cleanOrigTitle;
 
   return {
     id: toStringSafe(raw.id, `tmdb-${category}-${toNumberSafe(raw.tmdbId, 0)}`),
     tmdbId: toNumberSafe(raw.tmdbId, 0),
-    title: toStringSafe(raw.title, 'Sin Título'),
+    title: cleanTitle,
+    titleEs: cleanTitleEs || undefined,
+    originalTitle: cleanOrigTitle || undefined,
     posterUrl: poster,
     backdropUrl: backdrop,
     year: toNumberSafe(raw.year, 2024),

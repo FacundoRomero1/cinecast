@@ -1,6 +1,7 @@
 import { Play, Star, Trash2, Tv } from 'lucide-react';
 import React from 'react';
 import type { CardItem } from '../providers/types';
+import { fetchTmdbTitleForCard, resolveSafeCardTitle } from '../services/catalogCache';
 import { getPosterProxyUrl, type PosterWidth } from './liteMode';
 
 export interface TitleCardProps {
@@ -25,8 +26,27 @@ export const TitleCard: React.FC<TitleCardProps> = ({
   className = '',
 }) => {
   const isSeries =
-    item.type === 'series' || item.category === 'series' || item.category === 'anime';
-  const displayTitle = item.titleEs || item.originalTitle || item.title;
+    item.type !== 'movie' &&
+    (item.type === 'series' || item.category === 'series' || item.category === 'anime');
+  const safeTitle = resolveSafeCardTitle(item);
+  const healKey = `${item.id}:${item.tmdbId}`;
+  const [healedEntry, setHealedEntry] = React.useState<{ key: string; title: string } | null>(null);
+
+  React.useEffect(() => {
+    if (safeTitle || item.tmdbId <= 0) return;
+    let cancelled = false;
+    fetchTmdbTitleForCard(isSeries ? 'tv' : 'movie', item.tmdbId).then((resolved) => {
+      if (!cancelled && resolved) {
+        setHealedEntry({ key: healKey, title: resolved });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [safeTitle, healKey, item.tmdbId, isSeries]);
+
+  const healedTitle = healedEntry && healedEntry.key === healKey ? healedEntry.title : '';
+  const displayTitle = safeTitle || healedTitle || 'Título no disponible';
   const posterSrc = getPosterProxyUrl(item.posterUrl, posterWidth);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {

@@ -13,7 +13,7 @@ import {
   type ResolveParams,
   type ResolveResult,
 } from './index.js';
-import { getAllPenalties, getPenaltiesCount, recordServerPenalty } from './penalties.js';
+import { buildResolveTitleId, getAllPenalties, getPenaltiesCount, recordServerPenalty } from './penalties.js';
 import { buildCoalescingKey } from './queue.js';
 import { getVidLinkProVideo } from '../extractors/vidlink.js';
 import {
@@ -319,6 +319,8 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
     const providerId = rawProv && rawProv !== 'tukiplay' && rawProv !== 'streamhg' ? rawProv : 'vidlink.pro';
     const tmdbId = rawBody.tmdbId ?? rawBody.params?.tmdbId;
     const type = rawBody.type ?? rawBody.params?.type ?? 'movie';
+    const rawSeason = Number(rawBody.season ?? rawBody.params?.season);
+    const rawEpisode = Number(rawBody.episode ?? rawBody.params?.episode);
     const serverId = rawBody.serverId;
     const penaltyMs = Number(rawBody.penaltyMs) || 15_000;
     const reason = rawBody.reason || 'desconocido';
@@ -328,7 +330,12 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
       return;
     }
 
-    const titleId = `${type}:${tmdbId}`;
+    const titleId = buildResolveTitleId(
+      type,
+      tmdbId,
+      Number.isFinite(rawSeason) ? rawSeason : undefined,
+      Number.isFinite(rawEpisode) ? rawEpisode : undefined
+    );
     const newPenalty = recordServerPenalty(providerId, titleId, serverId, penaltyMs, reason);
     console.log(`[Penalty] Servidor "${serverId}" penalizado en ${titleId}: +${penaltyMs}ms (total=${newPenalty}ms, motivo="${reason}")`);
 

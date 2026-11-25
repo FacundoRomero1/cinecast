@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Play, Cast, Radio, Search, RefreshCw, Tv, Activity, Sparkles, X, Globe } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Play, Cast, Radio, Search, RefreshCw, Tv, X, AlertTriangle } from 'lucide-react';
 import { LiveSportsChannel, MediaItem } from '../types';
 import { iptvService } from '../services/iptvService';
 import { deviceSync } from '../services/deviceSync';
+import { saveScrollSnapshot } from '../ui/useScrollRestoration';
 
 interface SportsLiveGridProps {
   onPlayChannel: (mediaItem: MediaItem) => void;
@@ -18,34 +19,44 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
   const [channels, setChannels] = useState<LiveSportsChannel[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCountry, setSelectedCountry] = useState<string>('AR');
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let mounted = true;
-    setLoading(true);
-    iptvService.getSportsChannels().then((data) => {
-      if (mounted) {
+    iptvService
+      .getSportsChannels()
+      .then((data) => {
+        if (!mounted) return;
         setChannels(data);
+        setLoadError(iptvService.hasLastFetchError());
         setLoading(false);
-      }
-    });
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setChannels([]);
+        setLoadError(true);
+        setLoading(false);
+      });
     return () => {
       mounted = false;
     };
   }, []);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const updated = await iptvService.fetchDynamicStreams();
+      const updated = await iptvService.fetchDynamicStreams(true);
       setChannels(updated);
+      setLoadError(iptvService.hasLastFetchError());
     } catch (_) {
+      setLoadError(true);
     } finally {
       setRefreshing(false);
     }
-  };
+  }, []);
 
   const countriesList = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -196,24 +207,64 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
           <div className="w-10 h-10 rounded-full border-2 border-red-600 border-t-transparent animate-spin" />
-          <p className="text-xs text-zinc-400">Cargando canales deportivos desde IPTV-org API...</p>
+          <p className="text-xs text-zinc-400">Verificando señales deportivas en tiempo real...</p>
+        </div>
+      ) : channels.length === 0 ? (
+        <div
+          data-testid="sports-empty-degraded"
+          className="text-center py-14 bg-zinc-900/60 rounded-3xl border border-red-900/40 p-8 max-w-md mx-auto space-y-4"
+        >
+          <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto" />
+          <div className="space-y-1">
+            <h3 className="text-base font-bold text-white">
+              {loadError ? 'Error al verificar señales' : 'Sin señales en vivo disponibles'}
+            </h3>
+            <p className="text-xs text-zinc-400">
+              {loadError
+                ? 'No pudimos conectar con el servicio de verificación de canales deportivos.'
+                : 'Ningún canal deportivo respondió a la verificación de sus streams .m3u8 en este momento.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            <span>{refreshing ? 'Verificando señales...' : 'Reintentar'}</span>
+          </button>
         </div>
       ) : filteredChannels.length === 0 ? (
         <div className="text-center py-16 bg-zinc-900/40 rounded-3xl border border-zinc-800/80 p-8 max-w-md mx-auto">
           <Radio className="w-10 h-10 text-zinc-500 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-white mb-1">No se encontraron canales</h3>
+          <h3 className="text-base font-bold text-white mb-1">No se encontraron canales activos</h3>
           <p className="text-xs text-zinc-400 mb-4">
-            No hay señales activas que coincidan con &quot;{searchQuery}&quot;.
+            {searchQuery
+              ? `No hay señales activas que coincidan con "${searchQuery}".`
+              : `No hay señales verificadas para ${getCountryLabel(selectedCountry)} en este momento.`}
           </p>
-          <button
-            onClick={() => {
-              setSearchQuery('');
-              setSelectedCountry('all');
-            }}
-            className="px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-500 transition"
-          >
-            Limpiar filtros
-          </button>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl border border-zinc-700 transition cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              <span>Reintentar</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedCountry('all');
+              }}
+              className="px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-500 transition cursor-pointer"
+            >
+              Ver todos los canales
+            </button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
@@ -221,6 +272,9 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
             const hasError = imgErrors[channel.id];
             const mediaItem = iptvService.channelToMediaItem(channel);
             const handleChannelAction = () => {
+              if (typeof window !== 'undefined') {
+                saveScrollSnapshot('/canales', '/canales', window.scrollY);
+              }
               if (isRemote) {
                 onCastChannel(mediaItem);
               } else {

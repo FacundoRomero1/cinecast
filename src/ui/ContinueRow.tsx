@@ -1,5 +1,5 @@
 import React, { useRef, useMemo, useState, useEffect } from 'react';
-import { Play, Cast, X, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Play, Cast, X, Clock, ChevronLeft, ChevronRight, Info } from 'lucide-react';
 import type { MediaItem, Episode, MediaType } from '../types';
 import type { WatchProgressItem } from '../services/watchHistoryService';
 import { createStyledPosterFallback } from '../utils/imageUtils';
@@ -8,6 +8,7 @@ export interface ContinueRowProps {
   items: WatchProgressItem[];
   onPlay: (mediaItem: MediaItem, episodeItem?: Episode | null, initialTime?: number) => void;
   onCast?: (mediaItem: MediaItem, episodeItem?: Episode | null, initialTime?: number) => void;
+  onOpenDetail?: (mediaItem: MediaItem) => void;
   onRemove: (id: string) => void;
   connectedScreenName?: string;
 }
@@ -16,6 +17,7 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
   items,
   onPlay,
   onCast,
+  onOpenDetail,
   onRemove,
   connectedScreenName = 'PC',
 }) => {
@@ -233,6 +235,12 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
             backdropUrl: item.backdropUrl || baseMedia.backdropUrl,
           };
 
+          const cleanDetailId = (item.mediaItem?.id || item.mediaId || item.id).replace(/_s\d+_e\d+$/, '');
+          const detailPayload: MediaItem = {
+            ...mediaPayload,
+            id: cleanDetailId,
+          };
+
           return (
             <div
               key={`cw-${item.id}-${idx}`}
@@ -303,9 +311,24 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
               <div className="p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold text-white truncate" title={item.title}>
-                      {item.title}
-                    </h3>
+                    {onOpenDetail ? (
+                      <button
+                        type="button"
+                        data-testid="continue-title"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenDetail(detailPayload);
+                        }}
+                        className="block max-w-full text-left text-sm font-bold text-white hover:text-red-400 hover:underline truncate transition-colors cursor-pointer"
+                        title={`Ver ficha de ${item.title}`}
+                      >
+                        {item.title}
+                      </button>
+                    ) : (
+                      <h3 className="text-sm font-bold text-white truncate" title={item.title}>
+                        {item.title}
+                      </h3>
+                    )}
                     {episodeLabel && (
                       <p className="text-xs text-red-400 font-medium truncate mt-0.5">
                         {episodeLabel}
@@ -317,22 +340,39 @@ export const ContinueRow: React.FC<ContinueRowProps> = ({
                     </p>
                   </div>
 
-                  {/* Botón Cast (44x44 px) */}
-                  {onCast && (
-                    <button
-                      type="button"
-                      data-testid="continue-cast"
-                      aria-label={`Enviar ${item.title} a ${connectedScreenName}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCast(mediaPayload, effectiveEp, item.currentTime);
-                      }}
-                      className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-zinc-800/90 hover:bg-red-600 text-zinc-300 hover:text-white border border-zinc-700/60 transition shrink-0 flex items-center justify-center active:scale-95"
-                      title={`Enviar a ${connectedScreenName}`}
-                    >
-                      <Cast size={18} />
-                    </button>
-                  )}
+                  {/* Botones de Ficha (Info) y Cast (44x44 px) */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {onOpenDetail && (
+                      <button
+                        type="button"
+                        data-testid="continue-info"
+                        aria-label={`Ver ficha y detalles de ${item.title}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenDetail(detailPayload);
+                        }}
+                        className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60 transition flex items-center justify-center active:scale-95 cursor-pointer"
+                        title="Ver ficha y episodios"
+                      >
+                        <Info size={18} />
+                      </button>
+                    )}
+                    {onCast && (
+                      <button
+                        type="button"
+                        data-testid="continue-cast"
+                        aria-label={`Enviar ${item.title} a ${connectedScreenName}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCast(mediaPayload, effectiveEp, item.currentTime);
+                        }}
+                        className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-zinc-800/90 hover:bg-red-600 text-zinc-300 hover:text-white border border-zinc-700/60 transition flex items-center justify-center active:scale-95"
+                        title={`Enviar a ${connectedScreenName}`}
+                      >
+                        <Cast size={18} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

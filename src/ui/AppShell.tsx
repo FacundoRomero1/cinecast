@@ -40,8 +40,8 @@ const DESKTOP_MAIN_ITEMS: NavItemConfig[] = [
   { to: '/explorar', label: 'Explorar', icon: Compass },
   { to: '/buscar', label: 'Buscar', icon: Search },
   { to: '/lista', label: 'Mi lista', icon: Bookmark },
-  { to: '/deportes', label: 'Deportes', icon: Trophy },
-  { to: '/canales', label: 'Canales', icon: Tv },
+  { to: '/canales', label: 'Deportes / TV en vivo', icon: Tv },
+  { to: '/deportes', label: 'Agenda Deportes', icon: Trophy },
   { to: '/musica', label: 'Música', icon: Music },
   { to: '/youtube', label: 'YouTube', icon: Youtube },
 ];
@@ -49,6 +49,7 @@ const DESKTOP_MAIN_ITEMS: NavItemConfig[] = [
 const MOBILE_TAB_ITEMS: NavItemConfig[] = [
   { to: '/', label: 'Inicio', icon: Home },
   { to: '/explorar', label: 'Explorar', icon: Compass },
+  { to: '/canales', label: 'Deportes', icon: Trophy },
   { to: '/buscar', label: 'Buscar', icon: Search },
   { to: '/lista', label: 'Mi lista', icon: Bookmark },
   { to: '/control', label: 'Control', icon: Gamepad2 },
@@ -214,7 +215,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               end={item.to === '/'}
               onClick={(e) => handleTabClick(item, e)}
               className={({ isActive }) =>
-                `min-h-[44px] min-w-[44px] flex-1 py-1.5 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation ${
+                `min-h-[44px] min-w-[40px] flex-1 py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 touch-manipulation ${
                   item.to === '/control'
                     ? isControlOpen
                       ? 'text-red-500'

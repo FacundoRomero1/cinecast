@@ -67,6 +67,22 @@ import { GridSkeleton, HeroSkeleton } from './Skeleton';
 import { useLiteMode, type LiteModePreference } from './liteMode';
 import { RemoteSheet } from './RemoteSheet';
 import { getTabMemory, saveTabMemory } from './navigationMemory';
+import { saveScrollSnapshot } from './useScrollRestoration';
+
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+let homeRowsCache: { rows: HomeRow[]; heroSynopsis: string; ts: number } | null = null;
+const exploreViewCache = new Map<
+  string,
+  {
+    items: CardItem[];
+    total: number;
+    page: number;
+    totalPages: number;
+    facetGenres: GenreCountItem[];
+    ts: number;
+  }
+>();
+const searchViewCache = new Map<string, { results: CardItem[]; ts: number }>();
 
 export interface NewAppProps {
   onDisableV2?: () => void;
@@ -80,7 +96,8 @@ function buildTitleRoute(item: CardItem | MediaItem): string {
       : cat === 'series' || item.type === 'series'
       ? 'series'
       : 'movie';
-  return `/titulo/${encodeURIComponent(typeSeg)}/${encodeURIComponent(item.id)}`;
+  const cleanId = String(item.id || '').replace(/_s\d+_e\d+$/, '');
+  return `/titulo/${encodeURIComponent(typeSeg)}/${encodeURIComponent(cleanId)}`;
 }
 
 interface HomeViewProps {
@@ -106,14 +123,25 @@ const HomeView: React.FC<HomeViewProps> = ({
   } = useAppRuntime();
 
   const { isLite } = useLiteMode();
-  const [rows, setRows] = useState<HomeRow[]>([]);
-  const [heroSynopsis, setHeroSynopsis] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(true);
+  const hasFreshHomeCache = Boolean(
+    homeRowsCache && Date.now() - homeRowsCache.ts < CATALOG_CACHE_TTL_MS && homeRowsCache.rows.length > 0
+  );
+  const [rows, setRows] = useState<HomeRow[]>(() => (hasFreshHomeCache ? homeRowsCache!.rows : []));
+  const [heroSynopsis, setHeroSynopsis] = useState<string>(() =>
+    hasFreshHomeCache ? homeRowsCache!.heroSynopsis : ''
+  );
+  const [loading, setLoading] = useState<boolean>(() => !hasFreshHomeCache);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    const cached =
+      homeRowsCache && Date.now() - homeRowsCache.ts < CATALOG_CACHE_TTL_MS && homeRowsCache.rows.length > 0
+        ? homeRowsCache
+        : null;
+    if (!cached) {
+      setLoading(true);
+    }
     setError(null);
 
     const historyAll = watchHistoryService.getAll();
@@ -130,9 +158,14 @@ const HomeView: React.FC<HomeViewProps> = ({
       .then((res) => {
         if (cancelled) return;
         setRows(res.rows);
+        homeRowsCache = {
+          rows: res.rows,
+          heroSynopsis: homeRowsCache?.heroSynopsis || '',
+          ts: Date.now(),
+        };
       })
       .catch((err: unknown) => {
-        if (cancelled) return;
+        if (cancelled || cached) return;
         setError(err instanceof Error ? err.message : 'Error al cargar Inicio');
       })
       .finally(() => {
@@ -164,6 +197,9 @@ const HomeView: React.FC<HomeViewProps> = ({
       .then((d) => {
         if (!cancelled && d.overview) {
           setHeroSynopsis(d.overview);
+          if (homeRowsCache) {
+            homeRowsCache = { ...homeRowsCache, heroSynopsis: d.overview };
+          }
         }
       })
       .catch(() => {});
@@ -191,6 +227,52 @@ const HomeView: React.FC<HomeViewProps> = ({
 
   return (
     <div className="py-4 sm:py-6 space-y-2">
+      {/* Barra visible de navegación principal por categorías del catálogo */}
+      <nav
+        aria-label="Categorías del catálogo"
+        data-testid="catalog-category-nav"
+        className="px-4 sm:px-8 pb-2 flex items-center gap-2 overflow-x-auto no-scrollbar"
+      >
+        <button
+          type="button"
+          onClick={() => navigate('/explorar')}
+          className="px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 hover:text-white whitespace-nowrap transition shrink-0"
+        >
+          Todo el catálogo
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate('/explorar?category=movie&type=movie')}
+          className="px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 hover:text-white whitespace-nowrap transition shrink-0"
+        >
+          Películas
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate('/explorar?category=series&type=series')}
+          className="px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 hover:text-white whitespace-nowrap transition shrink-0"
+        >
+          Series
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate('/explorar?category=anime&type=anime')}
+          className="px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 hover:text-white whitespace-nowrap transition shrink-0"
+        >
+          Anime
+        </button>
+        <button
+          type="button"
+          data-testid="catalog-nav-sports"
+          onClick={() => navigate('/canales')}
+          className="px-3.5 py-2 rounded-xl bg-red-950/70 hover:bg-red-600 border border-red-500/40 text-xs font-extrabold text-red-200 hover:text-white whitespace-nowrap flex items-center gap-1.5 transition shadow-sm shrink-0"
+        >
+          <Tv className="w-3.5 h-3.5 text-red-400 shrink-0" />
+          <span>Deportes / TV en vivo</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        </button>
+      </nav>
+
       <div className="px-4 sm:px-8">
         <Hero
           item={heroItem}
@@ -210,6 +292,10 @@ const HomeView: React.FC<HomeViewProps> = ({
           }}
           onCast={(media, episode, initialTime) => {
             handleCastMediaToScreen(media, episode || undefined, initialTime);
+          }}
+          onOpenDetail={(media) => {
+            saveScrollSnapshot('/inicio', '/inicio', window.scrollY);
+            navigate(buildTitleRoute(media));
           }}
           onRemove={(id) => {
             watchHistoryService.remove(id);
@@ -375,10 +461,15 @@ const ExploreView: React.FC<ExploreViewProps> = ({
 
   const [filters, setFilters] = useState<FilterState>(initialFilters);
   const [lastFilterHint, setLastFilterHint] = useState<{ label: string; revert: (f: FilterState) => FilterState } | null>(null);
+  const navigate = useNavigate();
 
   // Sincronizar cambios en los filtros con los parámetros de la URL usando replace: true
   const updateFilters = useCallback(
     (next: FilterState) => {
+      if (next.category === 'live_tv') {
+        navigate('/canales');
+        return;
+      }
       setFilters((prev) => {
         if (next.genres.length > prev.genres.length) {
           const added = next.genres.find((g) => !prev.genres.includes(g));
@@ -432,7 +523,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
 
       setSearchParams(params, { replace: true });
     },
-    [setSearchParams]
+    [navigate, setSearchParams]
   );
 
   useEffect(() => {
@@ -484,12 +575,36 @@ const ExploreView: React.FC<ExploreViewProps> = ({
     });
   }, [searchParams]);
 
-  const [items, setItems] = useState<CardItem[]>([]);
-  const [total, setTotal] = useState<number>(0);
-  const [page, setPage] = useState<number>(1);
-  const [totalPages, setTotalPages] = useState<number>(1);
-  const [facetGenres, setFacetGenres] = useState<GenreCountItem[]>([]);
-  const [loadingInitial, setLoadingInitial] = useState<boolean>(true);
+  const filterCacheKey = useMemo(
+    () =>
+      [
+        filters.category || 'all',
+        filters.genres.join(','),
+        filters.genreMode || 'all',
+        filters.yearFrom ?? '',
+        filters.yearTo ?? '',
+        filters.minRating ?? 0,
+        filters.sort || 'default',
+      ].join('|'),
+    [filters]
+  );
+
+  const initialCachedExplore = useMemo(() => {
+    const c = exploreViewCache.get(filterCacheKey);
+    if (c && Date.now() - c.ts < CATALOG_CACHE_TTL_MS && c.items.length > 0) {
+      return c;
+    }
+    return null;
+  }, [filterCacheKey]);
+
+  const [items, setItems] = useState<CardItem[]>(() => initialCachedExplore?.items ?? []);
+  const [total, setTotal] = useState<number>(() => initialCachedExplore?.total ?? 0);
+  const [page, setPage] = useState<number>(() => initialCachedExplore?.page ?? 1);
+  const [totalPages, setTotalPages] = useState<number>(() => initialCachedExplore?.totalPages ?? 1);
+  const [facetGenres, setFacetGenres] = useState<GenreCountItem[]>(
+    () => initialCachedExplore?.facetGenres ?? []
+  );
+  const [loadingInitial, setLoadingInitial] = useState<boolean>(() => !initialCachedExplore);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
   const loadingMoreRef = useRef<boolean>(false);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
@@ -511,6 +626,17 @@ const ExploreView: React.FC<ExploreViewProps> = ({
   );
 
   useEffect(() => {
+    const cached = exploreViewCache.get(filterCacheKey);
+    if (cached && Date.now() - cached.ts < CATALOG_CACHE_TTL_MS && cached.items.length > 0) {
+      setItems(cached.items);
+      setTotal(cached.total);
+      setPage(cached.page);
+      setTotalPages(cached.totalPages);
+      setFacetGenres(cached.facetGenres);
+      setLoadingInitial(false);
+      return;
+    }
+
     const controller = new AbortController();
     if (loadMoreAbortRef.current) {
       loadMoreAbortRef.current.abort();
@@ -526,17 +652,25 @@ const ExploreView: React.FC<ExploreViewProps> = ({
       .query({ ...buildQueryParams(1), signal: controller.signal })
       .then((res) => {
         if (cancelled) return;
-        setItems(res.items.slice(0, MAX_EXPLORE_ITEMS));
+        const firstItems = res.items.slice(0, MAX_EXPLORE_ITEMS);
+        const list: GenreCountItem[] =
+          res.facets && res.facets.genres
+            ? Object.entries(res.facets.genres)
+                .map(([name, count]) => ({ name, count }))
+                .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'es'))
+            : [];
+        setItems(firstItems);
         setTotal(res.total);
         setTotalPages(res.totalPages);
-        if (res.facets && res.facets.genres) {
-          const list: GenreCountItem[] = Object.entries(res.facets.genres)
-            .map(([name, count]) => ({ name, count }))
-            .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'es'));
-          setFacetGenres(list);
-        } else {
-          setFacetGenres([]);
-        }
+        setFacetGenres(list);
+        exploreViewCache.set(filterCacheKey, {
+          items: firstItems,
+          total: res.total,
+          page: 1,
+          totalPages: res.totalPages,
+          facetGenres: list,
+          ts: Date.now(),
+        });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -556,7 +690,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
         loadMoreAbortRef.current = null;
       }
     };
-  }, [buildQueryParams]);
+  }, [buildQueryParams, filterCacheKey]);
 
   const loadNextPage = useCallback(() => {
     if (
@@ -582,7 +716,16 @@ const ExploreView: React.FC<ExploreViewProps> = ({
           if (prev.length >= MAX_EXPLORE_ITEMS) return prev;
           const existingIds = new Set(prev.map((i) => i.id));
           const fresh = res.items.filter((i) => !existingIds.has(i.id));
-          return [...prev, ...fresh].slice(0, MAX_EXPLORE_ITEMS);
+          const merged = [...prev, ...fresh].slice(0, MAX_EXPLORE_ITEMS);
+          exploreViewCache.set(filterCacheKey, {
+            items: merged,
+            total: res.total || total,
+            page: nextPage,
+            totalPages: res.totalPages || totalPages,
+            facetGenres,
+            ts: Date.now(),
+          });
+          return merged;
         });
         setPage(nextPage);
       })
@@ -596,7 +739,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
         loadingMoreRef.current = false;
         setLoadingMore(false);
       });
-  }, [buildQueryParams, items.length, loadingInitial, page, totalPages]);
+  }, [buildQueryParams, facetGenres, filterCacheKey, items.length, loadingInitial, page, total, totalPages]);
 
   return (
     <div className="p-4 sm:p-8">
@@ -801,12 +944,22 @@ const SearchView: React.FC<SearchViewProps> = ({
       return;
     }
 
+    const cached = searchViewCache.get(debouncedQuery);
+    if (cached && Date.now() - cached.ts < CATALOG_CACHE_TTL_MS) {
+      setResults(cached.results);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     localCatalogProvider
       .search(debouncedQuery)
       .then((res) => {
-        if (!cancelled) setResults(res);
+        if (!cancelled) {
+          setResults(res);
+          searchViewCache.set(debouncedQuery, { results: res, ts: Date.now() });
+        }
       })
       .catch(() => {
         if (!cancelled) setResults([]);
@@ -916,10 +1069,19 @@ const MyListView: React.FC<MyListViewProps> = ({
         if (isRecordObj(raw) && Array.isArray(raw.items)) {
           for (const entry of raw.items) {
             if (!isRecordObj(entry)) continue;
+            const safeTitleEs = typeof entry.titleEs === 'string' ? entry.titleEs.trim() : undefined;
+            const safeOrigTitle = typeof entry.originalTitle === 'string' ? entry.originalTitle.trim() : undefined;
+            const rawTitle = typeof entry.title === 'string' ? entry.title.trim() : '';
+            const safeTitle =
+              rawTitle && rawTitle.toLowerCase() !== 'sin título'
+                ? rawTitle
+                : safeTitleEs || safeOrigTitle || '';
             serverItems.push({
               id: typeof entry.id === 'string' ? entry.id : '',
               tmdbId: typeof entry.tmdbId === 'number' ? entry.tmdbId : Number(entry.tmdbId) || 0,
-              title: typeof entry.title === 'string' ? entry.title : 'Sin Título',
+              title: safeTitle,
+              titleEs: safeTitleEs,
+              originalTitle: safeOrigTitle,
               posterUrl: typeof entry.posterUrl === 'string' ? entry.posterUrl : '',
               backdropUrl: typeof entry.backdropUrl === 'string' ? entry.backdropUrl : '',
               year: typeof entry.year === 'number' ? entry.year : 2024,
@@ -1056,17 +1218,28 @@ const TitleDetailRouteView: React.FC = () => {
     let cancelled = false;
     setLoading(true);
 
-    // 1. Buscar coincidencia rápida en MEDIA_CATALOG o consultar servidor
-    const localFound = MEDIA_CATALOG.find(
-      (m) => m.id === id || String(m.tmdbId) === id
-    );
+    // 1. Buscar coincidencia rápida en MEDIA_CATALOG o consultar servidor (respetando movie vs series)
+    const wantSeries = type === 'series' || type === 'anime' || type === 'tv';
+    const localFound =
+      MEDIA_CATALOG.find((m) => m.id === id) ||
+      MEDIA_CATALOG.find((m) => {
+        if (String(m.tmdbId) !== id) return false;
+        const mSeries = m.type !== 'movie' && (m.category === 'series' || m.category === 'anime' || m.type === 'series');
+        return mSeries === wantSeries;
+      });
 
     const loadMedia = async () => {
       try {
         // Consultar /api/catalog?ids= para obtener CardItem real del catálogo de 10.119 títulos
         const base = deviceSync.getApiBase();
-        const queryId = id.startsWith('tmdb-') ? id : `tmdb-${type === 'series' || type === 'anime' ? 'tv' : 'movie'}-${id}`;
-        const idsToFetch = id === queryId ? encodeURIComponent(id) : `${encodeURIComponent(id)},${encodeURIComponent(queryId)}`;
+        const candidateIds = id.startsWith('tmdb-')
+          ? [id]
+          : type === 'anime'
+            ? [`tmdb-anime-${id}`, `tmdb-series-${id}`]
+            : wantSeries
+              ? [`tmdb-series-${id}`, `tmdb-anime-${id}`]
+              : [`tmdb-movie-${id}`, `tmdb-anime-${id}`];
+        const idsToFetch = candidateIds.map((c) => encodeURIComponent(c)).join(',');
         const catRes = await fetch(
           `${base}/api/catalog?ids=${idsToFetch}&fields=card`
         );
@@ -1084,6 +1257,8 @@ const TitleDetailRouteView: React.FC = () => {
               id: typeof raw.id === 'string' ? raw.id : id,
               tmdbId: typeof raw.tmdbId === 'number' ? raw.tmdbId : Number(raw.tmdbId) || 0,
               title: typeof raw.title === 'string' ? raw.title : localFound?.title || id,
+              titleEs: typeof raw.titleEs === 'string' ? raw.titleEs : undefined,
+              originalTitle: typeof raw.originalTitle === 'string' ? raw.originalTitle : undefined,
               posterUrl: typeof raw.posterUrl === 'string' ? raw.posterUrl : localFound?.posterUrl || '',
               backdropUrl:
                 typeof raw.backdropUrl === 'string'
@@ -2026,6 +2201,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     handleBroadcastPlayerState,
     sendRemoteCommand,
     refreshContinueWatching,
+    myListIds,
+    toggleMyList,
     isAudioModalOpen,
     setIsAudioModalOpen,
     isGuestModalOpen,
@@ -2038,19 +2215,41 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     handleBeforeAutoAdvance,
   } = useAppRuntime();
 
+  const [playerDetailMedia, setPlayerDetailMedia] = useState<MediaItem | null>(null);
+
+  useEffect(() => {
+    if (!isPlayingLocally) {
+      setPlayerDetailMedia(null);
+    }
+  }, [isPlayingLocally]);
+
+  useEffect(() => {
+    if (!playerDetailMedia) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setPlayerDetailMedia(null);
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [playerDetailMedia]);
+
   const handleSelectCard = useCallback(
     (card: CardItem) => {
+      saveScrollSnapshot(`${location.pathname}${location.search}`, location.pathname, window.scrollY);
       navigate(buildTitleRoute(card));
     },
-    [navigate]
+    [location.pathname, location.search, navigate]
   );
 
   const handlePlayCard = useCallback(
     (card: CardItem) => {
+      saveScrollSnapshot(`${location.pathname}${location.search}`, location.pathname, window.scrollY);
       const item = toMediaItem(card);
       handlePlayLocal(item);
     },
-    [handlePlayLocal]
+    [handlePlayLocal, location.pathname, location.search]
   );
 
   const handleCastCard = useCallback(
@@ -2101,13 +2300,20 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
         >
           <Suspense fallback={<div className="w-full h-screen bg-black flex items-center justify-center text-white">Cargando...</div>}>
             <VideoPlayer
-              key={activeMedia.id + ':' + (activeEpisode?.id ?? '')}
+              key={
+                activeMedia.category === 'live_tv'
+                  ? 'live-tv-player'
+                  : `${activeMedia.id}:${activeEpisode?.id ?? ''}`
+              }
               media={activeMedia}
               episode={activeEpisode}
               audioSettings={audioSettings}
               playbackSettings={playbackSettings}
               remoteCommandTrigger={lastRemoteCommand}
               initialTime={playerInitialTime}
+              onSwitchLiveChannel={(channelMedia) => {
+                handlePlayLocal(channelMedia);
+              }}
               onBeforeAutoAdvance={handleBeforeAutoAdvance}
               onRequestEpisodeChange={(targetSeason, targetEpNum) => {
                 advanceToSameSeriesEpisode(targetSeason, targetEpNum);
@@ -2139,12 +2345,15 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                 });
               }}
               onClose={() => {
+                setPlayerDetailMedia(null);
                 setIsPlayingLocally(false);
                 setIsScreenInStandby(false);
                 setActiveMedia(null);
                 setActiveEpisode(null);
                 refreshContinueWatching();
               }}
+              onOpenDetail={(m) => setPlayerDetailMedia(m)}
+              isDetailOpen={Boolean(playerDetailMedia)}
               onNextEpisode={handlePlayNextEpisode}
               onPrevEpisode={handlePlayPrevEpisode}
               hasNextEpisode={true}
@@ -2153,6 +2362,75 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
               onOpenAudioSettings={() => setIsAudioModalOpen(true)}
             />
           </Suspense>
+          {playerDetailMedia && (
+            <Suspense fallback={null}>
+              <div className="fixed inset-0 z-[120]">
+                <DetailModal
+                  media={playerDetailMedia}
+                  onClose={() => setPlayerDetailMedia(null)}
+                  onPlayLocal={(m, ep) => {
+                    const enrichedEp = ep
+                      ? {
+                          ...ep,
+                          seasonNumber:
+                            Number(
+                              ep.seasonNumber ??
+                                (ep as any).season ??
+                                (ep as any).season_number ??
+                                1
+                            ) || 1,
+                          episodeNumber:
+                            Number(
+                              ep.episodeNumber ??
+                                (ep as any).episode ??
+                                (ep as any).episode_number ??
+                                1
+                            ) || 1,
+                        }
+                      : undefined;
+                    setPlayerDetailMedia(null);
+                    handlePlayLocal(m, enrichedEp, 0);
+                  }}
+                  onCastToScreen={(m, ep) => {
+                    const enrichedEp = ep
+                      ? {
+                          ...ep,
+                          seasonNumber:
+                            Number(
+                              ep.seasonNumber ??
+                                (ep as any).season ??
+                                (ep as any).season_number ??
+                                1
+                            ) || 1,
+                          episodeNumber:
+                            Number(
+                              ep.episodeNumber ??
+                                (ep as any).episode ??
+                                (ep as any).episode_number ??
+                                1
+                            ) || 1,
+                        }
+                      : undefined;
+                    setPlayerDetailMedia(null);
+                    handleCastMediaToScreen(m, enrichedEp);
+                  }}
+                  isMyList={myListIds.includes(playerDetailMedia.id)}
+                  onToggleMyList={(mediaId) => toggleMyList(mediaId)}
+                  connectedScreenName={connectedScreenName}
+                  allCatalog={MEDIA_CATALOG}
+                  onSelectSimilar={(similar) => {
+                    setPlayerDetailMedia(null);
+                    setIsPlayingLocally(false);
+                    setIsScreenInStandby(false);
+                    setActiveMedia(null);
+                    setActiveEpisode(null);
+                    refreshContinueWatching();
+                    navigate(buildTitleRoute(similar));
+                  }}
+                />
+              </div>
+            </Suspense>
+          )}
         </div>
       ) : (
         <AppShell
@@ -2236,7 +2514,21 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
               <Route
                 path="/deportes"
                 element={
-                  <div className="p-4 sm:p-8">
+                  <div className="p-4 sm:p-8 space-y-5">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/80 pb-3">
+                      <button
+                        type="button"
+                        onClick={() => navigate('/canales')}
+                        className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 hover:text-white flex items-center gap-1.5 transition"
+                      >
+                        <Tv className="w-4 h-4 text-red-400" />
+                        <span>Canales en vivo (TV & Fútbol)</span>
+                      </button>
+                      <span className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-extrabold flex items-center gap-1.5 shadow">
+                        <Trophy className="w-4 h-4" />
+                        <span>Agenda y Partidos</span>
+                      </span>
+                    </div>
                     <SportsMatchesTab
                       onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
                       onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
@@ -2251,7 +2543,21 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
               <Route
                 path="/canales"
                 element={
-                  <div className="p-4 sm:p-8">
+                  <div className="p-4 sm:p-8 space-y-5">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/80 pb-3">
+                      <span className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-extrabold flex items-center gap-1.5 shadow">
+                        <Tv className="w-4 h-4" />
+                        <span>Canales en vivo (TV & Fútbol)</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/deportes')}
+                        className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-200 hover:text-white flex items-center gap-1.5 transition"
+                      >
+                        <Trophy className="w-4 h-4 text-amber-400" />
+                        <span>Agenda y Partidos</span>
+                      </button>
+                    </div>
                     <SportsLiveGrid
                       onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
                       onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}

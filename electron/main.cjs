@@ -203,6 +203,31 @@ const EMBED_HOSTS = [
   'filemoon.sx',
 ];
 
+// Casas de apuestas / casinos (anuncios a pantalla completa tipo OROBET). Se expanden por TLD comun.
+const GAMBLING_BASES = [
+  'orobet', 'bet365', '1xbet', 'betano', 'betway', 'bwin', 'codere', '1win', 'mostbet', 'melbet', '22bet',
+  'betwinner', 'linebet', 'parimatch', 'pinup', 'pin-up', 'betsson', 'rivalo', 'megapari', 'stake',
+];
+const GAMBLING_TLDS = ['com', 'net', 'org', 'tv', 'co', 'info', 'bet', 'xyz', 'mx', 'pe', 'ar', 'cl', 'es', 'io', 'site', 'online', 'club', 'live'];
+const GAMBLING_HOSTS = GAMBLING_BASES.flatMap((b) => GAMBLING_TLDS.map((t) => `${b}.${t}`));
+const GAMBLING_HOST_RE = /orobet|1xbet|bet365|betano|betway|bwin|codere|1win|mostbet|melbet|22bet|betwinner|linebet|parimatch|pin-?up|betsson|rivalo|megapari|casino/i;
+
+function isGamblingUrl(rawUrl) {
+  try {
+    return GAMBLING_HOST_RE.test(new URL(rawUrl).hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+function blockGamblingNav(event, maybeUrl) {
+  const u = (event && event.url) || maybeUrl || '';
+  if (u && isGamblingUrl(u)) {
+    event.preventDefault();
+    console.warn(`🛡️ [Anti-Bet] navegación a apuestas bloqueada: ${u}`);
+  }
+}
+
 // Redes de anuncios agresivas y popups a bloquear
 const AD_HOSTS = [
   'acscdn.com',
@@ -237,6 +262,7 @@ const AD_HOSTS = [
   'interlinecustomroofingllc.com',
   'shein.com',
   'wps.com',
+  ...GAMBLING_HOSTS,
 ];
 
 // Lista blanca exacta de hosts permitidos para abrir popups (sin coincidencias por subcadena)
@@ -257,6 +283,34 @@ function isPopupAllowedUrl(rawUrl) {
   } catch (_) {
     return false;
   }
+}
+
+function hostMatches(hostname, list) {
+  const h = String(hostname || '').toLowerCase();
+  return list.some((d) => h === d || h.endsWith('.' + d));
+}
+
+function isLegitEmbedHostUrl(rawUrl) {
+  try {
+    const h = new URL(rawUrl).hostname;
+    return hostMatches(h, EMBED_HOSTS) && !hostMatches(h, AD_HOSTS);
+  } catch (_) {
+    return false;
+  }
+}
+
+function isAdHostUrl(rawUrl) {
+  try {
+    const h = new URL(rawUrl).hostname;
+    return hostMatches(h, AD_HOSTS) || GAMBLING_HOST_RE.test(h);
+  } catch (_) {
+    return false;
+  }
+}
+
+function registrableDomain(hostname) {
+  const parts = String(hostname || '').toLowerCase().split('.');
+  return parts.length <= 2 ? parts.join('.') : parts.slice(-2).join('.');
 }
 
 // Patrones de red para el filtro "camaleón" (dominio exacto + subdominios)
@@ -295,6 +349,76 @@ const AD_SHIELD = `(function(){
   window.focus = window.focus || function(){};
 })();`;
 
+// Escudo anti-apuestas: bloquea overlays, enlaces, iframes y window.open hacia casas de apuestas.
+// No reemplaza window.open global ni toca el <video>, asi que es seguro dentro del embed legitimo (moviemaster.lat).
+const GAMBLING_SHIELD = `(function(){
+  if (window.__cineBet) return;
+  window.__cineBet = true;
+  var RE = new RegExp('orobet|1xbet|bet365|betano|betway|bwin|codere|caliente[.]mx|1win|mostbet|melbet|22bet|betwinner|linebet|parimatch|pin-?up|stake[.]com|betsson|rivalo|megapari|bc[.]game|casino|apuestas', 'i');
+
+  // 1) Clicks en enlaces de apuestas: se anulan (no navegan ni abren popup)
+  document.addEventListener('click', function(e){
+    try {
+      var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (a && RE.test(a.href)) { e.preventDefault(); e.stopPropagation(); a.remove(); }
+    } catch(_){}
+  }, true);
+
+  // 2) window.open hacia apuestas: se bloquea (el resto se deja intacto para no romper el reproductor)
+  try {
+    var origOpen = window.open;
+    window.open = function(u){
+      if (RE.test(String(u || ''))) return null;
+      return origOpen ? origOpen.apply(this, arguments) : null;
+    };
+  } catch(_){}
+
+  // 3) Barrido de overlays / iframes / enlaces de apuestas (nunca toca el elemento que contiene el video)
+  function isBetNode(el){
+    try {
+      var s = (el.href || el.src || el.getAttribute('data-href') || '') + '';
+      if (s && RE.test(s)) return true;
+      if (el.querySelector && el.querySelector('a[href], iframe[src], img[src]')) {
+        var kids = el.querySelectorAll('a[href], iframe[src], img[src]');
+        for (var i = 0; i < kids.length; i++) {
+          var k = (kids[i].href || kids[i].src || '') + '';
+          if (RE.test(k)) return true;
+        }
+      }
+      var alt = (el.getAttribute && (el.getAttribute('alt') || el.getAttribute('title') || '')) + '';
+      return RE.test(alt);
+    } catch(_){ return false; }
+  }
+  function sweep(){
+    try {
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var nodes = document.querySelectorAll('a[href], iframe[src], div, section, aside');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        if (el.querySelector && el.querySelector('video')) continue;
+        var tag = el.tagName;
+        if (tag === 'A' || tag === 'IFRAME') {
+          if (isBetNode(el)) { el.remove(); }
+          continue;
+        }
+        var cs = window.getComputedStyle(el);
+        if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+        var z = parseInt(cs.zIndex, 10) || 0;
+        if (z < 1000) continue;
+        var r = el.getBoundingClientRect();
+        if (r.width >= vw * 0.5 && r.height >= vh * 0.5 && isBetNode(el)) el.remove();
+      }
+    } catch(_){}
+  }
+  var timer = null;
+  function schedule(){ if (timer) return; timer = setTimeout(function(){ timer = null; sweep(); }, 250); }
+  try {
+    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+  } catch(_){}
+  sweep();
+})();
+`;
+
 // Escudo de Huella Digital Real (FP_SHIELD): Coincidencia exacta con versión real de Chromium de Electron
 // TAREA F: No spoofear navigator.userAgentData en challenges.cloudflare.com o turnstile (evita error 600010 + No available adapters)
 const FP_SHIELD = `(function(){
@@ -320,6 +444,7 @@ const FP_SHIELD = `(function(){
 
 // Se aplican solo selectores de publicidad específicos para no ocultar controles del reproductor
 const AD_CSS = `
+  a[href*="orobet"], iframe[src*="orobet"], a[href*="1xbet"], iframe[src*="1xbet"], a[href*="betano"], iframe[src*="betano"],
   ins.adsbygoogle, iframe[id^="aswift"], iframe[id^="google_ads"],
   iframe[src*="doubleclick"], iframe[src*="googlesyndication"],
   div[id*="banner"], div[class~="ad"], div[class^="ad-"], div[class*=" ad-"], .adsbygoogle,
@@ -955,6 +1080,12 @@ function createWindow() {
       callback({ cancel: false });
       return;
     }
+    // Hosts de embed legitimos (framextv.tech, vidfast.pro, ...) nunca se tratan como anuncio:
+    // evita "Redirect was cancelled" cuando el embed se redirige dentro de su propio dominio.
+    if (isLegitEmbedHostUrl(u)) {
+      callback({ cancel: false });
+      return;
+    }
     adBlockCount++;
     loadDiagnostics.recordAdBlockedRequest();
     if (adBlockCount % 100 === 0) {
@@ -1047,12 +1178,18 @@ function createWindow() {
       try {
         const url = f.url || '';
         if (!url || url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1') || url.startsWith('file:')) continue;
-        if (/youtube\.com|google\.com|accounts\.google\.com|gstatic\.com|spotify\.com|moviemaster\.lat/i.test(url)) continue;
+        if (/moviemaster\.lat/i.test(url)) {
+          // Embed legitimo: solo el escudo anti-apuestas (sin tocar window.open ni el video)
+          await f.executeJavaScript(GAMBLING_SHIELD, false).catch(() => {});
+          continue;
+        }
+        if (/youtube\.com|google\.com|accounts\.google\.com|gstatic\.com|spotify\.com/i.test(url)) continue;
         // TAREA F: No spoofear navigator.userAgentData en frames de challenges.cloudflare.com ni turnstile
         if (!/challenges\.cloudflare\.com|turnstile/i.test(url)) {
           await f.executeJavaScript(FP_SHIELD, false).catch(() => {});
         }
         await f.executeJavaScript(AD_SHIELD, false).catch(() => {});
+        await f.executeJavaScript(GAMBLING_SHIELD, false).catch(() => {});
         await f.executeJavaScript(AD_CSS_INJECTOR, false).catch(() => {});
         await f.executeJavaScript(clickScript, false).catch(() => {});
       } catch (_) {}
@@ -1072,6 +1209,8 @@ function createWindow() {
       }
     } catch (_) {}
   });
+
+  mainWindow.webContents.on('will-frame-navigate', blockGamblingNav);
 
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     if (code === -3) return; // ERR_ABORTED, normal
@@ -1160,6 +1299,39 @@ function createWindow() {
 
     contents.on('dom-ready', runClickScript);
     contents.on('did-frame-finish-load', runClickScript);
+
+    // Anti-apuestas en el webview del embed: escudo en todos los frames + bloqueo de navegacion/redirects
+    const runBetShield = async () => {
+      if (isDiagnosticMode || !contents || contents.isDestroyed()) return;
+      try {
+        for (const f of contents.mainFrame.framesInSubtree) {
+          await f.executeJavaScript(GAMBLING_SHIELD, false).catch(() => {});
+        }
+      } catch (_) {}
+    };
+    contents.on('dom-ready', runBetShield);
+    contents.on('did-frame-finish-load', runBetShield);
+    contents.on('will-navigate', blockGamblingNav);
+    contents.on('will-frame-navigate', blockGamblingNav);
+    contents.on('will-redirect', blockGamblingNav);
+
+    // Redirects del embed: se permiten los del mismo sitio (framextv.tech, vidfast.pro, ...) y los de hosts
+    // de embed conocidos. Solo se cancela, en silencio, un redirect del frame principal hacia una red de anuncios.
+    contents.on('will-redirect', (event, targetUrl, _isInPlace, isMainFrame) => {
+      if (isDiagnosticMode || !isMainFrame) return;
+      try {
+        const from = contents.getURL();
+        const sameSite =
+          from && registrableDomain(new URL(from).hostname) === registrableDomain(new URL(targetUrl).hostname);
+        if (sameSite || isLegitEmbedHostUrl(targetUrl)) return;
+      } catch (_) {
+        return;
+      }
+      if (isAdHostUrl(targetUrl)) {
+        event.preventDefault();
+        console.warn(`🛡️ [Anti-Redirect] redirect a anuncios cancelado en embed: ${targetUrl}`);
+      }
+    });
 
     contents.setWindowOpenHandler(({ url }) => {
       if (isVideoSession) {

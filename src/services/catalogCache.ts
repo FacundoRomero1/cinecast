@@ -1,8 +1,80 @@
 import { get, set, del } from 'idb-keyval';
 import { Movie } from '../types';
 
-export const CATALOG_VERSION = 12;
+export const CATALOG_VERSION = 13;
 const IDB_CATALOG_KEY = `cinecast_catalog_v${CATALOG_VERSION}`;
+const LEGACY_CATALOG_KEYS = ['cinecast_catalog_v12', 'cinecast_catalog_v11'];
+
+const INVALID_TITLE_LITERALS = new Set([
+  '',
+  'sin título',
+  'sin titulo',
+  'undefined',
+  'null',
+  'nan',
+  'untitled',
+]);
+
+/**
+ * Sanitiza un título evitando literales vacíos, placeholders rotos o URLs/IDs crudos.
+ */
+export function sanitizeCardTitle(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (INVALID_TITLE_LITERALS.has(trimmed.toLowerCase())) return '';
+  if (/^https?:\/\//i.test(trimmed) || /^tmdb-(movie|series|anime)-\d+$/i.test(trimmed)) {
+    return '';
+  }
+  return trimmed;
+}
+
+/**
+ * Resuelve el título visible seguro para una card (prioriza español localizado antes que original).
+ */
+export function resolveSafeCardTitle(item: {
+  title?: unknown;
+  titleEs?: unknown;
+  originalTitle?: unknown;
+}): string {
+  return (
+    sanitizeCardTitle(item.titleEs) ||
+    sanitizeCardTitle(item.title) ||
+    sanitizeCardTitle(item.originalTitle)
+  );
+}
+
+/**
+ * Detecta si una lista cacheada tiene títulos vacíos/corruptos o colisiones movie vs tv con distinto póster.
+ */
+export function hasCorruptedCatalogEntries(movies: Movie[]): boolean {
+  if (!Array.isArray(movies) || movies.length === 0) return false;
+  const byTmdb = new Map<number, Array<{ isTv: boolean; titleLower: string; poster: string }>>();
+
+  for (const m of movies) {
+    const safeTitle = resolveSafeCardTitle(m);
+    if (!safeTitle) return true;
+
+    const tid = Number(m.tmdbId || (m.id && String(m.id).replace(/\D+/g, '')) || 0);
+    if (!tid) continue;
+    const isTv = m.type !== 'movie' && (m.category === 'series' || m.category === 'anime' || m.type === 'series');
+    const poster = String(m.posterUrl || m.posterPath || '').split('/').pop() || '';
+    const titleLower = safeTitle.toLowerCase();
+
+    const list = byTmdb.get(tid);
+    if (list) {
+      for (const prev of list) {
+        if (prev.isTv !== isTv && prev.titleLower === titleLower && prev.poster && poster && prev.poster !== poster) {
+          return true;
+        }
+      }
+      list.push({ isTv, titleLower, poster });
+    } else {
+      byTmdb.set(tid, [{ isTv, titleLower, poster }]);
+    }
+  }
+  return false;
+}
 
 export interface LeanCatalogEntry {
   version: number;
@@ -15,16 +87,22 @@ export interface LeanCatalogEntry {
  * estrictamente necesarios para la interfaz y reproducción (evita pérdida de propiedades en la UI).
  */
 export function compactMovie(m: any): Movie {
-  const isTV = m.category === 'series' || m.category === 'anime' || m.type === 'series';
+  const isMovieExplicit = m.type === 'movie';
+  const isTV = !isMovieExplicit && (m.category === 'series' || m.category === 'anime' || m.type === 'series');
   const tmdbId = Number(m.tmdbId || (m.id && String(m.id).replace(/\D+/g, '')) || 0);
   const poster = m.posterUrl || m.posterPath || '';
   const backdrop = m.backdropUrl || m.backdropPath || poster;
   const rating = Number((m.rating ?? m.voteAverage ?? 7.5).toFixed(1));
+  const cleanTitle = resolveSafeCardTitle(m);
+  const cleanTitleEs = sanitizeCardTitle(m.titleEs) || cleanTitle;
+  const cleanOriginal = sanitizeCardTitle(m.originalTitle) || cleanTitle;
 
   const compacted: Movie = {
     id: m.id || `tmdb-${m.category || (isTV ? 'series' : 'movie')}-${tmdbId}`,
     tmdbId,
-    title: m.title || 'Sin Título',
+    title: cleanTitle,
+    titleEs: cleanTitleEs || undefined,
+    originalTitle: cleanOriginal || undefined,
     overview: m.overview || '',
     posterPath: poster,
     posterUrl: poster,
@@ -80,8 +158,16 @@ function validateCompactedFields(item: Movie): void {
 export async function getCachedCatalog(): Promise<Movie[] | null> {
   if (typeof window === 'undefined') return null;
   try {
+    for (const legacyKey of LEGACY_CATALOG_KEYS) {
+      del(legacyKey).catch(() => {});
+    }
     const data = await get<LeanCatalogEntry>(IDB_CATALOG_KEY);
     if (!data || data.version !== CATALOG_VERSION || !Array.isArray(data.movies)) {
+      return null;
+    }
+    if (hasCorruptedCatalogEntries(data.movies)) {
+      console.warn('[CatalogCache] Detectados ítems corruptos o colisionados en IndexedDB. Regenerando catálogo...');
+      await del(IDB_CATALOG_KEY).catch(() => {});
       return null;
     }
     return data.movies;
@@ -116,4 +202,37 @@ export async function clearCachedCatalog(): Promise<void> {
   try {
     await del(IDB_CATALOG_KEY);
   } catch (_) {}
+}
+
+const tmdbTitleHealInFlight = new Map<string, Promise<string>>();
+
+/**
+ * Obtiene y cachea en memoria el título oficial desde TMDB (/api/media/:type/:id)
+ * cuando una card llega sin título válido o con metadata inconsistente.
+ */
+export function fetchTmdbTitleForCard(
+  mediaType: 'movie' | 'tv',
+  tmdbId: number
+): Promise<string> {
+  if (!tmdbId || tmdbId <= 0 || typeof fetch !== 'function') {
+    return Promise.resolve('');
+  }
+  const cacheKey = `${mediaType}:${tmdbId}`;
+  const existing = tmdbTitleHealInFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const task = fetch(`/api/media/${mediaType}/${tmdbId}`)
+    .then(async (res) => {
+      if (!res.ok) return '';
+      const data = await res.json();
+      return resolveSafeCardTitle({
+        titleEs: data?.titleEs,
+        title: data?.title || data?.name,
+        originalTitle: data?.originalTitle || data?.original_name,
+      });
+    })
+    .catch(() => '');
+
+  tmdbTitleHealInFlight.set(cacheKey, task);
+  return task;
 }

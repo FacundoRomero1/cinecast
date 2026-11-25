@@ -219,11 +219,22 @@ export function createTmdbDetailRouter(options: TmdbDetailOptions): Router {
         if (!isCatalogMemoryEngine()) {
           try {
             const opened = openCatalogDb(baseDir, options.userDataPath);
-            if (opened) cat = findCatalogItemInDb(opened.db, tmdbId, id);
+            if (opened) cat = findCatalogItemInDb(opened.db, tmdbId, id, cleanType);
           } catch { }
         }
         if (!cat) {
-          cat = loadServerCatalog().find((m) => String(m.tmdbId) === tmdbId || m.id === id) || null;
+          const allCatalog = loadServerCatalog();
+          const wantTv = cleanType === 'tv';
+          cat =
+            allCatalog.find((m) => m.id === id) ||
+            allCatalog.find((m) => {
+              if (String(m.tmdbId) !== tmdbId) return false;
+              const entryIsTv =
+                m.type !== 'movie' &&
+                (m.category === 'series' || m.category === 'anime' || m.type === 'series');
+              return entryIsTv === wantTv;
+            }) ||
+            null;
         }
         if (cat) {
           res.json(cat);

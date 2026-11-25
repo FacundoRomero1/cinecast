@@ -37,6 +37,28 @@ function pruneExpired(): void {
 }
 
 /**
+ * Construye una clave canónica de título para penalizaciones adaptativas.
+ * Para series/anime incluye temporada y episodio cuando están presentes,
+ * evitando que el fallo o fin de un capítulo penalice al capítulo siguiente.
+ */
+export function buildResolveTitleId(
+  type: string | undefined,
+  tmdbId: number | string,
+  season?: number | null,
+  episode?: number | null
+): string {
+  const rawType = String(type || 'movie').trim().toLowerCase();
+  const normType = rawType === 'tv' ? 'series' : rawType;
+  const isEpisodic = normType === 'series' || normType === 'anime';
+  const s = Number(season);
+  const e = Number(episode);
+  if (isEpisodic && Number.isFinite(s) && s > 0 && Number.isFinite(e) && e > 0) {
+    return `${normType}:${tmdbId}:s${s}:e${e}`;
+  }
+  return `${normType}:${tmdbId}`;
+}
+
+/**
  * Registra o incrementa la penalización para un servidor en un título determinado.
  */
 export function recordServerPenalty(

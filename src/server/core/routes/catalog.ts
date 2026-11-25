@@ -142,18 +142,19 @@ export function createCatalogRouter(options: CatalogRouterOptions): Router {
         items = queryCatalogByIds(dbOpened.db, requestedIds, fields);
       } else {
         const catalog = loadServerCatalog();
-        const byId = new Map<string, CatalogItem>();
+        const byExactId = new Map<string, CatalogItem>();
+        const byTmdbId = new Map<string, CatalogItem>();
         for (const item of catalog) {
-          byId.set(item.id, item);
-          if (item.tmdbId) {
-            byId.set(String(item.tmdbId), item);
+          byExactId.set(item.id, item);
+          if (item.tmdbId && !byTmdbId.has(String(item.tmdbId))) {
+            byTmdbId.set(String(item.tmdbId), item);
           }
         }
 
         const matched: CatalogItem[] = [];
         const seen = new Set<string>();
         for (const id of requestedIds) {
-          const found = byId.get(id);
+          const found = byExactId.get(id) ?? byTmdbId.get(id);
           if (found && !seen.has(found.id)) {
             seen.add(found.id);
             matched.push(found);

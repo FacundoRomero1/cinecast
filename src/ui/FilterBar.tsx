@@ -30,6 +30,7 @@ const CATEGORIES: Array<{ id: string; label: string }> = [
   { id: 'movie', label: 'Películas' },
   { id: 'series', label: 'Series' },
   { id: 'anime', label: 'Anime' },
+  { id: 'live_tv', label: 'Deportes / TV en vivo' },
 ];
 const SORTS: Array<{ id: CatalogSortOption; label: string }> = [
   { id: 'default', label: 'Destacados' },

@@ -35,6 +35,7 @@ import {
   httpRequestFollowingRedirects
 } from './http.js';
 import {
+  buildResolveTitleId,
   getServerPenalty
 } from './penalties.js';
 import {
@@ -1280,7 +1281,7 @@ export async function resolveServerPlay(
   const srvList = cached.value.servers.filter(
     (s) => !isForbiddenServerName(s.name, s.link || '')
   );
-  const titleId = `${norm.type}:${norm.tmdbId}`;
+  const titleId = buildResolveTitleId(norm.type, norm.tmdbId, norm.season, norm.episode);
   const counter = { count: 0 };
   const provider = getProviderConfig(providerId, baseDir);
   const tlsLax = Boolean(provider?.tlsLax);

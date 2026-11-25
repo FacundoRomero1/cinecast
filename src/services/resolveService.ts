@@ -137,6 +137,8 @@ export async function reportServerPlaybackPenalty(params: {
   providerId?: string;
   tmdbId: number;
   type?: string;
+  season?: number;
+  episode?: number;
   serverId: number | string;
   penaltyMs?: number;
   reason?: string;
@@ -150,6 +152,8 @@ export async function reportServerPlaybackPenalty(params: {
         providerId: params.providerId || 'vidlink.pro',
         tmdbId: params.tmdbId,
         type: params.type || 'movie',
+        season: params.season,
+        episode: params.episode,
         serverId: params.serverId,
         penaltyMs: params.penaltyMs || 15000,
         reason: params.reason || 'desconocido',

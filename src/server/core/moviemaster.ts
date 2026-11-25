@@ -16,12 +16,12 @@ const REAL_UA =
 const UI_TTL_MS = 6 * 60 * 60 * 1000; // 6 h
 const SERVERS_CACHE_TTL_MS = 4 * 60 * 1000; // 4 min (lista positiva)
 const NEGATIVE_SERVERS_TTL_MS = 24 * 60 * 60 * 1000; // 24 h (servers: [])
-const DEADLINE_COOLDOWN_TTL_MS = 10 * 60 * 1000; // 10 min tras deadline vencido
+const DEADLINE_COOLDOWN_TTL_MS = 30 * 1000; // 30 s tras deadline vencido (evita bloquear 10 min por un hipo)
 const SNAPSHOT_TTL_MS = 4 * 60 * 60 * 1000; // 4 h
 const SNAPSHOT_MAX_ENTRIES = 40;
 const HARVEST_TIMEOUT_MS = 6_000; // Deadline duro cosecha: 6 s
-const MINT_DEADLINE_MS = 3_000; // Deadline duro mint: 3 s
-const SERVERS_FETCH_TIMEOUT_MS = 4_000;
+const MINT_DEADLINE_MS = 7_500; // Deadline mint: 7.5 s (mirrors tras Cloudflare tardan 3-5 s)
+const SERVERS_FETCH_TIMEOUT_MS = 7_000;
 const MAX_MINT_ATTEMPTS = 3;
 
 const UI_DISK_CACHE_PATH = path.join(os.tmpdir(), 'cinecast-mm-ui-cache-v1.json');
@@ -161,8 +161,8 @@ export function mapMmLang(rawLang?: string): NormalizedMmLang {
   const up = String(rawLang || '').trim().toUpperCase();
   if (up === 'LAT' || up === 'LATINO' || up === 'ES-419') return 'latino';
   if (up === 'ESP' || up === 'CASTELLANO' || up === 'ES' || up === 'ES-ES') return 'castellano';
-  if (up === 'SUB' || up === 'SUBTITULADO' || up === 'EN' || up === 'ENG') return 'subtitulado';
-  return 'latino';
+  // Cualquier otro valor (SUB, EN, ORIGINAL, VOSE, vacio...) es subtitulado: jamas se presenta como Latino.
+  return 'subtitulado';
 }
 
 export function getMmLangRank(lang: NormalizedMmLang): number {
@@ -186,11 +186,14 @@ export function buildSnapshotKey(
   s: number,
   e: number,
   srvName: string,
-  uaHash: string
+  uaHash: string,
+  lang?: string
 ): string {
+  // El idioma entra en la clave: "Servidor 1" LAT y "Servidor 1" SUB ya no se pisan el snapshot.
+  const langPart = lang ? `|${lang}` : '';
   return crypto
     .createHash('sha1')
-    .update(`${tmdb}|${type}|${s}|${e}|${srvName}|${uaHash}`)
+    .update(`${tmdb}|${type}|${s}|${e}|${srvName}${langPart}|${uaHash}`)
     .digest('hex');
 }
 
@@ -477,6 +480,36 @@ async function harvestUiViaPlaywright(
   }
 }
 
+/**
+ * Fast-path HTTP: intenta extraer window.PM_UI="..." directo del HTML del embed (~300ms)
+ * sin abrir ventana oculta ni Playwright. Si no aparece, se cae al cosechador con navegador.
+ */
+async function harvestUiViaHttp(
+  embedUrl: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  try {
+    const timeoutSig = AbortSignal.timeout(3_500);
+    const effectiveSignal = signal ? AbortSignal.any([signal, timeoutSig]) : timeoutSig;
+    const res = await fetch(embedUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': REAL_UA,
+        Accept: 'text/html,application/xhtml+xml,*/*',
+        'Accept-Language': 'es-419,es;q=0.9',
+      },
+      signal: effectiveSignal,
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/PM_UI\s*=\s*["']([^"']{16,})["']/);
+    return m && m[1] ? m[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface HarvestUiOptions {
   type?: MovieMasterMediaType;
   season?: number;
@@ -531,11 +564,17 @@ export async function harvestUi(tmdb: number, opts: HarvestUiOptions = {}): Prom
       harvestAbortController.abort();
     }, deadlineMs);
 
-    let res: { ui: string | null; timedOut: boolean };
+    let res: { ui: string | null; timedOut: boolean } = { ui: null, timedOut: false };
     try {
-      res = isElectron
-        ? await harvestUiViaElectron(primaryUrl, cleanTmdb, deadlineMs, harvestAbortController.signal)
-        : await harvestUiViaPlaywright(primaryUrl, deadlineMs, harvestAbortController.signal);
+      // 1. Intentar fast-path HTTP (~300ms, sin navegador ni anuncios)
+      const httpUi = await harvestUiViaHttp(primaryUrl, harvestAbortController.signal);
+      if (httpUi) {
+        res = { ui: httpUi, timedOut: false };
+      } else if (!harvestAbortController.signal.aborted) {
+        res = isElectron
+          ? await harvestUiViaElectron(primaryUrl, cleanTmdb, deadlineMs, harvestAbortController.signal)
+          : await harvestUiViaPlaywright(primaryUrl, deadlineMs, harvestAbortController.signal);
+      }
     } finally {
       clearTimeout(harvestTimer);
     }
@@ -684,7 +723,22 @@ export async function getServers(
 
   for (let i = 0; i < rawServers.length; i++) {
     const r = rawServers[i];
-    if (!r || typeof r.video !== 'string' || !r.video.trim()) continue;
+    if (!r || typeof r.video !== 'string' || !r.video.trim()) {
+      console.warn(`[MM] servidor descartado: sin campo video (name=${r?.name} lang=${r?.lang})`);
+      continue;
+    }
+    // La url de video puede venir relativa o rara: se resuelve contra la base de MM y se exige http(s).
+    let videoUrl = '';
+    try {
+      const pu = new URL(r.video.trim(), 'https://api.moviemaster.lat/');
+      if (pu.protocol !== 'http:' && pu.protocol !== 'https:') throw new Error('protocolo ' + pu.protocol);
+      videoUrl = pu.toString();
+    } catch (err: any) {
+      console.warn(
+        `[MM] servidor descartado por URL invalida (${err?.message}): name=${r.name} lang=${r.lang} video=${String(r.video).slice(0, 160)}`
+      );
+      continue;
+    }
     const lang = mapMmLang(r.lang);
     const name = String(r.name || `Servidor ${i + 1}`).trim();
     const site = String(r.site ?? i + 1);
@@ -692,11 +746,11 @@ export async function getServers(
       id: `mm-${cleanTmdb}-${type}-${s}-${e}-${i + 1}-${site}`,
       name,
       lang,
-      rawLang: String(r.lang || 'LAT').toUpperCase(),
+      rawLang: String(r.lang || '').toUpperCase(),
       type: 'hls',
       mode: 'direct',
       site,
-      video: r.video.trim(),
+      video: videoUrl,
     });
   }
 
@@ -752,7 +806,8 @@ function findCachedSnapshotForTitle(
   e: number,
   uaHash: string,
   preferredServerName?: string,
-  preferredLang?: NormalizedMmLang
+  preferredLang?: NormalizedMmLang,
+  allowedLangs?: NormalizedMmLang[]
 ): SnapshotEntry | null {
   const now = Date.now();
   for (const [k, entry] of snapshotCache.entries()) {
@@ -771,6 +826,9 @@ function findCachedSnapshotForTitle(
         continue;
       }
       if (preferredLang && entry.lang !== preferredLang) {
+        continue;
+      }
+      if (allowedLangs && allowedLangs.length > 0 && !allowedLangs.includes(entry.lang)) {
         continue;
       }
       snapshotCache.delete(k);
@@ -843,6 +901,82 @@ function extractFirstVariantUrl(masterText: string, masterFinalUrl: string): str
     }
   }
   return null;
+}
+
+function hasSeparateAudioTracks(masterText: string): boolean {
+  return /#EXT-X-MEDIA:[^\r\n]*TYPE=AUDIO/i.test(masterText);
+}
+
+/**
+ * Conserva el master playlist multi-audio (sin tirar las pistas de audio),
+ * resuelve URIs relativos a absolutos y fuerza DEFAULT=YES,AUTOSELECT=YES en la pista en Español/Latino.
+ */
+function rewriteMasterForSpanishAudio(masterText: string, masterFinalUrl: string): string {
+  const rawLines = masterText.split(/\r?\n/);
+  const isSpanishAudioLine = (line: string): boolean => {
+    const langM = line.match(/LANGUAGE="([^"]+)"/i);
+    const nameM = line.match(/NAME="([^"]+)"/i);
+    const lang = (langM ? langM[1] : '').toLowerCase();
+    const name = (nameM ? nameM[1] : '').toLowerCase();
+    return (
+      lang === 'es' ||
+      lang.startsWith('es-') ||
+      lang === 'spa' ||
+      lang === 'lat' ||
+      /espa(ñ|n)ol|spanish|latino|castellano/.test(name)
+    );
+  };
+
+  const hasSpanishTrack = rawLines.some(
+    (l) => /#EXT-X-MEDIA:[^\r\n]*TYPE=AUDIO/i.test(l) && isSpanishAudioLine(l)
+  );
+
+  const outLines: string[] = [];
+  for (const rawLine of rawLines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (/^#EXT-X-MEDIA:/i.test(line)) {
+      let updated = line.replace(/URI="([^"]+)"/i, (_m, uri) => {
+        try {
+          return `URI="${new URL(uri, masterFinalUrl).toString()}"`;
+        } catch {
+          return `URI="${uri}"`;
+        }
+      });
+
+      if (hasSpanishTrack && /TYPE=AUDIO/i.test(updated)) {
+        const wantDefault = isSpanishAudioLine(updated);
+        const defVal = wantDefault ? 'YES' : 'NO';
+        if (/DEFAULT=(?:YES|NO)/i.test(updated)) {
+          updated = updated.replace(/DEFAULT=(?:YES|NO)/i, `DEFAULT=${defVal}`);
+        } else {
+          updated += `,DEFAULT=${defVal}`;
+        }
+        if (/AUTOSELECT=(?:YES|NO)/i.test(updated)) {
+          updated = updated.replace(/AUTOSELECT=(?:YES|NO)/i, `AUTOSELECT=${defVal}`);
+        } else {
+          updated += `,AUTOSELECT=${defVal}`;
+        }
+      }
+
+      outLines.push(updated);
+      continue;
+    }
+
+    if (!line.startsWith('#')) {
+      try {
+        outLines.push(new URL(line, masterFinalUrl).toString());
+      } catch {
+        outLines.push(line);
+      }
+      continue;
+    }
+
+    outLines.push(line);
+  }
+
+  return outLines.join('\n') + '\n';
 }
 
 function normalizeAndMeasureVariantM3u8(
@@ -925,6 +1059,8 @@ function normalizeAndMeasureVariantM3u8(
 export interface MintSnapshotOptions {
   serverName?: string;
   lang?: NormalizedMmLang;
+  /** Si se define, solo se acuñan servidores de estos idiomas (peliculas/series: latino + castellano). */
+  allowedLangs?: NormalizedMmLang[];
   forceRefresh?: boolean;
   simulateFirstServer502?: boolean;
   userAgent?: string;
@@ -967,7 +1103,8 @@ export async function mintSnapshot(
       e,
       uaHash,
       opts.serverName,
-      opts.lang
+      opts.lang,
+      opts.allowedLangs
     );
     if (existing) {
       console.log(
@@ -981,20 +1118,26 @@ export async function mintSnapshot(
     forceRefresh: opts.forceRefresh,
     harvestDeadlineMs: opts.harvestDeadlineMs,
   });
+  if (opts.allowedLangs && opts.allowedLangs.length > 0) {
+    const allowed = opts.allowedLangs;
+    servers = servers.filter((x) => allowed.includes(x.lang));
+  }
   if (servers.length === 0) {
     return null;
   }
 
   const candidates = [...servers].sort((a, b) => {
-    if (opts.serverName) {
-      const aMatch = a.name.toLowerCase() === opts.serverName.toLowerCase() ? 0 : 1;
-      const bMatch = b.name.toLowerCase() === opts.serverName.toLowerCase() ? 0 : 1;
-      if (aMatch !== bMatch) return aMatch - bMatch;
-    }
+    // Idioma pedido primero (si el usuario pide latino NO se cuela el homonimo subtitulado),
+    // luego nombre de servidor, luego rank LAT -> ESP -> SUB.
     if (opts.lang) {
       const aLangMatch = a.lang === opts.lang ? 0 : 1;
       const bLangMatch = b.lang === opts.lang ? 0 : 1;
       if (aLangMatch !== bLangMatch) return aLangMatch - bLangMatch;
+    }
+    if (opts.serverName) {
+      const aMatch = a.name.toLowerCase() === opts.serverName.toLowerCase() ? 0 : 1;
+      const bMatch = b.name.toLowerCase() === opts.serverName.toLowerCase() ? 0 : 1;
+      if (aMatch !== bMatch) return aMatch - bMatch;
     }
     return getMmLangRank(a.lang) - getMmLangRank(b.lang);
   });
@@ -1116,11 +1259,18 @@ export async function mintSnapshot(
       return null;
     }
 
-    const key = buildSnapshotKey(cleanTmdb, type, s, e, srv.name, uaHash);
+    // Si el master trae pistas de audio separadas (#EXT-X-MEDIA:TYPE=AUDIO), conservar el master
+    // con Español/Latino forzado como DEFAULT=YES para no perder el audio ni reproducir en inglés.
+    const finalManifestText =
+      variantUrl && hasSeparateAudioTracks(masterRes.text)
+        ? rewriteMasterForSpanishAudio(masterRes.text, masterRes.finalUrl)
+        : normalized.text;
+
+    const key = buildSnapshotKey(cleanTmdb, type, s, e, srv.name, uaHash, srv.lang);
     return {
       key,
       uaHash,
-      text: normalized.text,
+      text: finalManifestText,
       lang: srv.lang,
       serverName: srv.name,
       durationSec: normalized.durationSec,
@@ -1282,6 +1432,10 @@ export function createMovieMasterRouter(): Router {
       const lang =
         typeof b.lang === 'string' && b.lang.trim() ? mapMmLang(b.lang.trim()) : undefined;
       const forceRefresh = Boolean(b.forceRefresh || b.remint);
+      const rawOnly = Array.isArray(b.onlyLangs) ? b.onlyLangs : [];
+      const allowedLangs = rawOnly.length
+        ? Array.from(new Set(rawOnly.map((l: any) => mapMmLang(String(l)))))
+        : undefined;
       const simulateFirstServer502 = Boolean(b.simulateFirstServer502);
 
       const reqUserAgent =
@@ -1296,6 +1450,7 @@ export function createMovieMasterRouter(): Router {
       const snap = await mintSnapshot(tmdb, rawType, season, episode, {
         serverName,
         lang,
+        allowedLangs,
         forceRefresh,
         simulateFirstServer502,
         userAgent: reqUserAgent,
@@ -1303,11 +1458,15 @@ export function createMovieMasterRouter(): Router {
       });
 
       if (!snap) {
-        res.status(404).json({ error: 'indisponible' });
+        const detail = { error: 'indisponible', tmdb, type: rawType, season, episode, serverName, lang, onlyLangs: allowedLangs };
+        console.warn('[MM] /mm/play 404 indisponible', JSON.stringify(detail));
+        res.status(404).json(detail);
         return;
       }
 
-      const cachedList = await getServers(tmdb, rawType, season, episode);
+      const cachedList = (await getServers(tmdb, rawType, season, episode)).filter(
+        (x) => !allowedLangs || allowedLangs.includes(x.lang)
+      );
 
       res.json({
         manifestUrl: `/api/mm/manifest/${snap.key}`,
@@ -1325,6 +1484,7 @@ export function createMovieMasterRouter(): Router {
         })),
       });
     } catch (err: any) {
+      console.error('[MM] /mm/play 500', err?.stack || err?.message || err);
       res.status(500).json({ error: err?.message || 'Error en /api/mm/play' });
     }
   });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { normalizeGenres } from './genres.js';
 import { extractTmdbId, type MediaServerEntry } from './tmdb.js';
 
-export const CATALOG_SCHEMA_VERSION = '4';
+export const CATALOG_SCHEMA_VERSION = '5';
 
 export interface CatalogItem {
   id: string;
@@ -182,11 +182,110 @@ export function computeCatalogSourceHash(basePath: string, extPath: string | nul
   return hash.digest('hex');
 }
 
+const INVALID_CATALOG_TITLES = new Set([
+  '',
+  'sin título',
+  'sin titulo',
+  'undefined',
+  'null',
+  'nan',
+  'untitled',
+]);
+
+export function sanitizeCatalogTitle(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (INVALID_CATALOG_TITLES.has(trimmed.toLowerCase())) return '';
+  if (/^https?:\/\//i.test(trimmed) || /^tmdb-(movie|series|anime)-\d+$/i.test(trimmed)) {
+    return '';
+  }
+  return trimmed;
+}
+
+export function isEpisodicCatalogEntry(m: {
+  type?: string | undefined;
+  category?: string | undefined;
+  mediaType?: string | undefined;
+}): boolean {
+  if (m.type === 'movie' || m.mediaType === 'movie') return false;
+  return (
+    m.category === 'series' ||
+    m.category === 'anime' ||
+    m.type === 'series' ||
+    m.mediaType === 'tv'
+  );
+}
+
+export function resolveSafeCatalogTitle(item: {
+  title?: unknown;
+  titleEs?: unknown;
+  originalTitle?: unknown;
+}): string {
+  return (
+    sanitizeCatalogTitle(item.titleEs) ||
+    sanitizeCatalogTitle(item.title) ||
+    sanitizeCatalogTitle(item.originalTitle)
+  );
+}
+
+export function sanitizeLoadedCatalogItems(items: CatalogItem[]): CatalogItem[] {
+  const byTmdb = new Map<number, CatalogItem[]>();
+  for (const item of items) {
+    if (item.tmdbId > 0) {
+      const list = byTmdb.get(item.tmdbId);
+      if (list) list.push(item);
+      else byTmdb.set(item.tmdbId, [item]);
+    }
+  }
+
+  let repairedCollisions = 0;
+  for (const group of byTmdb.values()) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length; i++) {
+      const a = group[i]!;
+      const aTv = isEpisodicCatalogEntry(a);
+      const aPoster = a.posterUrl.split('/').pop() || '';
+      for (let j = i + 1; j < group.length; j++) {
+        const b = group[j]!;
+        const bTv = isEpisodicCatalogEntry(b);
+        if (aTv === bTv) continue;
+        const bPoster = b.posterUrl.split('/').pop() || '';
+        const titleClash = a.title.trim().toLowerCase() === b.title.trim().toLowerCase();
+        const posterDiffers = Boolean(aPoster && bPoster && aPoster !== bPoster);
+        if (!titleClash || !posterDiffers) continue;
+
+        const aOrig = sanitizeCatalogTitle(a.originalTitle);
+        const bOrig = sanitizeCatalogTitle(b.originalTitle);
+        if (aOrig && aOrig.toLowerCase() !== a.title.toLowerCase()) {
+          a.title = aOrig;
+          a.titleEs = aOrig;
+          repairedCollisions++;
+        } else if (bOrig && bOrig.toLowerCase() !== b.title.toLowerCase()) {
+          b.title = bOrig;
+          b.titleEs = bOrig;
+          repairedCollisions++;
+        }
+      }
+    }
+  }
+
+  if (repairedCollisions > 0) {
+    console.warn(`[CatalogSchema] Reparadas ${repairedCollisions} colisiones cross-type título/póster al cargar.`);
+  }
+  return items;
+}
+
 export function toCatalogCard(item: CatalogItem): CatalogCardItem {
+  const safeTitle = resolveSafeCatalogTitle(item);
+  const safeTitleEs = sanitizeCatalogTitle(item.titleEs) || safeTitle;
+  const safeOrig = sanitizeCatalogTitle(item.originalTitle) || safeTitle;
   return {
     id: item.id,
     tmdbId: item.tmdbId,
-    title: item.title,
+    title: safeTitle,
+    titleEs: safeTitleEs || undefined,
+    originalTitle: safeOrig || undefined,
     posterUrl: item.posterUrl,
     backdropUrl: item.backdropUrl,
     year: item.year,
@@ -200,7 +299,7 @@ export function toCatalogCard(item: CatalogItem): CatalogCardItem {
 }
 
 export function normalizeRawCatalogEntry(m: RawCatalogEntry, currentYear: number): CatalogItem {
-  const isTV = m.category === 'series' || m.category === 'anime' || m.type === 'series';
+  const isTV = isEpisodicCatalogEntry(m);
   const tmdbId = Number(m.tmdbId || extractTmdbId(m.id) || 0);
   const poster = m.posterUrl || m.posterPath || '';
   const backdrop = m.backdropUrl || m.backdropPath || poster;
@@ -209,13 +308,16 @@ export function normalizeRawCatalogEntry(m: RawCatalogEntry, currentYear: number
   const category = m.category || (isTV ? 'series' : 'movie');
   const year = m.year || (m.releaseDate ? parseInt(m.releaseDate.slice(0, 4), 10) || 2024 : 2024);
   const normalizedGenres = normalizeGenres(Array.isArray(m.genres) ? m.genres : [], category);
+  const cleanTitle = resolveSafeCatalogTitle(m);
+  const cleanTitleEs = sanitizeCatalogTitle(m.titleEs) || cleanTitle;
+  const cleanOriginalTitle = sanitizeCatalogTitle(m.originalTitle) || cleanTitle;
 
   return {
     id: m.id || `tmdb-${category}-${tmdbId}`,
     tmdbId,
-    title: m.title || 'Sin Título',
-    titleEs: m.titleEs || m.title || m.originalTitle || 'Sin Título',
-    originalTitle: m.originalTitle || m.title || 'Sin Título',
+    title: cleanTitle,
+    titleEs: cleanTitleEs || undefined,
+    originalTitle: cleanOriginalTitle,
     originalLanguage: origLang,
     spokenLanguages: m.spokenLanguages || (origLang === 'es' ? ['es'] : ['es', origLang]),
     overview: m.overview || '',
@@ -269,7 +371,7 @@ export function loadNormalizedCatalogItems(basePath: string, extPath: string | n
     }
   }
 
-  return items;
+  return sanitizeLoadedCatalogItems(items);
 }
 
 function getMetaValue(db: SqliteDatabaseLike, key: string): string | null {
@@ -335,6 +437,7 @@ export function rebuildCatalogDatabase(
         poster_url TEXT NOT NULL,
         backdrop_url TEXT NOT NULL,
         title TEXT NOT NULL,
+        title_es TEXT NOT NULL,
         original_title TEXT NOT NULL,
         original_language TEXT NOT NULL,
         upcoming INTEGER NOT NULL,
@@ -378,10 +481,10 @@ export function rebuildCatalogDatabase(
     const insertItem = db.prepare(`
       INSERT INTO items (
         seq, id, tmdb_id, category, type, year, rating, quality,
-        poster_url, backdrop_url, title, original_title, original_language,
+        poster_url, backdrop_url, title, title_es, original_title, original_language,
         upcoming, added_at, added_at_ms, title_rank, genres_json,
         title_lower, original_title_lower, overview_lower, detail_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertGenre = db.prepare(
@@ -406,6 +509,7 @@ export function rebuildCatalogDatabase(
         m.posterUrl,
         m.backdropUrl,
         m.title,
+        m.titleEs || m.title,
         m.originalTitle,
         m.originalLanguage,
         m.upcoming ? 1 : 0,

@@ -1,6 +1,7 @@
 import { Info, Play, Star, Tv } from 'lucide-react';
 import React from 'react';
 import type { CardItem } from '../providers/types';
+import { resolveSafeCardTitle } from '../services/catalogCache';
 import { getPosterProxyUrl } from './liteMode';
 
 export interface HeroProps {
@@ -23,8 +24,9 @@ export const Hero: React.FC<HeroProps> = ({
   if (!item) return null;
 
   const isSeries =
-    item.type === 'series' || item.category === 'series' || item.category === 'anime';
-  const displayTitle = item.titleEs || item.originalTitle || item.title;
+    item.type !== 'movie' &&
+    (item.type === 'series' || item.category === 'series' || item.category === 'anime');
+  const displayTitle = resolveSafeCardTitle(item);
   const coverUrl = getPosterProxyUrl(item.backdropUrl || item.posterUrl, 342);
   const shortSynopsis =
     overview && overview.trim().length > 0

@@ -90,14 +90,17 @@ export function createSportsRouter(options: SportsOptions = {}): Router {
   let sportsMatchesCache: SportsMatchesPayload | null = null;
   let sportsMatchesCacheTime = 0;
 
-  // GET /api/sports/channels: Obtiene canales de deportes parseados de iptv-org con caché de 1h
+  // GET /api/sports/channels: Valida señales en backend (con mirrors) y cachea 7 minutos
   router.get('/sports/channels', async (req, res) => {
     try {
       const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
-      const shouldValidate = req.query.validate === 'true';
+      const shouldValidate = req.query.validate !== 'false';
       const cacheDir = path.join(baseDir, '.cinecast-data');
       const data = await getOrFetchSportsChannels(cacheDir, forceRefresh, shouldValidate);
-      res.setHeader('Cache-Control', shouldValidate ? 'public, max-age=1800' : 'public, max-age=3600');
+      res.setHeader(
+        'Cache-Control',
+        forceRefresh ? 'no-store' : shouldValidate ? 'public, max-age=420' : 'public, max-age=3600'
+      );
       res.json(data);
     } catch (err: any) {
       console.warn('[Sports Router] Error obteniendo canales M3U:', err?.message || err);

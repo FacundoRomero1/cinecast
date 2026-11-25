@@ -140,10 +140,15 @@ export function openCatalogDb(baseDir: string, userDataPath?: string): OpenCatal
 }
 
 function rowToCard(row: Record<string, unknown>): CatalogCardItem {
+  const title = String(row.title ?? '');
+  const titleEs = row.title_es ? String(row.title_es) : undefined;
+  const originalTitle = row.original_title ? String(row.original_title) : undefined;
   return {
     id: String(row.id ?? ''),
     tmdbId: Number(row.tmdb_id ?? 0),
-    title: String(row.title ?? ''),
+    title: title || titleEs || originalTitle || '',
+    titleEs,
+    originalTitle,
     posterUrl: String(row.poster_url ?? ''),
     backdropUrl: String(row.backdrop_url ?? ''),
     year: Number(row.year ?? 0),
@@ -161,7 +166,7 @@ function rowToItem(row: Record<string, unknown>): CatalogItem {
 }
 
 const CARD_COLUMNS =
-  'id, tmdb_id, title, poster_url, backdrop_url, year, rating, genres_json, category, type, quality, upcoming';
+  'id, tmdb_id, title, title_es, original_title, poster_url, backdrop_url, year, rating, genres_json, category, type, quality, upcoming';
 
 export function queryCatalogByIds(
   db: SqliteDatabaseLike,
@@ -171,19 +176,17 @@ export function queryCatalogByIds(
   const selectCols = fields === 'card' || !fields ? CARD_COLUMNS : 'detail_json';
   const stmtExact = db.prepare(`SELECT ${selectCols} FROM items WHERE id = ? ORDER BY seq DESC LIMIT 1`);
   const stmtNumeric = db.prepare(
-    `SELECT ${selectCols} FROM items WHERE id = ? OR tmdb_id = ? ORDER BY seq DESC LIMIT 1`
+    `SELECT ${selectCols} FROM items WHERE tmdb_id = ? ORDER BY seq ASC LIMIT 1`
   );
 
   const matched: Array<CatalogCardItem | CatalogItem> = [];
   const seen = new Set<string>();
 
   for (const rawId of requestedIds) {
-    let row: Record<string, unknown> | undefined;
-    if (/^\d+$/.test(rawId)) {
+    let row: Record<string, unknown> | undefined = stmtExact.get(rawId);
+    if (!row && /^\d+$/.test(rawId)) {
       const numId = Number(rawId);
-      row = numId > 0 ? stmtNumeric.get(rawId, numId) : stmtExact.get(rawId);
-    } else {
-      row = stmtExact.get(rawId);
+      if (numId > 0) row = stmtNumeric.get(numId);
     }
     if (!row) continue;
     const item = fields === 'card' || !fields ? rowToCard(row) : rowToItem(row);
@@ -518,11 +521,28 @@ export function searchLocalCatalogFts(
 export function findCatalogItemInDb(
   db: SqliteDatabaseLike,
   tmdbIdStr: string,
-  rawIdStr: string
+  rawIdStr: string,
+  preferredMediaType?: 'movie' | 'tv'
 ): CatalogItem | null {
   const numTmdb = /^\d+$/.test(tmdbIdStr) ? Number(tmdbIdStr) : -1;
+  if (preferredMediaType === 'tv') {
+    const tvRow = db
+      .prepare(
+        "SELECT detail_json FROM items WHERE id = ? OR (tmdb_id = ? AND type != 'movie' AND (category IN ('series', 'anime') OR type = 'series')) ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, seq ASC LIMIT 1"
+      )
+      .get(rawIdStr, numTmdb, rawIdStr);
+    return tvRow ? rowToItem(tvRow) : null;
+  }
+  if (preferredMediaType === 'movie') {
+    const movieRow = db
+      .prepare(
+        "SELECT detail_json FROM items WHERE id = ? OR (tmdb_id = ? AND type = 'movie') ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, seq ASC LIMIT 1"
+      )
+      .get(rawIdStr, numTmdb, rawIdStr);
+    return movieRow ? rowToItem(movieRow) : null;
+  }
   const row = db
-    .prepare('SELECT detail_json FROM items WHERE tmdb_id = ? OR id = ? ORDER BY seq ASC LIMIT 1')
-    .get(numTmdb, rawIdStr);
+    .prepare('SELECT detail_json FROM items WHERE id = ? OR tmdb_id = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, seq ASC LIMIT 1')
+    .get(rawIdStr, numTmdb, rawIdStr);
   return row ? rowToItem(row) : null;
 }
