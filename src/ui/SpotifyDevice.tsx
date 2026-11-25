@@ -957,19 +957,32 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
 
             {useWebApiConnect && (
               <div className="pt-2 border-t border-zinc-800/80 space-y-2">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-[11px] font-bold text-zinc-400 flex items-center gap-1.5">
                     <MonitorSpeaker className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Dispositivos Spotify Connect:</span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => window.electronAPI?.openExternal?.('spotify:')}
-                    className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    <span>Abrir app Spotify</span>
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        window.electronAPI?.openExternal?.(`${window.location.origin}/#/musica`)
+                      }
+                      title="Abre CineCast en Chrome/Edge (con Widevine VMP certificado) para que aparezca 'CineCast TV' en tu teléfono sin cortes"
+                      className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                    >
+                      <Radio className="w-3 h-3" />
+                      <span>Activar "CineCast TV" en navegador</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.electronAPI?.openExternal?.('spotify:')}
+                      className="text-[11px] font-bold text-zinc-400 hover:text-white flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>Abrir app Spotify</span>
+                    </button>
+                  </div>
                 </div>
                 {connectDevices.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">

@@ -2238,7 +2238,12 @@ ipcMain.handle('open-external', (_event, url) => {
   if (!url || typeof url !== 'string') return false;
   try {
     const parsed = new URL(url.trim());
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') {
+    if (
+      parsed.protocol !== 'http:' &&
+      parsed.protocol !== 'https:' &&
+      parsed.protocol !== 'mailto:' &&
+      parsed.protocol !== 'spotify:'
+    ) {
       console.warn(`[open-external] Protocolo rechazado: ${parsed.protocol} (${url})`);
       return false;
     }
