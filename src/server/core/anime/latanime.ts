@@ -161,28 +161,35 @@ export async function getServers(
   const cleanTitle = (title || '').trim();
   if (!cleanTitle) return [];
 
-  const slug = getSlugForAnime(cleanTitle, tmdbId);
-  const epUrl = `https://latanime.org/ver/${slug}-episodio-${episode}`;
+  const primarySlug = getSlugForAnime(cleanTitle, tmdbId);
+  const plainSlug = primarySlug.replace(/-latino$/i, '');
+  const candidateSlugs = plainSlug && plainSlug !== primarySlug ? [primarySlug, plainSlug] : [primarySlug];
 
-  try {
-    const res = await fetch(epUrl, {
-      headers: {
-        'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-      },
-      signal: AbortSignal.timeout(5000),
-    });
+  for (const slug of candidateSlugs) {
+    const epUrl = `https://latanime.org/ver/${slug}-episodio-${episode}`;
+    try {
+      const res = await fetch(epUrl, {
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        },
+        signal: AbortSignal.timeout(5000),
+      });
 
-    if (!res.ok) {
-      console.warn(`[latanime] HTTP ${res.status} en ${epUrl}`);
-      return [];
+      if (!res.ok) {
+        if (slug === candidateSlugs[candidateSlugs.length - 1]) {
+          console.warn(`[latanime] HTTP ${res.status} en ${epUrl}`);
+        }
+        continue;
+      }
+
+      const html = await res.text();
+      const parsed = parseLatanimeEpisodeHtml(html, slug);
+      if (parsed.length > 0) return parsed;
+    } catch (err: any) {
+      console.warn(`[latanime] Error consultando ${epUrl}:`, err?.message);
     }
-
-    const html = await res.text();
-    return parseLatanimeEpisodeHtml(html, slug);
-  } catch (err: any) {
-    console.warn(`[latanime] Error consultando ${epUrl}:`, err?.message);
-    return [];
   }
+  return [];
 }

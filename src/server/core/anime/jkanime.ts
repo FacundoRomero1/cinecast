@@ -9,29 +9,46 @@ export async function getServers(title: string, episode: number): Promise<AnimeS
 
   const results: AnimeServer[] = [];
   try {
-    // 1. Buscar en JKAnime
-    const searchSlug = cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-    const searchUrl = `https://jkanime.net/buscar/${encodeURIComponent(searchSlug)}/`;
+    // 1. Buscar en JKAnime (título completo y, si no hay resultados, tokens distintivos cortos)
+    const searchSlug = cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const STOP_WORDS = new Set(['the', 'a', 'an', 'of', 'in', 'on', 'to', 'for', 'and', 'or', 'how', 'with', 'from', 'wa', 'no', 'de', 'ni', 'ga', 'wo']);
+    const meaningfulWords = cleanTitle
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+    const searchQueries: string[] = [searchSlug];
+    if (meaningfulWords.length >= 3) {
+      searchQueries.push(meaningfulWords.slice(0, 3).join('_'));
+    }
+    if (meaningfulWords.length >= 2) {
+      searchQueries.push(meaningfulWords.slice(0, 2).join('_'));
+    }
 
     const candidateSlugs: string[] = [];
-    try {
-      const searchRes = await fetch(searchUrl, {
-        headers: { 'User-Agent': UA },
-        signal: AbortSignal.timeout(4500),
-      });
-      if (searchRes.ok) {
-        const searchHtml = await searchRes.text();
-        const $ = cheerio.load(searchHtml);
-        $('.anime__item').each((_, el) => {
-          const href = $(el).find('a').first().attr('href') || '';
-          const s = href.replace('https://jkanime.net/', '').replace(/\//g, '').trim();
-          if (s && !candidateSlugs.includes(s)) {
-            candidateSlugs.push(s);
-          }
+    for (const q of Array.from(new Set(searchQueries)).filter(Boolean)) {
+      if (candidateSlugs.length > 0) break;
+      const searchUrl = `https://jkanime.net/buscar/${encodeURIComponent(q)}/`;
+      try {
+        const searchRes = await fetch(searchUrl, {
+          headers: { 'User-Agent': UA },
+          signal: AbortSignal.timeout(4500),
         });
+        if (searchRes.ok) {
+          const searchHtml = await searchRes.text();
+          const $ = cheerio.load(searchHtml);
+          $('.anime__item').each((_, el) => {
+            const href = $(el).find('a').first().attr('href') || '';
+            const s = href.replace('https://jkanime.net/', '').replace(/\//g, '').trim();
+            if (s && !candidateSlugs.includes(s)) {
+              candidateSlugs.push(s);
+            }
+          });
+        }
+      } catch (err: any) {
+        console.warn('[jkanime] Error buscando anime:', err?.message);
       }
-    } catch (err: any) {
-      console.warn('[jkanime] Error buscando anime:', err?.message);
     }
 
     // Slugs alternativos si la búsqueda falló
