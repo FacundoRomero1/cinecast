@@ -45,6 +45,8 @@ export interface LiveSportsChannel {
   userAgent?: string | null;
   geoBlocked?: boolean;
   lastVerified?: number;
+  /** true cuando el canal viene de la lista curada y no pasó validación en vivo (p. ej. web sin probe). */
+  unverified?: boolean;
   servers?: StreamServer[];
 }
 

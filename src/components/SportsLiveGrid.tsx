@@ -139,6 +139,11 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
             <p className="text-sm text-zinc-300 mt-1 max-w-2xl">
               Canales deportivos en español transmitiendo en vivo: LaLiga, Liga MX, Torneo Argentino, Copa Libertadores, Fórmula 1 y polideportivo.
             </p>
+            {channels.length > 0 && channels.every((c) => c.unverified) && (
+              <p data-testid="sports-unverified-note" className="text-xs text-amber-300 mt-2 max-w-2xl">
+                Sin verificar: no se pudo comprobar el estado en vivo de estas señales. Algunas pueden no reproducir.
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
@@ -292,7 +297,7 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
                 <div className="flex items-center justify-between mb-3">
                   <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-950/80 border border-red-500/40 text-[10px] font-extrabold text-red-400 tracking-wider">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                    VIVO
+                    {channel.unverified ? 'SIN VERIFICAR' : 'VIVO'}
                   </span>
                   <span className="text-xs" title={channel.countryName}>
                     {channel.countryFlag}

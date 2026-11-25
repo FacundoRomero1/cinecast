@@ -648,6 +648,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [resolvedServers, setResolvedServers] = useState<StreamServer[] | null>(null);
   // true = MovieMaster confirmo que este titulo/episodio NO tiene audio Latino ni Castellano
   const [noSpanishAudio, setNoSpanishAudio] = useState<boolean>(false);
+  // P9.4: el usuario eligió ver igual en subtitulado (informar sin secuestrar)
+  const [allowSubtitled, setAllowSubtitled] = useState<boolean>(false);
   const [forceShowServerSelector, setForceShowServerSelector] = useState<boolean>(false);
   const [isGhostExtracting, setIsGhostExtracting] = useState<boolean>(false);
   const [captchaRequired, setCaptchaRequired] = useState<boolean>(false);
@@ -752,7 +754,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // 1. Si resolveService o Direct HLS ya resolvió servidores para este título con TMDB
     // Peliculas/series: solo audio Latino o Castellano (anime conserva latino + subs).
     const spanishResolved =
-      resolvedServers && !isAnime ? filterSpanishOnlyServers(resolvedServers, 'player.resolvedServers') : resolvedServers;
+      resolvedServers && !isAnime && !allowSubtitled ? filterSpanishOnlyServers(resolvedServers, 'player.resolvedServers') : resolvedServers;
     if (tmdbIdToUse > 0 && spanishResolved !== null && spanishResolved.length > 0) {
       return deduplicateServers(spanishResolved, episodeKey);
     }
@@ -766,7 +768,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         type: isAnime ? 'anime' : 'series',
         season: selectedSeason,
         episode: selectedEpisode,
-        skipMmHls: noSpanishAudio,
+        skipMmHls: noSpanishAudio && !allowSubtitled,
       });
     }
 
@@ -782,7 +784,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         type: 'movie',
         season: selectedSeason,
         episode: selectedEpisode,
-        skipMmHls: noSpanishAudio,
+        skipMmHls: noSpanishAudio && !allowSubtitled,
       });
     }
 
@@ -796,7 +798,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       type: isEmbed ? 'iframe' : 'mp4',
       language: 'Principal',
     }];
-  }, [media, episode, currentVideoUrl, isSeriesOrAnime, tmdbIdToUse, selectedSeason, selectedEpisode, resolvedServers, noSpanishAudio]);
+  }, [media, episode, currentVideoUrl, isSeriesOrAnime, tmdbIdToUse, selectedSeason, selectedEpisode, resolvedServers, noSpanishAudio, allowSubtitled]);
 
   const [selectedServerName, setSelectedServerName] = useState<string>(() => {
     if (tmdbIdToUse > 0) return '';
@@ -1058,6 +1060,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     let mmMintFailed = false;
     let mmSpanishVerified = false;
     setNoSpanishAudio(false);
+    setAllowSubtitled(false);
     const buildTraditionalSplit = () => {
       const generated = generateServersForMedia({
         tmdbId: tmdbIdToUse,
@@ -3065,6 +3068,60 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [videoSrc, isIframeMode, corsMode, isResolving]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // P9.4: "Ver igual (subtitulado)" — acuña el servidor SUB de MovieMaster a pedido del usuario.
+  const handleWatchSubtitled = useCallback(async () => {
+    const epoch = serversEpochRef.current;
+    setAllowSubtitled(true);
+    setIsResolving(true);
+    try {
+      const r = await fetch('/api/mm/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tmdb: tmdbIdToUse,
+          type: isSeriesOrAnime ? 'tv' : 'movie',
+          season: selectedSeason,
+          episode: selectedEpisode,
+          lang: 'subtitulado',
+        }),
+      });
+      const d = r.ok ? await r.json() : null;
+      if (serversEpochRef.current !== epoch) return;
+      if (d?.manifestUrl) {
+        const srv = {
+          id: `mm-sub-${tmdbIdToUse}-${selectedSeason}-${selectedEpisode}`,
+          providerId: 'moviemaster',
+          name: `MovieMaster ${d.serverName || 'Servidor 1'} (Subtitulado)`,
+          mmServerName: d.serverName,
+          mmLang: 'subtitulado',
+          url: d.manifestUrl,
+          type: 'hls',
+          playable: 'hls',
+          language: 'Subtitulado',
+          audioLangs: ['sub'],
+          validated: true,
+          durationSec: d.durationSec,
+        } as any;
+        console.log(`[MM] Ver igual (subtitulado): srv=${d.serverName} lang=${d.lang} dur=${d.durationSec}`);
+        setNoSpanishAudio(false);
+        setResolvedServers([srv]);
+        setSelectedServerName(srv.name);
+        setVideoSrc(d.manifestUrl);
+        if (typeof d.durationSec === 'number' && d.durationSec > 0) setDuration(d.durationSec);
+        setIsPlaying(true);
+        setForceShowServerSelector(false);
+      } else {
+        setAllowSubtitled(false);
+        triggerSignalToast('No se pudo cargar la versión subtitulada');
+      }
+    } catch (_) {
+      setAllowSubtitled(false);
+      triggerSignalToast('No se pudo cargar la versión subtitulada');
+    } finally {
+      if (serversEpochRef.current === epoch) setIsResolving(false);
+    }
+  }, [tmdbIdToUse, isSeriesOrAnime, selectedSeason, selectedEpisode, triggerSignalToast]);
+
   const handleOpenExternalStream = useCallback(() => {
     const url = activeServer?.url || activeEmbedUrl;
     if (!url) return;
@@ -4078,15 +4135,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {noSpanishAudio && !isResolving && !(resolvedServers || []).some((s) => Boolean(s.url)) && (
+      {noSpanishAudio && !allowSubtitled && !isResolving && !(resolvedServers || []).some((s) => Boolean(s.url)) && (
         <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center z-50 text-center p-6 pointer-events-auto">
           <h3 className="text-white text-lg font-bold mb-2">Sin audio Latino ni Castellano</h3>
           <p className="text-zinc-400 text-sm max-w-md mb-5">
-            Los servidores solo ofrecen este episodio subtitulado o en inglés. No se muestra como Latino para no engañarte.
+            Este episodio solo está disponible subtitulado o en inglés. Podés verlo igual, no se presenta como Latino.
           </p>
-          <button type="button" onClick={onClose} className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm">
-            Volver
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={handleWatchSubtitled} className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm">
+              Ver igual (subtitulado)
+            </button>
+            <button type="button" onClick={onClose} className="px-5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-sm border border-zinc-700">
+              Volver
+            </button>
+          </div>
         </div>
       )}
 

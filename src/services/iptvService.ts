@@ -324,9 +324,17 @@ class IPTVService {
                     ],
             }));
 
-            const verifiedMapped = mapped.filter((ch) =>
-              assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl }).trusted
-            );
+            const verifiedMapped = mapped.filter((ch) => {
+              const trust = assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl });
+              if (!trust.trusted) {
+                console.log(`[Sports] descartado por assessMirrorTrust: ${ch.id} "${ch.name}" url=${String(ch.streamUrl).slice(0, 90)}`);
+              }
+              return trust.trusted;
+            });
+            console.log(`[Sports] sobreviven ${verifiedMapped.length} de ${mapped.length} canales del servidor`);
+            if (verifiedMapped.length === 0) {
+              return this.curatedFallback('el servidor no devolvió canales confiables');
+            }
             const ranked = rankSportsChannels(verifiedMapped);
             this.memoryCache = ranked;
             this.lastCacheTimestamp = Date.now();
@@ -338,13 +346,10 @@ class IPTVService {
         console.warn('Endpoint /api/sports/channels no respondió, probando verificación de respaldo:', e);
       }
 
-      // 2. Respaldo sólo si hay probe real disponible en Electron (nunca marcar isOnline:true sin verificar)
+      // 2. Respaldo con probe real en Electron. En web (sin probeStreams) se muestran los curados
+      //    marcados como "sin verificar": nunca isOnline:true sin verificar, pero tampoco grilla vacía.
       if (typeof window === 'undefined' || !window.electronAPI?.probeStreams) {
-        this.lastFetchFailed = true;
-        this.memoryCache = [];
-        this.lastCacheTimestamp = Date.now();
-        this.saveToStorage([]);
-        return [];
+        return this.curatedFallback('sin probeStreams (web) y el endpoint no respondió');
       }
 
       const [channelsRes, streamsRes, logosRes] = await Promise.allSettled([
@@ -463,14 +468,22 @@ class IPTVService {
       return finalChannels;
     } catch (err) {
       console.warn('⚠️ [IPTV Service] Error obteniendo canales deportivos:', err);
-      this.lastFetchFailed = true;
-      this.memoryCache = [];
-      this.lastCacheTimestamp = Date.now();
-      this.saveToStorage([]);
-      return [];
+      return this.curatedFallback('excepción al obtener canales');
     } finally {
       this.isFetching = false;
     }
+  }
+
+  /** Lista curada marcada como no verificada. No se persiste en storage para no fijar datos sin validar. */
+  private curatedFallback(reason: string): LiveSportsChannel[] {
+    const curated: LiveSportsChannel[] = VERIFIED_SPORTS_CHANNELS
+      .filter((c) => Boolean(c.streamUrl) || (c.servers && c.servers.length > 0))
+      .map((c) => ({ ...c, isOnline: false, unverified: true }));
+    console.log(`[Sports] fallback a curados (${reason}): ${curated.length} canales sin verificar`);
+    this.lastFetchFailed = true;
+    this.memoryCache = curated;
+    this.lastCacheTimestamp = Date.now();
+    return curated;
   }
 
   private readFromStorage(): LiveSportsChannel[] | null {

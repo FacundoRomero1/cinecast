@@ -333,6 +333,8 @@ async function harvestUiViaElectron(
       });
 
       win.webContents.setUserAgent(REAL_UA);
+      // P9.2: la ventana de cosecha nunca debe emitir audio sobre el capítulo en reproducción.
+      win.webContents.setAudioMuted(true);
       win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
       win
