@@ -25,7 +25,7 @@ const UI_CACHE_FILE = path.join(os.tmpdir(), 'cinecast-mm-ui-cache-v1.json');
 function clearUiDiskCache() {
   try {
     if (fs.existsSync(UI_CACHE_FILE)) fs.unlinkSync(UI_CACHE_FILE);
-  } catch (_) {}
+  } catch (_) { }
 }
 
 async function runColdPlayGate(browser, { name, impressionPing }) {
@@ -96,12 +96,37 @@ async function runColdPlayGate(browser, { name, impressionPing }) {
     }
     const elapsedMs = (frameAt || Date.now()) - tStart;
 
+    let concurrencyDropSkipped = null;
+    let sessionCapSkipped = null;
     if (impressionPing) {
-      // Esperar hasta 24 s a que termine el delay post-frame + 12 s de ping y aparezca el log [MM] impression ping
+      // Esperar ~2.2 s post-frame (el cliente dispara a 1200 ms) y probar drop de concurrencia 1
+      await wait(2200);
+      try {
+        const rBusy = await fetch(`${baseUrl}/api/mm/impression`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tmdb: 1396, type: 'tv', season: 1, episode: 2 }),
+        });
+        const jBusy = await rBusy.json();
+        concurrencyDropSkipped = jBusy?.skipped || null;
+      } catch (_) {}
+
+      // Esperar hasta 24 s a que termine el ping y aparezca [MM] impression ping ... ads=N
       for (let i = 0; i < 120; i++) {
         if (pingEvents.length > 0) break;
         await wait(200);
       }
+
+      // Tras terminar el primer ping, verificar tope de sesión (solo 1er episodio)
+      try {
+        const rCap = await fetch(`${baseUrl}/api/mm/impression`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tmdb: 1396, type: 'tv', season: 1, episode: 3 }),
+        });
+        const jCap = await rCap.json();
+        sessionCapSkipped = jCap?.skipped || null;
+      } catch (_) {}
     } else {
       await wait(1200);
     }
@@ -112,9 +137,20 @@ async function runColdPlayGate(browser, { name, impressionPing }) {
     const harvestMs = harvestMsMatch ? Number(harvestMsMatch[1]) : null;
     const firstPing = pingEvents[0] || null;
     const pingAfterFrame = Boolean(firstPing && frameAt > 0 && firstPing.ts > frameAt);
+    const adsMatch = firstPing ? firstPing.line.match(/ads=(\d+)/) : null;
+    const pingAdRequests = adsMatch ? Number(adsMatch[1]) : 0;
 
     const pass = impressionPing
-      ? Boolean(frameAt > 0 && elapsedMs < 8000 && state?.duration > 300 && pingAfterFrame)
+      ? Boolean(
+          frameAt > 0 &&
+          elapsedMs < 8000 &&
+          state?.duration > 300 &&
+          pingEvents.length === 1 &&
+          pingAdRequests >= 1 &&
+          pingAfterFrame &&
+          concurrencyDropSkipped === 'busy' &&
+          sessionCapSkipped === 'session_cap'
+        )
       : Boolean(frameAt > 0 && elapsedMs < 8000 && state?.duration > 300 && pingEvents.length === 0);
 
     return {
@@ -127,9 +163,12 @@ async function runColdPlayGate(browser, { name, impressionPing }) {
       currentTime: state?.currentTime,
       iframeCount: state?.iframeCount,
       pingCount: pingEvents.length,
+      pingAdRequests: impressionPing ? pingAdRequests : undefined,
       pingLine: firstPing?.line || null,
       pingAfterFrame: impressionPing ? pingAfterFrame : undefined,
       pingDeltaAfterFrameMs: firstPing && frameAt > 0 ? firstPing.ts - frameAt : null,
+      concurrencyDropSkipped: impressionPing ? concurrencyDropSkipped : undefined,
+      sessionCapSkipped: impressionPing ? sessionCapSkipped : undefined,
     };
   } finally {
     await testEnv.stop();
@@ -216,7 +255,7 @@ async function runColdPlayGate(browser, { name, impressionPing }) {
       if (blockEndpoint) {
         await p.route('**/api/sports/channels*', (r) => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"down"}' }));
       }
-      await p.addInitScript(() => { try { localStorage.clear(); } catch (_) {} });
+      await p.addInitScript(() => { try { localStorage.clear(); } catch (_) { } });
       await p.goto(`${baseUrl}/?role=screen&ui=nuevo&room=${encodeURIComponent(room)}#/canales`, { waitUntil: 'domcontentloaded', timeout: 20000 });
       let res = null;
       for (let i = 0; i < 100; i++) {
@@ -257,8 +296,8 @@ async function runColdPlayGate(browser, { name, impressionPing }) {
     process.exit(allPass ? 0 : 1);
   } catch (err) {
     console.error('[probe-p9-gates] Error:', err);
-    if (browser) await browser.close().catch(() => {});
-    if (testEnv) await testEnv.stop().catch(() => {});
+    if (browser) await browser.close().catch(() => { });
+    if (testEnv) await testEnv.stop().catch(() => { });
     process.exit(1);
   }
 })();

@@ -1518,26 +1518,142 @@ export function createMovieMasterRouter(): Router {
     res.json({ ok: true, removed });
   });
 
-  // P9.3 — Ping de impresión: abre /e/... oculto, muteado, 12 s, y cierra.
-  // Una vez por tmdb|temporada|episodio, en background, sin bloquear el play.
-  // Flag MM_IMPRESSION_PING por env para poder apagarlo sin release (MM_IMPRESSION_PING=0).
+  // P9.3 / P9.6 / P9.7 — Ping de impresión:
+  // - Abre /e/... oculto, muteado, hace click en #go para disparar el pre-roll real (quickcore.fun) y cierra.
+  // - Concurrencia máxima 1 con drop (skipped: 'busy') si ya hay un ping en vuelo.
+  // - Navegador/mutex totalmente separado de harvestUi.
+  // - Timeout duro de 5 s para carga inicial (did-finish-load / iframe domcontentloaded).
+  // - Teardown garantizado en before-quit / SIGTERM / SIGINT.
+  const IMPRESSION_LOAD_TIMEOUT_MS = 5_000;
   const impressionSentKeys = new Set<string>();
+  let impressionInFlight = false;
+  let impressionSessionCount = 0;
+  let sharedImpressionPlaywrightBrowserPromise: Promise<any> | null = null;
+  const activeImpressionClosers = new Set<() => void>();
+  let impressionShutdownHooked = false;
+
+  const isImpressionAdUrl = (rawUrl: string): boolean => {
+    if (!rawUrl) return false;
+    return /quickcore\.fun/i.test(rawUrl);
+  };
+
+  const cleanupActiveImpressions = () => {
+    for (const closer of Array.from(activeImpressionClosers)) {
+      try {
+        closer();
+      } catch (_) {}
+    }
+    activeImpressionClosers.clear();
+    const bp = sharedImpressionPlaywrightBrowserPromise;
+    sharedImpressionPlaywrightBrowserPromise = null;
+    if (bp) {
+      bp.then((b) => b?.close?.().catch(() => {})).catch(() => {});
+    }
+  };
+
+  const ensureImpressionShutdownHooks = () => {
+    if (impressionShutdownHooked) return;
+    impressionShutdownHooked = true;
+    const isElectron = Boolean(process.versions && process.versions.electron);
+    if (isElectron) {
+      try {
+        const electron = requireModule('electron');
+        electron?.app?.once?.('before-quit', cleanupActiveImpressions);
+      } catch (_) {}
+    }
+    process.once('SIGTERM', cleanupActiveImpressions);
+    process.once('SIGINT', cleanupActiveImpressions);
+    process.once('beforeExit', cleanupActiveImpressions);
+  };
+
+  const getSharedImpressionPlaywrightBrowser = async (): Promise<any> => {
+    if (!sharedImpressionPlaywrightBrowserPromise) {
+      const pw = requireModule('playwright');
+      const { chromium } = pw;
+      const launchOpts = { headless: true, args: ['--mute-audio'] };
+      sharedImpressionPlaywrightBrowserPromise = (async () => {
+        try {
+          return await chromium.launch({ ...launchOpts, channel: 'chrome' });
+        } catch {
+          try {
+            return await chromium.launch({ ...launchOpts, channel: 'msedge' });
+          } catch {
+            return await chromium.launch(launchOpts);
+          }
+        }
+      })().catch((err) => {
+        sharedImpressionPlaywrightBrowserPromise = null;
+        throw err;
+      });
+    }
+    return sharedImpressionPlaywrightBrowserPromise;
+  };
+
+  // Host HTML mínimo mismo-origen para embeber /e/... con Referer HTTP real
+  router.get('/mm/imp-host', (req: Request, res: Response) => {
+    const rawUrl = String(req.query.url || '').trim();
+    if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) {
+      res.status(400).send('bad url');
+      return;
+    }
+    const safeAttr = rawUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(
+      `<!doctype html><html><body style="margin:0;background:#000"><iframe id="imp" src="${safeAttr}" width="800" height="450" allow="autoplay; encrypted-media; fullscreen"></iframe></body></html>`
+    );
+  });
+
   const runImpressionPing = async (
     embedUrl: string,
+    hostOrigin: string,
     tmdb: number,
     s: number,
     e: number
   ): Promise<void> => {
+    ensureImpressionShutdownHooks();
     const t0 = Date.now();
-    const holdMs = Math.max(500, Number(process.env.MM_IMPRESSION_DURATION_MS) || 12_000);
+    // P9.7: medido delta RSS > 150 MB (+244..352 MB) -> 6 s por defecto y 1 por sesión
+    const holdMs = Math.max(500, Number(process.env.MM_IMPRESSION_DURATION_MS) || 6_000);
     const isElectron = Boolean(process.versions && process.versions.electron);
+    let adRequests = 0;
+    let abortedReason = '';
 
     if (isElectron) {
       let win: any = null;
+      let closed = false;
+      const closeWin = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          if (win && !win.isDestroyed()) win.destroy();
+        } catch (_) {}
+      };
+      activeImpressionClosers.add(closeWin);
       try {
         const electron = requireModule('electron');
-        const { BrowserWindow } = electron;
+        const { BrowserWindow, session } = electron;
         const partition = `mm-imp-${tmdb}-${s}-${e}-${Date.now()}`;
+        const ses = session.fromPartition(partition, { cache: false });
+        let serversLoaded = false;
+
+        ses.webRequest.onBeforeRequest(
+          { urls: ['*://*/*'] },
+          (details: { url?: string }, cb: (resp: { cancel: boolean }) => void) => {
+            const u = details.url || '';
+            if (isImpressionAdUrl(u)) {
+              adRequests += 1;
+            }
+            cb({ cancel: false });
+          }
+        );
+        ses.webRequest.onCompleted(
+          { urls: ['*://api.moviemaster.lat/servers*'] },
+          () => {
+            serversLoaded = true;
+          }
+        );
+
         win = new BrowserWindow({
           show: false,
           width: 800,
@@ -1554,52 +1670,155 @@ export function createMovieMasterRouter(): Router {
         win.webContents.setUserAgent(REAL_UA);
         win.webContents.setAudioMuted(true);
         win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-        await win.loadURL('about:blank');
-        if (!win.isDestroyed()) {
-          const safeUrl = JSON.stringify(embedUrl);
-          await win.webContents.executeJavaScript(
-            `(() => {
-              const f = document.createElement('iframe');
-              f.src = ${safeUrl};
-              f.width = '800';
-              f.height = '450';
-              f.allow = 'autoplay; encrypted-media';
-              document.body.appendChild(f);
-            })()`,
-            false
-          );
-          await new Promise((r) => setTimeout(r, holdMs));
+
+        const hostUrl = `${hostOrigin}/api/mm/imp-host?url=${encodeURIComponent(embedUrl)}`;
+        const loaded = await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const finish = (ok: boolean) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(loadTimer);
+            resolve(ok);
+          };
+          const loadTimer = setTimeout(() => finish(false), IMPRESSION_LOAD_TIMEOUT_MS);
+          win.webContents.once('did-finish-load', () => finish(true));
+          win.webContents.once('did-fail-load', () => finish(false));
+          win.loadURL(hostUrl).catch(() => finish(false));
+        });
+
+        if (!loaded || closed || win.isDestroyed()) {
+          abortedReason = 'load_timeout';
+        } else {
+          // Esperar hasta 3.5 s a que responda /servers y luego hacer click en #go del subframe
+          const waitStart = Date.now();
+          while (!serversLoaded && !closed && Date.now() - waitStart < 3500) {
+            await new Promise((r) => setTimeout(r, 150));
+          }
+          if (!closed && !win.isDestroyed()) {
+            await new Promise((r) => setTimeout(r, 400));
+            try {
+              const frames = win.webContents.mainFrame?.frames || [];
+              const mmFrame = frames.find((f: any) => String(f.url || '').includes('moviemaster.lat'));
+              if (mmFrame) {
+                await mmFrame.executeJavaScript("document.getElementById('go')?.click()", true).catch(() => {});
+              }
+            } catch (_) {}
+            await new Promise((r) => setTimeout(r, holdMs));
+          }
         }
       } catch (err: any) {
         console.warn('[MM] impression ping error (Electron):', err?.message || err);
       } finally {
-        try {
-          if (win && !win.isDestroyed()) win.destroy();
-        } catch (_) {}
-        console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0}`);
+        activeImpressionClosers.delete(closeWin);
+        closeWin();
+        const suffix = abortedReason ? ` aborted=${abortedReason}` : '';
+        console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0} ads=${adRequests}${suffix}`);
       }
       return;
     }
 
     let ctx: any = null;
+    let browserRef: any = null;
+    let closed = false;
+    const closeCtx = () => {
+      if (closed) return;
+      closed = true;
+      if (ctx) {
+        ctx.close().catch(() => {});
+      }
+    };
+    activeImpressionClosers.add(closeCtx);
     try {
-      const browser = await getSharedPlaywrightBrowser();
-      ctx = await browser.newContext({ userAgent: REAL_UA });
+      browserRef = await getSharedImpressionPlaywrightBrowser();
+      ctx = await browserRef.newContext({ userAgent: REAL_UA, viewport: { width: 800, height: 450 } });
       const page = await ctx.newPage();
-      await page
-        .setContent(`<iframe src="${embedUrl}" width="800" height="450" allow="autoplay"></iframe>`, {
-          waitUntil: 'commit',
-          timeout: 3000,
-        })
-        .catch(() => {});
-      await new Promise((r) => setTimeout(r, holdMs));
+      let serversLoaded = false;
+
+      page.on('request', (req: any) => {
+        const u = req.url();
+        if (isImpressionAdUrl(u)) {
+          adRequests += 1;
+        }
+      });
+      page.on('response', (res: any) => {
+        if (res.url().includes('/servers')) {
+          serversLoaded = true;
+        }
+      });
+
+      const hostUrl = `${hostOrigin}/api/mm/imp-host?url=${encodeURIComponent(embedUrl)}`;
+      const loadStart = Date.now();
+      let loadOk = false;
+      let loadErr = '';
+      try {
+        await page.goto(hostUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: IMPRESSION_LOAD_TIMEOUT_MS,
+        });
+        // Verificar que el iframe de moviemaster cargue dentro de los 5 s desde el inicio de navegación
+        const loadDeadline = loadStart + IMPRESSION_LOAD_TIMEOUT_MS;
+        while (!closed && Date.now() < loadDeadline) {
+          const mmFrame = page
+            .frames()
+            .find((f: any) => f !== page.mainFrame() && String(f.url() || '').includes('moviemaster.lat'));
+          if (mmFrame) {
+            const hasGo = await mmFrame.locator('#go').count().catch(() => 0);
+            if (hasGo > 0) {
+              loadOk = true;
+              break;
+            }
+          }
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      } catch (e: any) {
+        loadOk = false;
+        loadErr = String(e?.message || e).slice(0, 120);
+      }
+
+      if (!loadOk || closed) {
+        abortedReason = 'load_timeout';
+        const frameUrls = page.frames().map((f: any) => f.url()).join(',');
+        console.warn(`[MM] impression load_timeout hostUrl=${hostUrl} frames=[${frameUrls}] err=${loadErr}`);
+      } else {
+        const waitStart = Date.now();
+        while (!serversLoaded && !closed && Date.now() - waitStart < 3500) {
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        if (!closed) {
+          await new Promise((r) => setTimeout(r, 400));
+          const mmFrame = page
+            .frames()
+            .find((f: any) => f !== page.mainFrame() && String(f.url() || '').includes('moviemaster.lat'));
+          if (mmFrame) {
+            const go = mmFrame.locator('#go');
+            if ((await go.count().catch(() => 0)) > 0) {
+              await go.click({ timeout: 2000 }).catch(() => {});
+            }
+          }
+          await new Promise((r) => setTimeout(r, holdMs));
+        }
+      }
     } catch (err: any) {
       console.warn('[MM] impression ping error (Playwright):', err?.message || err);
     } finally {
+      activeImpressionClosers.delete(closeCtx);
+      closed = true;
       try {
         if (ctx) await ctx.close();
       } catch (_) {}
-      console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0}`);
+      // Liberar el navegador dedicado de impresión para no dejar procesos Chromium residentes
+      try {
+        const bp = sharedImpressionPlaywrightBrowserPromise;
+        sharedImpressionPlaywrightBrowserPromise = null;
+        if (browserRef) {
+          await browserRef.close().catch(() => {});
+        } else if (bp) {
+          const b = await bp.catch(() => null);
+          await b?.close?.().catch(() => {});
+        }
+      } catch (_) {}
+      const suffix = abortedReason ? ` aborted=${abortedReason}` : '';
+      console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0} ads=${adRequests}${suffix}`);
     }
   };
 
@@ -1619,13 +1838,31 @@ export function createMovieMasterRouter(): Router {
     const s = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(b.season ?? b.s ?? 1) || 1));
     const e = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(b.episode ?? b.e ?? 1) || 1));
     const impKey = `${tmdb}|${s}|${e}`;
+    if (impressionInFlight) {
+      res.status(200).json({ ok: true, skipped: 'busy', key: impKey });
+      return;
+    }
+    // P9.7: por defecto solo primer episodio de la sesión (cap=1) dado delta RSS > 150 MB
+    const rawCap = process.env.MM_IMPRESSION_SESSION_CAP;
+    const sessionCap = rawCap === undefined || rawCap === '' ? 1 : Number(rawCap);
+    if (sessionCap > 0 && impressionSessionCount >= sessionCap) {
+      res.status(200).json({ ok: true, skipped: 'session_cap', key: impKey });
+      return;
+    }
     if (impressionSentKeys.has(impKey)) {
       res.status(200).json({ ok: true, skipped: 'already_sent', key: impKey });
       return;
     }
+    impressionInFlight = true;
+    impressionSessionCount += 1;
     impressionSentKeys.add(impKey);
     const embedUrl = buildEmbedUrl(tmdb, type, s || 1, e || 1);
-    void runImpressionPing(embedUrl, tmdb, s, e);
+    const rawHost = req.get('host') || `127.0.0.1:${process.env.CINECAST_PORT || process.env.PORT || 3000}`;
+    const hostHeader = rawHost.replace(/^localhost(?=:|$)/i, '127.0.0.1');
+    const hostOrigin = `${req.protocol || 'http'}://${hostHeader}`;
+    void runImpressionPing(embedUrl, hostOrigin, tmdb, s, e).finally(() => {
+      impressionInFlight = false;
+    });
     res.status(202).json({ ok: true, started: true, key: impKey });
   });
 
