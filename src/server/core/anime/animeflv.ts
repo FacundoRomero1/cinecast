@@ -15,7 +15,7 @@ export async function getServers(title: string, episode: number): Promise<AnimeS
       if (typeof flv.searchAnime === 'function') {
         const searchRes = await Promise.race([
           flv.searchAnime(cleanTitle),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
         ]);
         if (searchRes && (searchRes as any).data && Array.isArray((searchRes as any).data)) {
           const first = (searchRes as any).data[0];
@@ -23,14 +23,14 @@ export async function getServers(title: string, episode: number): Promise<AnimeS
           if (animeId && typeof flv.getAnimeInfo === 'function') {
             const info = await Promise.race([
               flv.getAnimeInfo(animeId),
-              new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
             ]);
             if (info && Array.isArray(info.episodes)) {
               const ep = info.episodes.find((e: any) => Number(e.number) === episode);
               if (ep && ep.url) {
                 const epRes = await fetch(ep.url, {
                   headers: { 'User-Agent': UA },
-                  signal: AbortSignal.timeout(3500),
+                  signal: AbortSignal.timeout(2000),
                 });
                 if (epRes.ok) {
                   const epHtml = await epRes.text();

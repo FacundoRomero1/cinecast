@@ -73,12 +73,32 @@ export async function getServers(title: string, episode: number): Promise<AnimeS
         if (!epRes.ok) continue;
         const epHtml = await epRes.text();
 
-        // Extraer var servers = [...]
+        // Extraer video[n] = '<iframe src="..."' (jkplayer nativo: alta confiabilidad, prioridad primero)
+        const videoMatches = [...epHtml.matchAll(/video\[\d+\]\s*=\s*'<iframe[^>]+src="([^"]+)"/g)].map((m) => m[1]);
+        let jkIdx = 0;
+        for (const vUrl of videoMatches) {
+          if (vUrl && vUrl.startsWith('http') && !results.some((r) => r.url === vUrl)) {
+            jkIdx += 1;
+            results.push({
+              provider: 'jkanime',
+              name: `JKAnime (Player ${jkIdx})`,
+              url: vUrl,
+              type: vUrl.includes('.m3u8') ? 'hls' : 'iframe',
+              language: 'sub',
+            });
+          }
+        }
+
+        // Extraer var servers = [...] excluyendo hosts de descarga de archivos no reproducibles (Mediafire, Mega, etc.)
+        const UNPLAYABLE_HOST_RE = /mediafire\.com|mega\.nz|1fichier\.com|zippyshare\.com|pixeldrain\.com|gofile\.io/i;
+        const PREFERRED_HOST_RE = /streamwish|hgcloud|vidhide|filelions|wishfast/i;
         const srvMatch = epHtml.match(/var servers = (\[.*?\]);/s);
         if (srvMatch && srvMatch[1]) {
           try {
             const rawServers = JSON.parse(srvMatch[1]);
             if (Array.isArray(rawServers)) {
+              const preferred: AnimeServer[] = [];
+              const secondary: AnimeServer[] = [];
               for (const s of rawServers) {
                 let decUrl = '';
                 try {
@@ -87,33 +107,29 @@ export async function getServers(title: string, episode: number): Promise<AnimeS
                   }
                 } catch (_) {}
 
-                if (decUrl && decUrl.startsWith('http')) {
+                if (decUrl && decUrl.startsWith('http') && !UNPLAYABLE_HOST_RE.test(decUrl)) {
                   const sName = s.server || 'Stream';
-                  results.push({
+                  const entry: AnimeServer = {
                     provider: 'jkanime',
                     name: `JKAnime (${sName})`,
                     url: decUrl,
                     type: decUrl.includes('.m3u8') ? 'hls' : 'iframe',
                     language: s.lang === 2 ? 'latino' : 'sub',
-                  });
+                  };
+                  if (PREFERRED_HOST_RE.test(`${sName} ${decUrl}`)) {
+                    preferred.push(entry);
+                  } else {
+                    secondary.push(entry);
+                  }
+                }
+              }
+              for (const entry of [...preferred, ...secondary]) {
+                if (!results.some((r) => r.url === entry.url)) {
+                  results.push(entry);
                 }
               }
             }
           } catch (_) {}
-        }
-
-        // Extraer video[n] = '<iframe src="..."'
-        const videoMatches = [...epHtml.matchAll(/video\[\d+\]\s*=\s*'<iframe[^>]+src="([^"]+)"/g)].map((m) => m[1]);
-        for (const vUrl of videoMatches) {
-          if (vUrl && vUrl.startsWith('http') && !results.some((r) => r.url === vUrl)) {
-            results.push({
-              provider: 'jkanime',
-              name: 'JKAnime (Player)',
-              url: vUrl,
-              type: vUrl.includes('.m3u8') ? 'hls' : 'iframe',
-              language: 'sub',
-            });
-          }
         }
 
         if (results.length > 0) break;

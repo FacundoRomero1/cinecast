@@ -89,11 +89,15 @@ export async function resolveAnimeServers(
 ): Promise<AnimeServer[]> {
   console.log(`[AnimeOrchestrator] Consultando fuentes de anime para "${title}" (tmdbId=${tmdbId}, ep=${episode}, runtime=${expectedRuntimeMinutes}m)...`);
 
-  // Consultar en paralelo a JKAnime, AnimeAV1, AnimeFLV, AnimeLatinoHD y Latanime
+  // Consultar en paralelo a JKAnime, AnimeAV1, AnimeFLV (deadline duro 3.5 s), AnimeLatinoHD y Latanime
+  const animeFlvWithDeadline = Promise.race<AnimeServer[]>([
+    getAnimeFLVServers(title, episode),
+    new Promise<AnimeServer[]>((resolve) => setTimeout(() => resolve([]), 3500)),
+  ]);
   const [jkSettled, av1Settled, flvSettled, latinoSettled, latanimeSettled] = await Promise.allSettled([
     getJKAnimeServers(title, episode),
     getAnimeAV1Servers(title, episode),
-    getAnimeFLVServers(title, episode),
+    animeFlvWithDeadline,
     getAnimeLatinoServers(title, episode, tmdbId),
     getLatanimeServers(title, episode, tmdbId),
   ]);
