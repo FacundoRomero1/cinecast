@@ -12,9 +12,16 @@ const CHANNELS_API = 'https://iptv-org.github.io/api/channels.json';
 const STREAMS_API = 'https://iptv-org.github.io/api/streams.json';
 const LOGOS_API = 'https://iptv-org.github.io/api/logos.json';
 const PLUTO_API = 'https://api.pluto.tv/v2/channels.json';
-const CACHE_KEY = 'cinecast_iptv_sports_cache_v6';
-const LEGACY_CACHE_KEYS = ['cinecast_iptv_sports_cache_v4', 'cinecast_iptv_sports_cache_v5'];
+const CACHE_KEY = 'cinecast_iptv_sports_cache_v7';
+const LEGACY_CACHE_KEYS = ['cinecast_iptv_sports_cache_v4', 'cinecast_iptv_sports_cache_v5', 'cinecast_iptv_sports_cache_v6'];
 const CACHE_TTL_MS = 7 * 60 * 1000; // 7 minutos
+
+const CURATED_MIRROR_URLS = new Set<string>(
+  VERIFIED_SPORTS_CHANNELS.flatMap((c) => [
+    ...(c.streamUrl ? [c.streamUrl] : []),
+    ...(Array.isArray(c.servers) ? c.servers.map((s) => s.url) : []),
+  ]).filter(Boolean)
+);
 
 export const SPANISH_COUNTRIES_MAP: Record<string, { name: string; flag: string }> = {
   AR: { name: 'Argentina', flag: '🇦🇷' },
@@ -325,6 +332,7 @@ class IPTVService {
             }));
 
             const verifiedMapped = mapped.filter((ch) => {
+              if (CURATED_MIRROR_URLS.has(ch.streamUrl)) return true;
               const trust = assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl });
               if (!trust.trusted) {
                 console.log(`[Sports] descartado por assessMirrorTrust: ${ch.id} "${ch.name}" url=${String(ch.streamUrl).slice(0, 90)}`);
@@ -500,7 +508,7 @@ class IPTVService {
       }
       if (Date.now() - parsed.timestamp > CACHE_TTL_MS) return null;
       return parsed.channels.filter((ch: LiveSportsChannel) =>
-        assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl }).trusted
+        CURATED_MIRROR_URLS.has(ch.streamUrl) || assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl }).trusted
       );
     } catch (_) {
       return null;
