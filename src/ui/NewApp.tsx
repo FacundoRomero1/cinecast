@@ -1998,7 +1998,7 @@ const SpotifyView: React.FC = () => {
               : 'bg-zinc-900 text-zinc-400 hover:text-white'
           }`}
         >
-          <span>Dispositivo CineCast (SDK)</span>
+          <span>Spotify Connect</span>
         </button>
         <button
           type="button"

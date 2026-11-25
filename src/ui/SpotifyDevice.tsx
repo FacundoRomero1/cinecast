@@ -15,8 +15,19 @@ import {
   Copy,
   Check,
   Settings as SettingsIcon,
+  MonitorSpeaker,
+  ListMusic,
 } from 'lucide-react';
-import { authService, UserProfile } from '../services/authService';
+import { authService, UserProfile, UserPlaylistItem } from '../services/authService';
+
+interface SpotifyConnectDevice {
+  id: string;
+  name: string;
+  type: string;
+  is_active: boolean;
+  is_restricted: boolean;
+  volume_percent: number | null;
+}
 
 export interface SpotifyDeviceProps {
   onDeviceReady?: (deviceId: string) => void;
@@ -57,6 +68,88 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [maskedClientId, setMaskedClientId] = useState<string>('');
   const [copiedRedirect, setCopiedRedirect] = useState<boolean>(false);
+
+  // Modo Spotify Connect (Web API): evita el límite Widevine VMP de Electron y controla Spotify nativo sin cortes
+  const useWebApiConnect = typeof window !== 'undefined' && Boolean((window as any).electronAPI?.isElectron);
+  const [connectDevices, setConnectDevices] = useState<SpotifyConnectDevice[]>([]);
+  const [activeConnectDevice, setActiveConnectDevice] = useState<SpotifyConnectDevice | null>(null);
+  const [playlists, setPlaylists] = useState<UserPlaylistItem[]>([]);
+  const [connectNotice, setConnectNotice] = useState<string | null>(null);
+  const volumeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeConnectDeviceRef = useRef<SpotifyConnectDevice | null>(null);
+  activeConnectDeviceRef.current = activeConnectDevice;
+
+  // Helper autenticado para Spotify Web API (con reintento automático de token en 401)
+  const spotifyApiFetch = useCallback(
+    async (endpoint: string, init: RequestInit = {}): Promise<Response | null> => {
+      let token = await authService.getSpotifyAccessToken();
+      if (!token) return null;
+      const doReq = (t: string) =>
+        fetch(`https://api.spotify.com/v1${endpoint}`, {
+          ...init,
+          headers: {
+            Authorization: `Bearer ${t}`,
+            ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+            ...(init.headers || {}),
+          },
+        });
+      let res = await doReq(token);
+      if (res.status === 401) {
+        token = await authService.getSpotifyAccessToken();
+        if (token) res = await doReq(token);
+      }
+      return res;
+    },
+    []
+  );
+
+  // Sincronizar estado actual y dispositivos vía Spotify Web API
+  const syncConnectState = useCallback(async () => {
+    try {
+      const [playerRes, devicesRes] = await Promise.all([
+        spotifyApiFetch('/me/player'),
+        spotifyApiFetch('/me/player/devices'),
+      ]);
+
+      if (devicesRes && devicesRes.ok) {
+        const dData = await devicesRes.json();
+        const devs: SpotifyConnectDevice[] = Array.isArray(dData?.devices) ? dData.devices : [];
+        setConnectDevices(devs);
+        const active = devs.find((d) => d.is_active) || devs[0] || null;
+        setActiveConnectDevice(active);
+        if (active?.id) {
+          setDeviceId(active.id);
+          if (onDeviceReadyRef.current) onDeviceReadyRef.current(active.id);
+        }
+      }
+
+      if (playerRes) {
+        if (playerRes.status === 204) {
+          setIsPaused(true);
+          setCurrentTrack(null);
+          setPosition(0);
+          setDuration(0);
+        } else if (playerRes.ok) {
+          const pData = await playerRes.json();
+          const item = pData?.item || null;
+          currentTrackRef.current = item;
+          setCurrentTrack(item);
+          setIsPaused(!pData?.is_playing);
+          setPosition(Number(pData?.progress_ms || 0));
+          setDuration(Number(item?.duration_ms || 0));
+          if (pData?.device) {
+            setActiveConnectDevice(pData.device);
+            if (typeof pData.device.volume_percent === 'number') {
+              setVolume(pData.device.volume_percent);
+              setIsMuted(pData.device.volume_percent === 0);
+            }
+          }
+          if (onTrackChangeRef.current && item) onTrackChangeRef.current(item);
+        }
+      }
+    } catch (_) {}
+  }, [spotifyApiFetch]);
 
   const playerRef = useRef<any>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -291,10 +384,54 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
 
   // Disparar conexión al entrar en stage 'connecting'
   useEffect(() => {
-    if (stage === 'connecting') {
-      initSdkPlayer();
+    if (stage !== 'connecting') return;
+    if (useWebApiConnect) {
+      // En Electron usamos Spotify Connect vía Web API (sin Widevine DRM de Electron -> 0 cortes ni saltos)
+      let cancelled = false;
+      (async () => {
+        const token = await authService.getSpotifyAccessToken();
+        if (cancelled) return;
+        if (!token) {
+          setStage('unauthorized');
+          return;
+        }
+        isPlayerConnectedRef.current = true;
+        setIsPlayerConnected(true);
+        setErrorCause(null);
+        setErrorMessage(null);
+        setStage('connected');
+        await syncConnectState();
+        try {
+          const pls = await authService.fetchSpotifyPlaylists();
+          if (!cancelled) setPlaylists(pls);
+        } catch (_) {}
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [stage, initSdkPlayer]);
+    initSdkPlayer();
+  }, [stage, useWebApiConnect, initSdkPlayer, syncConnectState]);
+
+  // Polling de estado en vivo cada 2.5 s en modo Spotify Connect (Web API)
+  useEffect(() => {
+    if (!useWebApiConnect || stage !== 'connected') {
+      if (connectPollRef.current) {
+        clearInterval(connectPollRef.current);
+        connectPollRef.current = null;
+      }
+      return;
+    }
+    connectPollRef.current = setInterval(() => {
+      void syncConnectState();
+    }, 2500);
+    return () => {
+      if (connectPollRef.current) {
+        clearInterval(connectPollRef.current);
+        connectPollRef.current = null;
+      }
+    };
+  }, [useWebApiConnect, stage, syncConnectState]);
 
   // Aplicar volumen vía setVolume sin recrear ni desconectar Spotify.Player
   useEffect(() => {
@@ -387,7 +524,66 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     setStage('connecting');
   }, []);
 
+  const showNotice = useCallback((msg: string) => {
+    setConnectNotice(msg);
+    setTimeout(() => setConnectNotice((prev) => (prev === msg ? null : prev)), 3500);
+  }, []);
+
+  const getTargetDeviceQuery = useCallback((): string => {
+    const devId = activeConnectDeviceRef.current?.id;
+    return devId ? `?device_id=${encodeURIComponent(devId)}` : '';
+  }, []);
+
+  const handleTransferDevice = useCallback(
+    async (targetDevice: SpotifyConnectDevice) => {
+      if (!useWebApiConnect) return;
+      const res = await spotifyApiFetch('/me/player', {
+        method: 'PUT',
+        body: JSON.stringify({ device_ids: [targetDevice.id], play: true }),
+      });
+      if (res && (res.ok || res.status === 204)) {
+        setActiveConnectDevice(targetDevice);
+        showNotice(`Reproduciendo en ${targetDevice.name}`);
+        setTimeout(() => void syncConnectState(), 400);
+      } else {
+        showNotice('No se pudo cambiar de dispositivo. Abrí Spotify en ese equipo primero.');
+      }
+    },
+    [useWebApiConnect, spotifyApiFetch, showNotice, syncConnectState]
+  );
+
+  const handlePlayPlaylist = useCallback(
+    async (pl: UserPlaylistItem) => {
+      if (!pl.uri) return;
+      if (useWebApiConnect) {
+        const res = await spotifyApiFetch(`/me/player/play${getTargetDeviceQuery()}`, {
+          method: 'PUT',
+          body: JSON.stringify({ context_uri: pl.uri }),
+        });
+        if (res && (res.ok || res.status === 204)) {
+          setIsPaused(false);
+          showNotice(`Reproduciendo: ${pl.title}`);
+          setTimeout(() => void syncConnectState(), 450);
+        } else {
+          showNotice('Abrí la app de Spotify en tu PC o celular para iniciar la playlist.');
+        }
+      }
+    },
+    [useWebApiConnect, spotifyApiFetch, getTargetDeviceQuery, showNotice, syncConnectState]
+  );
+
   const handleTogglePlay = async () => {
+    if (useWebApiConnect) {
+      const endpoint = isPaused ? `/me/player/play${getTargetDeviceQuery()}` : `/me/player/pause${getTargetDeviceQuery()}`;
+      const res = await spotifyApiFetch(endpoint, { method: 'PUT' });
+      if (res && (res.ok || res.status === 204)) {
+        setIsPaused((p) => !p);
+        setTimeout(() => void syncConnectState(), 350);
+      } else if (res?.status === 404) {
+        showNotice('No hay ningún dispositivo Spotify activo. Abrí Spotify en tu PC o celular.');
+      }
+      return;
+    }
     if (playerRef.current) {
       try {
         await playerRef.current.activateElement?.();
@@ -402,6 +598,15 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     console.log(
       `[SPOTIFY] next triggered origin=${origin} track_window.current_track.id=${currentTrackRef.current?.id ?? null}`
     );
+    if (useWebApiConnect) {
+      const res = await spotifyApiFetch(`/me/player/next${getTargetDeviceQuery()}`, { method: 'POST' });
+      if (res && (res.ok || res.status === 204)) {
+        setTimeout(() => void syncConnectState(), 350);
+      } else if (res?.status === 404) {
+        showNotice('No hay ningún dispositivo Spotify activo.');
+      }
+      return;
+    }
     if (playerRef.current && isPlayerConnectedRef.current) {
       pendingNextRef.current = false;
       try {
@@ -414,9 +619,16 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     }
     // Si aún está conectando, encolar a lo sumo 1 comando pendiente (nunca N duplicados)
     pendingNextRef.current = true;
-  }, []);
+  }, [useWebApiConnect, spotifyApiFetch, getTargetDeviceQuery, syncConnectState, showNotice]);
 
   const handlePrev = useCallback(async () => {
+    if (useWebApiConnect) {
+      const res = await spotifyApiFetch(`/me/player/previous${getTargetDeviceQuery()}`, { method: 'POST' });
+      if (res && (res.ok || res.status === 204)) {
+        setTimeout(() => void syncConnectState(), 350);
+      }
+      return;
+    }
     if (playerRef.current && isPlayerConnectedRef.current) {
       try {
         await playerRef.current.activateElement?.();
@@ -425,7 +637,7 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
         await playerRef.current.previousTrack();
       } catch (_) {}
     }
-  }, []);
+  }, [useWebApiConnect, spotifyApiFetch, getTargetDeviceQuery, syncConnectState]);
 
   useEffect(() => {
     const onRemoteNext = (e: Event) => {
@@ -445,6 +657,13 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
 
   const handleSeek = async (newPosMs: number) => {
     setPosition(newPosMs);
+    if (useWebApiConnect) {
+      const devParam = activeConnectDeviceRef.current?.id
+        ? `&device_id=${encodeURIComponent(activeConnectDeviceRef.current.id)}`
+        : '';
+      await spotifyApiFetch(`/me/player/seek?position_ms=${Math.round(newPosMs)}${devParam}`, { method: 'PUT' });
+      return;
+    }
     if (playerRef.current) {
       try {
         await playerRef.current.seek(newPosMs);
@@ -452,13 +671,33 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     }
   };
 
+  const applyConnectVolume = useCallback(
+    (volPercent: number) => {
+      if (!useWebApiConnect) return;
+      if (volumeDebounceRef.current) clearTimeout(volumeDebounceRef.current);
+      volumeDebounceRef.current = setTimeout(() => {
+        const clamped = Math.max(0, Math.min(100, Math.round(volPercent)));
+        const devParam = activeConnectDeviceRef.current?.id
+          ? `&device_id=${encodeURIComponent(activeConnectDeviceRef.current.id)}`
+          : '';
+        void spotifyApiFetch(`/me/player/volume?volume_percent=${clamped}${devParam}`, { method: 'PUT' });
+      }, 150);
+    },
+    [useWebApiConnect, spotifyApiFetch]
+  );
+
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
     setIsMuted(newVol === 0);
+    applyConnectVolume(newVol);
   };
 
   const handleToggleMute = () => {
-    setIsMuted((prev) => !prev);
+    setIsMuted((prev) => {
+      const nextMuted = !prev;
+      applyConnectVolume(nextMuted ? 0 : volume);
+      return nextMuted;
+    });
   };
 
   const handleDisconnect = async () => {
@@ -674,10 +913,14 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
                   <Radio className="w-5 h-5 animate-pulse" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-extrabold text-white">{deviceName} disponible en tu Spotify</h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-extrabold text-white">
+                      {useWebApiConnect
+                        ? 'Control Spotify Connect'
+                        : `${deviceName} disponible en tu Spotify`}
+                    </h3>
                     <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
-                      Activo
+                      {useWebApiConnect ? (activeConnectDevice ? 'Conectado' : 'Esperando dispositivo') : 'Activo'}
                     </span>
                     {maskedClientId && (
                       <span className="font-mono text-[10px] bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400">
@@ -686,18 +929,78 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
                     )}
                   </div>
                   <p className="text-xs text-zinc-400">
-                    {userProfile ? `Conectado como: ${userProfile.name}` : 'Dispositivo activo y listo para reproducir'}
+                    {userProfile ? `Conectado como: ${userProfile.name}` : 'Cuenta vinculada'}
+                    {useWebApiConnect && activeConnectDevice ? ` · Reproduciendo en: ${activeConnectDevice.name}` : ''}
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleDisconnect}
-                className="text-xs text-zinc-400 hover:text-red-400 font-bold px-2.5 py-1.5 rounded-lg border border-zinc-800 hover:border-red-900/50 transition"
-              >
-                Desconectar
-              </button>
+              <div className="flex items-center gap-2">
+                {useWebApiConnect && (
+                  <button
+                    type="button"
+                    onClick={() => void syncConnectState()}
+                    title="Actualizar dispositivos y canción actual"
+                    className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="text-xs text-zinc-400 hover:text-red-400 font-bold px-2.5 py-1.5 rounded-lg border border-zinc-800 hover:border-red-900/50 transition"
+                >
+                  Desconectar
+                </button>
+              </div>
             </div>
+
+            {useWebApiConnect && (
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-zinc-400 flex items-center gap-1.5">
+                    <MonitorSpeaker className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Dispositivos Spotify Connect:</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => window.electronAPI?.openExternal?.('spotify:')}
+                    className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>Abrir app Spotify</span>
+                  </button>
+                </div>
+                {connectDevices.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {connectDevices.map((dev) => (
+                      <button
+                        key={dev.id}
+                        type="button"
+                        onClick={() => void handleTransferDevice(dev)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                          dev.is_active
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                            : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
+                        }`}
+                      >
+                        {dev.is_active ? '● ' : ''}
+                        {dev.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-zinc-500">
+                    No se detectan dispositivos activos. Abrí Spotify en Windows o en tu celular y tocá actualizar.
+                  </p>
+                )}
+                {connectNotice && (
+                  <div className="text-[11px] font-bold text-emerald-300 bg-emerald-950/50 border border-emerald-800/60 px-2.5 py-1.5 rounded-lg">
+                    {connectNotice}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           {/* Tarjeta del Track actual y Controles */}
@@ -728,7 +1031,9 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
                 <Music className="w-10 h-10 mx-auto text-zinc-600" />
                 <p className="text-sm font-bold text-zinc-300">Ningún tema reproduciendo</p>
                 <p className="text-xs text-zinc-500">
-                  Abre Spotify en tu celular o PC y selecciona "{deviceName}" en Dispositivos.
+                  {useWebApiConnect
+                    ? 'Elegí una playlist abajo o dale play en la app de Spotify de tu PC/celular.'
+                    : `Abre Spotify en tu celular o PC y selecciona "${deviceName}" en Dispositivos.`}
                 </p>
               </div>
             )}
@@ -804,6 +1109,40 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
               </span>
             </div>
           </section>
+
+          {/* Tus Playlists (acceso rápido en modo Spotify Connect) */}
+          {useWebApiConnect && playlists.length > 0 && (
+            <section className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-lg space-y-3">
+              <div className="flex items-center gap-2 text-xs font-extrabold text-zinc-300">
+                <ListMusic className="w-4 h-4 text-emerald-400" />
+                <span>Tus Playlists</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-1">
+                {playlists.slice(0, 12).map((pl) => (
+                  <button
+                    key={pl.id}
+                    type="button"
+                    onClick={() => void handlePlayPlaylist(pl)}
+                    className="flex items-center gap-2.5 p-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-left transition group"
+                  >
+                    <img
+                      src={pl.thumbnailUrl}
+                      alt={pl.title}
+                      className="w-10 h-10 rounded-lg object-cover shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-white truncate group-hover:text-emerald-400">
+                        {pl.title}
+                      </div>
+                      {typeof pl.trackCount === 'number' && (
+                        <div className="text-[10px] text-zinc-500">{pl.trackCount} temas</div>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
         </>
       )}
     </div>
