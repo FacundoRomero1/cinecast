@@ -11,7 +11,7 @@ import type { StreamServer } from '../../types.ts';
 
 export const SPORTS_M3U_URL = 'https://iptv-org.github.io/iptv/categories/sports.m3u';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora para descarga cruda de iptv-org
-const SPORTS_VALIDATOR_VERSION = 5;
+const SPORTS_VALIDATOR_VERSION = 6;
 
 let deadUrlsSet: Set<string> | null = null;
 export function getDeadSportsUrls(): Set<string> {
@@ -194,7 +194,15 @@ export async function validateHlsStream(
   timeoutMs = 2500,
   headers?: { referrer?: string | null; userAgent?: string | null }
 ): Promise<boolean> {
-  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+  if (!url) return false;
+  // Resolver enlaces dinámicos internos /api/sports/streamtp/<slug>.m3u8 directamente
+  const streamTpMatch = url.match(/\/api\/sports\/streamtp\/([a-z0-9_-]+)(?:\.m3u8)?$/i);
+  if (streamTpMatch?.[1]) {
+    const resolved = await extractStreamTpM3u8(streamTpMatch[1], Math.max(timeoutMs, 4500));
+    if (!resolved) return false;
+    return validateHlsStream(resolved, Math.max(timeoutMs, 4000));
+  }
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
     return false;
   }
   const reqHeaders: Record<string, string> = {
@@ -855,6 +863,55 @@ export async function extractStreamXhdM3u8(url: string, timeoutMs = 4000): Promi
   }
 }
 
+const streamTpResolveCache = new Map<string, { url: string; ts: number }>();
+const STREAMTP_CACHE_TTL_MS = 90 * 1000; // 90s (los tokens domhsd duran ~5h)
+
+/**
+ * Extrae el enlace HLS directo (.m3u8) desde streamtp99a.sbs / streamtp*.com
+ * evitando la redirección anti-embed (block.html) de los iframes.
+ */
+export async function extractStreamTpM3u8(
+  urlOrSlug: string,
+  timeoutMs = 4500,
+  forceRefresh = false
+): Promise<string | null> {
+  const raw = String(urlOrSlug || '').trim();
+  if (!raw) return null;
+  const pageUrl =
+    raw.startsWith('http://') || raw.startsWith('https://')
+      ? raw
+      : `https://streamtp99a.sbs/global1.php?stream=${encodeURIComponent(raw)}`;
+
+  const now = Date.now();
+  if (!forceRefresh) {
+    const cached = streamTpResolveCache.get(pageUrl);
+    if (cached && now - cached.ts < STREAMTP_CACHE_TTL_MS) {
+      return cached.url;
+    }
+  }
+
+  try {
+    const res = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': DEFAULT_SPORTS_UA,
+        'Referer': 'https://tudeporte.lat/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/"src"\s*:\s*"(https?:[^"]+\.m3u8[^"]*)"/i);
+    if (!m?.[1]) return null;
+    const m3u8Url = m[1].replace(/\\\//g, '/').trim();
+    if (!m3u8Url.startsWith('http')) return null;
+    streamTpResolveCache.set(pageUrl, { url: m3u8Url, ts: now });
+    return m3u8Url;
+  } catch {
+    return null;
+  }
+}
+
 let inMemoryTudeporteAgendaCache: TudeporteLiveMatch[] | null = null;
 let lastTudeporteAgendaTime = 0;
 
@@ -992,6 +1049,69 @@ export async function fetchTudeporteAgenda(cacheDir?: string, forceRefresh = fal
           ch.link = '';
         }
       }
+    }
+
+    // Resolver concurrentemente streams de streamtp*.sbs / streamtp*.com a HLS directo (/api/sports/streamtp/<slug>.m3u8)
+    const streamtpChannels: TudeporteChannel[] = [];
+    for (const match of matches) {
+      for (const ch of match.channels) {
+        if (
+          ch.link &&
+          (ch.server.toLowerCase().includes('streamtp') ||
+            /streamtp[a-z0-9]*\.(?:sbs|com|live|net)/i.test(ch.link))
+        ) {
+          streamtpChannels.push(ch);
+        }
+      }
+    }
+
+    if (streamtpChannels.length > 0) {
+      const uniqueTpUrls = Array.from(new Set(streamtpChannels.map((c) => c.link)));
+      const resolvedTpMap = new Map<string, string | null>();
+
+      await Promise.all(
+        uniqueTpUrls.map(async (u) => {
+          const directM3u8 = await extractStreamTpM3u8(u, 4000);
+          if (!directM3u8) {
+            resolvedTpMap.set(u, null);
+            return;
+          }
+          // Verificar que el manifest .m3u8 esté vivo (evitar 404 en señales inactivas)
+          const alive = await validateHlsStream(directM3u8, 3000);
+          if (!alive) {
+            resolvedTpMap.set(u, null);
+            return;
+          }
+          try {
+            const parsed = new URL(u);
+            const slug = (parsed.searchParams.get('stream') || '').trim();
+            if (slug && /^[a-z0-9_-]{1,40}$/i.test(slug)) {
+              resolvedTpMap.set(u, `/api/sports/streamtp/${slug}.m3u8`);
+              return;
+            }
+          } catch {}
+          resolvedTpMap.set(u, directM3u8);
+        })
+      );
+
+      for (const ch of streamtpChannels) {
+        const resolvedLink = resolvedTpMap.get(ch.link);
+        if (resolvedLink) {
+          ch.link = resolvedLink;
+          ch.quality = 'Full HD (HLS Directo)';
+        }
+      }
+    }
+
+    // Limpiar canales vacíos y priorizar HLS Directo al frente de cada partido
+    for (const match of matches) {
+      match.channels = match.channels
+        .filter((c) => Boolean(c.link))
+        .sort((a, b) => {
+          const aHls = a.link.includes('.m3u8') ? 0 : 1;
+          const bHls = b.link.includes('.m3u8') ? 0 : 1;
+          return aHls - bHls;
+        });
     }
 
     inMemoryTudeporteAgendaCache = matches;

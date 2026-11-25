@@ -12,8 +12,8 @@ const CHANNELS_API = 'https://iptv-org.github.io/api/channels.json';
 const STREAMS_API = 'https://iptv-org.github.io/api/streams.json';
 const LOGOS_API = 'https://iptv-org.github.io/api/logos.json';
 const PLUTO_API = 'https://api.pluto.tv/v2/channels.json';
-const CACHE_KEY = 'cinecast_iptv_sports_cache_v7';
-const LEGACY_CACHE_KEYS = ['cinecast_iptv_sports_cache_v4', 'cinecast_iptv_sports_cache_v5', 'cinecast_iptv_sports_cache_v6'];
+const CACHE_KEY = 'cinecast_iptv_sports_cache_v8';
+const LEGACY_CACHE_KEYS = ['cinecast_iptv_sports_cache_v4', 'cinecast_iptv_sports_cache_v5', 'cinecast_iptv_sports_cache_v6', 'cinecast_iptv_sports_cache_v7'];
 const CACHE_TTL_MS = 7 * 60 * 1000; // 7 minutos
 
 const CURATED_MIRROR_URLS = new Set<string>(
@@ -302,37 +302,46 @@ class IPTVService {
         if (res.ok) {
           const data = await res.json();
           if (data?.validated === true && Array.isArray(data?.channels)) {
-            const mapped: LiveSportsChannel[] = data.channels.map((ch: any) => ({
-              id: ch.id,
-              name: ch.name,
-              country: ch.country,
-              countryName: ch.countryName,
-              countryFlag: ch.countryFlag,
-              logo: ch.logo || '',
-              streamUrl: ch.streamUrl,
-              quality: ch.quality || '1080p HD',
-              category: ch.category || 'Fútbol & Deportes',
-              isOnline: Boolean(ch.isOnline ?? true),
-              lastVerified: typeof ch.lastVerified === 'number' ? ch.lastVerified : Date.now(),
-              referrer: ch.referrer ?? null,
-              userAgent: ch.userAgent ?? null,
-              servers:
-                Array.isArray(ch.servers) && ch.servers.length > 0
-                  ? ch.servers
-                  : [
-                      {
-                        name: `${ch.name} (${ch.quality || 'HD'})`,
-                        url: ch.streamUrl,
-                        type: 'hls',
-                        language: 'En Vivo',
-                        referrer: ch.referrer ?? null,
-                        userAgent: ch.userAgent ?? null,
-                      },
-                    ],
-            }));
+            const resolveApiUrl = (u?: string | null): string => {
+              const s = String(u || '').trim();
+              if (s.startsWith('/') && apiBase) return `${apiBase}${s}`;
+              return s;
+            };
+            const mapped: LiveSportsChannel[] = data.channels.map((ch: any) => {
+              const resolvedStreamUrl = resolveApiUrl(ch.streamUrl);
+              return {
+                id: ch.id,
+                name: ch.name,
+                country: ch.country,
+                countryName: ch.countryName,
+                countryFlag: ch.countryFlag,
+                logo: ch.logo || '',
+                streamUrl: resolvedStreamUrl,
+                quality: ch.quality || '1080p HD',
+                category: ch.category || 'Fútbol & Deportes',
+                isOnline: Boolean(ch.isOnline ?? true),
+                lastVerified: typeof ch.lastVerified === 'number' ? ch.lastVerified : Date.now(),
+                referrer: ch.referrer ?? null,
+                userAgent: ch.userAgent ?? null,
+                servers:
+                  Array.isArray(ch.servers) && ch.servers.length > 0
+                    ? ch.servers.map((s: any) => ({ ...s, url: resolveApiUrl(s.url) }))
+                    : [
+                        {
+                          name: `${ch.name} (${ch.quality || 'HD'})`,
+                          url: resolvedStreamUrl,
+                          type: 'hls',
+                          language: 'En Vivo',
+                          referrer: ch.referrer ?? null,
+                          userAgent: ch.userAgent ?? null,
+                        },
+                      ],
+              };
+            });
 
             const verifiedMapped = mapped.filter((ch) => {
               if (CURATED_MIRROR_URLS.has(ch.streamUrl)) return true;
+              if (/\/api\/sports\/streamtp\/[a-z0-9_-]+(?:\.m3u8)?$/i.test(ch.streamUrl)) return true;
               const trust = assessMirrorTrust(ch, { name: ch.name, url: ch.streamUrl });
               if (!trust.trusted) {
                 console.log(`[Sports] descartado por assessMirrorTrust: ${ch.id} "${ch.name}" url=${String(ch.streamUrl).slice(0, 90)}`);

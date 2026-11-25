@@ -5,6 +5,7 @@ import {
   getOrFetchSportsChannels,
   fetchTudeporteAgenda,
   fetchTudeporteReplays,
+  extractStreamTpM3u8,
 } from '../sports.js';
 
 export interface SportsOptions {
@@ -89,6 +90,29 @@ export function createSportsRouter(options: SportsOptions = {}): Router {
 
   let sportsMatchesCache: SportsMatchesPayload | null = null;
   let sportsMatchesCacheTime = 0;
+
+  // GET /api/sports/streamtp/:slug (.m3u8): resuelve dinámicamente el token HLS en vivo y redirige (302)
+  router.get('/sports/streamtp/:slug', async (req, res) => {
+    try {
+      const rawSlug = String(req.params.slug || '').replace(/\.m3u8$/i, '').trim();
+      if (!rawSlug || !/^[a-z0-9_-]{1,40}$/i.test(rawSlug)) {
+        res.status(400).json({ error: 'Slug de canal inválido' });
+        return;
+      }
+      const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+      const m3u8Url = await extractStreamTpM3u8(rawSlug, 5000, forceRefresh);
+      if (!m3u8Url) {
+        res.status(404).json({ error: 'Señal no disponible en este momento' });
+        return;
+      }
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'no-store');
+      res.redirect(302, m3u8Url);
+    } catch (err: any) {
+      console.warn('[Sports Router] Error resolviendo streamtp:', err?.message || err);
+      res.status(502).json({ error: 'Error al resolver señal en vivo' });
+    }
+  });
 
   // GET /api/sports/channels: Valida señales en backend (con mirrors) y cachea 7 minutos
   router.get('/sports/channels', async (req, res) => {

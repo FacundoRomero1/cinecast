@@ -312,7 +312,12 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChanne
 
   // Reproducción segura de señal en vivo (URL limpia extraída por el backend o HLS nativo)
   const handlePlayLiveChannel = (match: TudeporteLiveMatch, channel: TudeporteChannel) => {
-    const isHls = channel.link.includes('.m3u8');
+    const resolveLink = (u: string) =>
+      u.startsWith('/') && typeof window !== 'undefined' && window.location?.origin
+        ? `${window.location.origin}${u}`
+        : u;
+    const primaryLink = resolveLink(channel.link);
+    const isHls = primaryLink.includes('.m3u8');
     const streamType: 'hls' | 'iframe' = isHls ? 'hls' : 'iframe';
     const item: MediaItem = {
       id: `live_${match.id}_${encodeURIComponent(channel.name)}`,
@@ -333,24 +338,25 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChanne
       creatorOrDirector: match.competition || match.category || 'Transmisión Oficial',
       posterUrl: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=800',
       backdropUrl: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=1600&auto=format&fit=crop',
-      videoUrl: channel.link,
+      videoUrl: primaryLink,
       category: 'live_tv',
       streamType,
       servers: [
         {
           name: `${channel.name} ${isHls ? '(HLS Directo)' : '(Directo)'}`,
-          url: channel.link,
+          url: primaryLink,
           type: streamType,
           language: 'En Vivo',
         },
         ...match.channels
-          .filter((c) => c.link !== channel.link)
+          .filter((c) => Boolean(c.link) && c.link !== channel.link)
           .map((c) => {
-            const chIsHls = c.link.includes('.m3u8');
+            const cLink = resolveLink(c.link);
+            const chIsHls = cLink.includes('.m3u8');
             const chType: 'hls' | 'iframe' = chIsHls ? 'hls' : 'iframe';
             return {
               name: `${c.name} ${chIsHls ? '(HLS Directo)' : `(${c.server})`}`,
-              url: c.link,
+              url: cLink,
               type: chType,
               language: 'Alternativa',
             };

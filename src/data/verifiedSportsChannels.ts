@@ -13,11 +13,17 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/TyC_Sports_logo_2020.svg/512px-TyC_Sports_logo_2020.svg.png',
-    streamUrl: 'https://live-04-11-tyc-app-web.vodgc.net/tyc24/index.m3u8',
+    streamUrl: '/api/sports/streamtp/tyc.m3u8',
     quality: '1080p HD',
     category: 'Fútbol Argentino & Deportes',
     isOnline: false,
     servers: [
+      {
+        name: 'TyC Sports (Full HD Directo)',
+        url: '/api/sports/streamtp/tyc.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
       {
         name: 'TyC Sports (VODGC 24/7)',
         url: 'https://live-04-11-tyc-app-web.vodgc.net/tyc24/index.m3u8',
@@ -59,11 +65,18 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/ESPN_Premium_logo.png/512px-ESPN_Premium_logo.png',
-    streamUrl: '',
+    streamUrl: '/api/sports/streamtp/espnpremium.m3u8',
     quality: '1080p HD',
     category: 'Fútbol Argentino (Pack Fútbol)',
     isOnline: false,
-    servers: [],
+    servers: [
+      {
+        name: 'ESPN Premium (Full HD Directo)',
+        url: '/api/sports/streamtp/espnpremium.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
   },
   {
     id: 'DSports2.ar',
@@ -72,14 +85,40 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/DIRECTV_Sports_2_Latin_America_%282018%29.svg/512px-DIRECTV_Sports_2_Latin_America_%282018%29.svg.png',
-    streamUrl: 'http://45.134.141.161:2200/ARG/DTV_SP2/tracks-v1a1/mono.m3u8',
+    streamUrl: '/api/sports/streamtp/dsports2.m3u8',
     quality: '1080p HD',
     category: 'Sudamericana & Deportes Exclusivos',
     isOnline: false,
     servers: [
       {
+        name: 'DSports 2 (Full HD Directo)',
+        url: '/api/sports/streamtp/dsports2.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+      {
         name: 'DSports 2 Argentina (Directo HD)',
         url: 'http://45.134.141.161:2200/ARG/DTV_SP2/tracks-v1a1/mono.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
+  },
+  {
+    id: 'DSportsPlus.ar',
+    name: 'DSports+',
+    country: 'AR',
+    countryName: 'Argentina',
+    countryFlag: '🇦🇷',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/ba/DSports_logo_2022.svg/512px-DSports_logo_2022.svg.png',
+    streamUrl: '/api/sports/streamtp/dsportsplus.m3u8',
+    quality: '1080p HD',
+    category: 'Sudamericana & Deportes Exclusivos',
+    isOnline: false,
+    servers: [
+      {
+        name: 'DSports+ (Full HD Directo)',
+        url: '/api/sports/streamtp/dsportsplus.m3u8',
         type: 'hls',
         language: 'En Vivo',
       },
@@ -125,13 +164,19 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/37/Fox_Sports_logo_2017.svg/512px-Fox_Sports_logo_2017.svg.png',
-    streamUrl: 'http://45.184.109.10/live/69393EAE6ADBC65A68F942022362A202/1552.m3u8',
+    streamUrl: '/api/sports/streamtp/fox1ar.m3u8',
     quality: '1080p HD',
     category: 'Libertadores & Champions',
     isOnline: false,
     servers: [
       {
-        name: 'Fox Sports Argentina HD',
+        name: 'Fox Sports Argentina (Full HD Directo)',
+        url: '/api/sports/streamtp/fox1ar.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+      {
+        name: 'Fox Sports Argentina HD (Respaldo)',
         url: 'http://45.184.109.10/live/69393EAE6ADBC65A68F942022362A202/1552.m3u8',
         type: 'hls',
         language: 'En Vivo',
@@ -145,11 +190,18 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
-    streamUrl: '',
+    streamUrl: '/api/sports/streamtp/espn.m3u8',
     quality: '1080p HD',
     category: 'Fútbol & Polideportivo',
     isOnline: false,
-    servers: [],
+    servers: [
+      {
+        name: 'ESPN Argentina (Full HD Directo)',
+        url: '/api/sports/streamtp/espn.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
   },
   {
     id: 'ESPN2.ar',
@@ -158,11 +210,18 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
-    streamUrl: '',
+    streamUrl: '/api/sports/streamtp/espn2.m3u8',
     quality: '1080p HD',
     category: 'Fútbol & Polideportivo',
     isOnline: false,
-    servers: [],
+    servers: [
+      {
+        name: 'ESPN 2 (Full HD Directo)',
+        url: '/api/sports/streamtp/espn2.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
   },
   {
     id: 'ESPN3.ar',
@@ -171,11 +230,98 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
-    streamUrl: '',
+    streamUrl: '/api/sports/streamtp/espn3.m3u8',
     quality: '1080p HD',
     category: 'Polideportivo & Tenis',
     isOnline: false,
-    servers: [],
+    servers: [
+      {
+        name: 'ESPN 3 (Full HD Directo)',
+        url: '/api/sports/streamtp/espn3.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
+  },
+  {
+    id: 'ESPN4.ar',
+    name: 'ESPN 4',
+    country: 'AR',
+    countryName: 'Argentina',
+    countryFlag: '🇦🇷',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
+    streamUrl: '/api/sports/streamtp/espn4.m3u8',
+    quality: '1080p HD',
+    category: 'Fútbol & Polideportivo',
+    isOnline: false,
+    servers: [
+      {
+        name: 'ESPN 4 (Full HD Directo)',
+        url: '/api/sports/streamtp/espn4.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
+  },
+  {
+    id: 'ESPN5.ar',
+    name: 'ESPN 5',
+    country: 'AR',
+    countryName: 'Argentina',
+    countryFlag: '🇦🇷',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
+    streamUrl: '/api/sports/streamtp/espn5.m3u8',
+    quality: '1080p HD',
+    category: 'Fútbol & Polideportivo',
+    isOnline: false,
+    servers: [
+      {
+        name: 'ESPN 5 (Full HD Directo)',
+        url: '/api/sports/streamtp/espn5.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
+  },
+  {
+    id: 'ESPN6.ar',
+    name: 'ESPN 6',
+    country: 'AR',
+    countryName: 'Argentina',
+    countryFlag: '🇦🇷',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
+    streamUrl: '/api/sports/streamtp/espn6.m3u8',
+    quality: '1080p HD',
+    category: 'Fútbol & Polideportivo',
+    isOnline: false,
+    servers: [
+      {
+        name: 'ESPN 6 (Full HD Directo)',
+        url: '/api/sports/streamtp/espn6.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
+  },
+  {
+    id: 'ESPN7.ar',
+    name: 'ESPN 7',
+    country: 'AR',
+    countryName: 'Argentina',
+    countryFlag: '🇦🇷',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/512px-ESPN_wordmark.svg.png',
+    streamUrl: '/api/sports/streamtp/espn7.m3u8',
+    quality: '1080p HD',
+    category: 'Fútbol & Polideportivo',
+    isOnline: false,
+    servers: [
+      {
+        name: 'ESPN 7 (Full HD Directo)',
+        url: '/api/sports/streamtp/espn7.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
   },
   {
     id: 'TNTSports.ar',
@@ -184,13 +330,19 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/TNT_Sports_%28Argentina%29_logo_2021.png/512px-TNT_Sports_%28Argentina%29_logo_2021.png',
-    streamUrl: 'http://45.184.109.10/live/69393EAE6ADBC65A68F942022362A202/86.m3u8',
+    streamUrl: '/api/sports/streamtp/tntsports.m3u8',
     quality: '1080p HD',
     category: 'Fútbol Argentino (Pack Fútbol)',
     isOnline: false,
     servers: [
       {
-        name: 'TNT Sports Argentina HD',
+        name: 'TNT Sports Argentina (Full HD Directo)',
+        url: '/api/sports/streamtp/tntsports.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+      {
+        name: 'TNT Sports Argentina HD (Respaldo)',
         url: 'http://45.184.109.10/live/69393EAE6ADBC65A68F942022362A202/86.m3u8',
         type: 'hls',
         language: 'En Vivo',
@@ -204,13 +356,19 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Chile',
     countryFlag: '🇨🇱',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/TNT_Sports_%28Argentina%29_logo_2021.png/512px-TNT_Sports_%28Argentina%29_logo_2021.png',
-    streamUrl: 'http://205.235.6.29:8000/play/a0xa/index.m3u8',
-    quality: 'HD',
+    streamUrl: '/api/sports/streamtp/tntsportschile.m3u8',
+    quality: '1080p HD',
     category: 'Fútbol Chileno & Deportes',
     isOnline: false,
     servers: [
       {
-        name: 'TNT Sports Chile',
+        name: 'TNT Sports Chile (Full HD Directo)',
+        url: '/api/sports/streamtp/tntsportschile.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+      {
+        name: 'TNT Sports Chile (Respaldo)',
         url: 'http://205.235.6.29:8000/play/a0xa/index.m3u8',
         type: 'hls',
         language: 'En Vivo',
@@ -284,13 +442,19 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Colombia',
     countryFlag: '🇨🇴',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7c/Win_Sports_logo.svg/512px-Win_Sports_logo.svg.png',
-    streamUrl: 'http://138.121.15.230:9002/WIN-SPORT/index.m3u8',
+    streamUrl: '/api/sports/streamtp/winsports.m3u8',
     quality: '1080p HD',
     category: 'Fútbol Colombiano & Deportes',
     isOnline: false,
     servers: [
       {
-        name: 'Win Sports HD',
+        name: 'Win Sports (Full HD Directo)',
+        url: '/api/sports/streamtp/winsports.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+      {
+        name: 'Win Sports HD (Respaldo)',
         url: 'http://138.121.15.230:9002/WIN-SPORT/index.m3u8',
         type: 'hls',
         language: 'En Vivo',
@@ -444,11 +608,18 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
     countryName: 'Argentina',
     countryFlag: '🇦🇷',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/ba/DSports_logo_2022.svg/512px-DSports_logo_2022.svg.png',
-    streamUrl: '',
+    streamUrl: '/api/sports/streamtp/dsports.m3u8',
     quality: '1080p HD',
     category: 'Sudamericana & Deportes Exclusivos',
     isOnline: false,
-    servers: [],
+    servers: [
+      {
+        name: 'DSports (Full HD Directo)',
+        url: '/api/sports/streamtp/dsports.m3u8',
+        type: 'hls',
+        language: 'En Vivo',
+      },
+    ],
   },
   {
     id: 'FoxDeportes.us',
@@ -639,15 +810,20 @@ export const VERIFIED_SPORTS_CHANNELS: LiveSportsChannel[] = [
 ];
 
 const AR_PRIMARY_FOOTBALL_IDS = new Set([
-  'TyCSports.ar',
   'ESPNPremium.ar',
   'TNTSports.ar',
+  'TyCSports.ar',
   'ESPN.ar',
   'ESPN2.ar',
   'ESPN3.ar',
+  'ESPN4.ar',
+  'ESPN5.ar',
+  'ESPN6.ar',
+  'ESPN7.ar',
   'FoxSports.ar',
   'DSports.ar',
   'DSports2.ar',
+  'DSportsPlus.ar',
   'CanalShowsport.ar',
   'DeporTV.ar',
   'TVPublica.ar',
@@ -738,6 +914,9 @@ export function assessMirrorTrust(
   server: { name?: string; url?: string }
 ): MirrorTrustAssessment {
   const url = String(server?.url || '').trim();
+  if (/\/api\/sports\/streamtp\/[a-z0-9_-]+(?:\.m3u8)?$/i.test(url)) {
+    return { trusted: true, score: 180, reason: 'streamtp HLS directo verificado' };
+  }
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
     return { trusted: false, score: -999, reason: 'URL inválida o vacía' };
   }
