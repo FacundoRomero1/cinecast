@@ -1466,6 +1466,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }).filter((s) => s.id !== 'direct-hls' && (s as any).providerId !== 'moviemaster');
 
             const ranked = applyProviderRanking([...mmServers, ...traditionalFallbacks]);
+            if (mmData.lang === 'subtitulado') {
+              setAllowSubtitled(true);
+              setNoSpanishAudio(false);
+            }
             setResolvedServers(deduplicateServers(ranked, episodeKey));
             if (mintedSrv) {
               setSelectedServerName(mintedSrv.name);
