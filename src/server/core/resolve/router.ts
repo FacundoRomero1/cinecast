@@ -660,7 +660,14 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
       if (effectiveEpisode !== episode) {
         console.log(`[anime/servers] Mapeo T${season}E${episode} -> episodio absoluto ${effectiveEpisode} (tmdb=${tmdbId})`);
       }
-      const servers = await resolveAnimeServers(tmdbId || '0', rawTitle || tmdbId, effectiveEpisode, runtime);
+      let servers = await resolveAnimeServers(tmdbId || '0', rawTitle || tmdbId, effectiveEpisode, runtime);
+      // Si el sitio separa temporadas en slugs propios (ej. "Black Clover 2") en vez de numeración continua,
+      // probar con título + número de temporada y el número de episodio local, sin caer nunca a T1.
+      if (season > 1 && servers.length === 0 && rawTitle) {
+        const seasonalTitle = `${rawTitle} ${season}`;
+        console.log(`[anime/servers] Sin resultados en ep absoluto ${effectiveEpisode}; probando temporada separada "${seasonalTitle}" ep=${episode}`);
+        servers = await resolveAnimeServers(tmdbId || '0', seasonalTitle, episode, runtime);
+      }
       res.json({
         success: true,
         tmdbId,
