@@ -500,6 +500,10 @@ async function harvestUiViaHttp(
         'User-Agent': REAL_UA,
         Accept: 'text/html,application/xhtml+xml,*/*',
         'Accept-Language': 'es-419,es;q=0.9',
+        'Sec-Fetch-Dest': 'iframe',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'cross-site',
+        Referer: 'https://api.moviemaster.lat/',
       },
       signal: effectiveSignal,
     });
@@ -1514,6 +1518,117 @@ export function createMovieMasterRouter(): Router {
     res.json({ ok: true, removed });
   });
 
+  // P9.3 — Ping de impresión: abre /e/... oculto, muteado, 12 s, y cierra.
+  // Una vez por tmdb|temporada|episodio, en background, sin bloquear el play.
+  // Flag MM_IMPRESSION_PING por env para poder apagarlo sin release (MM_IMPRESSION_PING=0).
+  const impressionSentKeys = new Set<string>();
+  const runImpressionPing = async (
+    embedUrl: string,
+    tmdb: number,
+    s: number,
+    e: number
+  ): Promise<void> => {
+    const t0 = Date.now();
+    const holdMs = Math.max(500, Number(process.env.MM_IMPRESSION_DURATION_MS) || 12_000);
+    const isElectron = Boolean(process.versions && process.versions.electron);
+
+    if (isElectron) {
+      let win: any = null;
+      try {
+        const electron = requireModule('electron');
+        const { BrowserWindow } = electron;
+        const partition = `mm-imp-${tmdb}-${s}-${e}-${Date.now()}`;
+        win = new BrowserWindow({
+          show: false,
+          width: 800,
+          height: 450,
+          webPreferences: {
+            partition,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            autoplayPolicy: 'no-user-gesture-required',
+            backgroundThrottling: false,
+          },
+        });
+        win.webContents.setUserAgent(REAL_UA);
+        win.webContents.setAudioMuted(true);
+        win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        await win.loadURL('about:blank');
+        if (!win.isDestroyed()) {
+          const safeUrl = JSON.stringify(embedUrl);
+          await win.webContents.executeJavaScript(
+            `(() => {
+              const f = document.createElement('iframe');
+              f.src = ${safeUrl};
+              f.width = '800';
+              f.height = '450';
+              f.allow = 'autoplay; encrypted-media';
+              document.body.appendChild(f);
+            })()`,
+            false
+          );
+          await new Promise((r) => setTimeout(r, holdMs));
+        }
+      } catch (err: any) {
+        console.warn('[MM] impression ping error (Electron):', err?.message || err);
+      } finally {
+        try {
+          if (win && !win.isDestroyed()) win.destroy();
+        } catch (_) {}
+        console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0}`);
+      }
+      return;
+    }
+
+    let ctx: any = null;
+    try {
+      const browser = await getSharedPlaywrightBrowser();
+      ctx = await browser.newContext({ userAgent: REAL_UA });
+      const page = await ctx.newPage();
+      await page
+        .setContent(`<iframe src="${embedUrl}" width="800" height="450" allow="autoplay"></iframe>`, {
+          waitUntil: 'commit',
+          timeout: 3000,
+        })
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, holdMs));
+    } catch (err: any) {
+      console.warn('[MM] impression ping error (Playwright):', err?.message || err);
+    } finally {
+      try {
+        if (ctx) await ctx.close();
+      } catch (_) {}
+      console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0}`);
+    }
+  };
+
+  router.post('/mm/impression', (req: Request, res: Response) => {
+    const flag = String(process.env.MM_IMPRESSION_PING ?? '1').trim().toLowerCase();
+    if (flag === '0' || flag === 'false' || flag === 'off') {
+      res.status(200).json({ ok: true, skipped: 'disabled' });
+      return;
+    }
+    const b = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
+    const tmdb = Math.floor(Number(b.tmdb ?? b.tmdbId ?? 0));
+    if (!Number.isFinite(tmdb) || tmdb <= 0) {
+      res.status(400).json({ error: 'tmdb válido es obligatorio' });
+      return;
+    }
+    const type = normalizeMmType(String(b.type || 'tv'));
+    const s = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(b.season ?? b.s ?? 1) || 1));
+    const e = type === 'movie' ? 0 : Math.max(1, Math.floor(Number(b.episode ?? b.e ?? 1) || 1));
+    const impKey = `${tmdb}|${s}|${e}`;
+    if (impressionSentKeys.has(impKey)) {
+      res.status(200).json({ ok: true, skipped: 'already_sent', key: impKey });
+      return;
+    }
+    impressionSentKeys.add(impKey);
+    const embedUrl = buildEmbedUrl(tmdb, type, s || 1, e || 1);
+    void runImpressionPing(embedUrl, tmdb, s, e);
+    res.status(202).json({ ok: true, started: true, key: impKey });
+  });
+
   // Endpoints auxiliares para pruebas de deadline de cosecha (6 s) y caché negativa (24 h)
   router.get('/mm/test-hang/*', (_req: Request, res: Response) => {
     const timer = setTimeout(() => {
@@ -1550,6 +1665,9 @@ export function createMovieMasterRouter(): Router {
     if (b.clearTmdb) {
       const t = Math.floor(Number(b.clearTmdb));
       uiCache.delete(t);
+      for (const k of Array.from(impressionSentKeys.values())) {
+        if (k.startsWith(`${t}|`)) impressionSentKeys.delete(k);
+      }
       for (const k of Array.from(serversCache.keys())) {
         if (k.startsWith(`${t}|`)) serversCache.delete(k);
       }

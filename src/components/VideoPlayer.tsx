@@ -673,6 +673,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const algoReproduciendoRegisteredRef = useRef<boolean>(false);
   const previewFailedBeforePlayingRef = useRef<boolean>(false);
   const resolvedServerRef = useRef<StreamServer | null>(null);
+  const mmImpressionSentKeyRef = useRef<string | null>(null);
 
   const markAlgoReproduciendo = useCallback((source: string, curTime?: number) => {
     if (algoReproduciendoRegisteredRef.current) return;
@@ -700,6 +701,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       console.log(`[PlaybackTiming] PRIMER_FRAME source="${source}" totalMs=${totalMs} resolveMs=${resolveMs} frameMs=${frameMs} replacedAfterWatching=${replacedAfterWatchingCountRef.current}`);
     }
 
+    // P9.3: Ping de impresión en background (una vez por tmdb|s|e), siempre después del primer frame real en reproducción.
+    const activeSrv = activeServerRef.current as any;
+    const isMmDirect = Boolean(
+      activeSrv &&
+      (activeSrv.providerId === 'moviemaster' || String(activeSrv.url || '').includes('/api/mm/manifest/')) &&
+      activeSrv.type !== 'iframe'
+    );
+    if (isMmDirect && tmdbIdToUse > 0 && source.includes('video-timeupdate')) {
+      const sNum = isSeriesOrAnime ? selectedSeasonRef.current : 0;
+      const eNum = isSeriesOrAnime ? selectedEpisodeRef.current : 0;
+      const impKey = `${tmdbIdToUse}|${sNum}|${eNum}`;
+      if (mmImpressionSentKeyRef.current !== impKey) {
+        mmImpressionSentKeyRef.current = impKey;
+        setTimeout(() => {
+          fetch('/api/mm/impression', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tmdb: tmdbIdToUse,
+              type: isSeriesOrAnime ? 'tv' : 'movie',
+              season: sNum,
+              episode: eNum,
+            }),
+          }).catch(() => {});
+        }, 1200);
+      }
+    }
+
     // P2.3: Solo persistir servidor tras frame confirmado (currentTime > 0, tiempo de reproducción real o HLS verificado)
     if (
       source.includes('currentTime') ||
@@ -712,7 +741,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         persistSuccessServer(mediaRef.current, activeServerRef.current);
       }
     }
-  }, []);
+  }, [tmdbIdToUse, isSeriesOrAnime]);
 
   const hasHlsFav = useMemo(() => {
     if (tmdbIdToUse <= 0) return false;

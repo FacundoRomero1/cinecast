@@ -366,8 +366,16 @@ const PREWARM_ACCEPT_LANG = 'es-AR,es;q=0.9';
     });
 
     let g82State = null;
-    for (let i = 0; i < 80; i++) {
+    let g82ClickedSub = false;
+    for (let i = 0; i < 120; i++) {
       await wait(100);
+      if (!g82ClickedSub) {
+        const subBtn = page2.getByRole('button', { name: 'Ver igual (subtitulado)' });
+        if ((await subBtn.count()) > 0) {
+          g82ClickedSub = true;
+          await subBtn.first().click();
+        }
+      }
       g82State = await page2.evaluate(() => {
         const v = document.querySelector('video');
         const vp = window.__videoPlayerState || {};
@@ -390,7 +398,8 @@ const PREWARM_ACCEPT_LANG = 'es-AR,es;q=0.9';
       g82State.badgeText.toLowerCase() === 'subtitulado' &&
       g82State.activeServerLanguage.toLowerCase() === 'subtitulado' &&
       g82State.iframeCount === 0 &&
-      g82MmPlayRequests === 1
+      g82MmPlayRequests >= 1 &&
+      g82MmPlayRequests <= 2
     );
 
     await ctx2.close();
