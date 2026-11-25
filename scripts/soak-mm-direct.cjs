@@ -88,6 +88,7 @@ function clearDiskCaches() {
   clearDiskCaches();
 
   const pingLogs = [];
+  const retryLogs = [];
   const harvestLogs = [];
   const envVars = {
     NODE_ENV: 'production',
@@ -101,6 +102,7 @@ function clearDiskCaches() {
     env: envVars,
     onStdoutLine: (l) => {
       if (l.includes('[MM] impression ping')) pingLogs.push(l);
+      if (l.includes('[MM] ping sin ads')) retryLogs.push(l);
       if (l.includes('[MM] harvest ms=')) harvestLogs.push(l);
     },
   });
@@ -131,7 +133,7 @@ function clearDiskCaches() {
     });
     await wait(2000);
 
-    console.log(`\n=== SOAK MM DIRECTO (mode=${opts.mode}, MM_IMPRESSION_PING=${opts.ping}, maxPerSession=${opts.maxPerSession || 'default(1)'}, count=${opts.count}, interval=${opts.intervalSec}s) ===`);
+    console.log(`\n=== SOAK MM DIRECTO (mode=${opts.mode}, MM_IMPRESSION_PING=${opts.ping}, maxPerSession=${opts.maxPerSession || 'default(3)'}, count=${opts.count}, interval=${opts.intervalSec}s) ===`);
     console.log('| n | tmdb | tipo | título | /servers | srvs | /mm/play | frame | ms |');
     console.log('|---:|---:|---|---|---:|---:|---:|---|---:|');
 
@@ -277,19 +279,42 @@ function clearDiskCaches() {
     const avgServers = rows.length
       ? Number((rows.reduce((acc, r) => acc + (r.serversCount || 0), 0) / rows.length).toFixed(2))
       : 0;
+    const qSize = Math.max(1, Math.floor(rows.length / 4));
+    const q1 = rows.slice(0, qSize);
+    const q4 = rows.slice(-qSize);
+    const firstQuarterAvgServers = q1.length
+      ? Number((q1.reduce((acc, r) => acc + (r.serversCount || 0), 0) / q1.length).toFixed(2))
+      : 0;
+    const lastQuarterAvgServers = q4.length
+      ? Number((q4.reduce((acc, r) => acc + (r.serversCount || 0), 0) / q4.length).toFixed(2))
+      : 0;
+    const quarterDeltaPct = firstQuarterAvgServers > 0
+      ? Number((((lastQuarterAvgServers - firstQuarterAvgServers) / firstQuarterAvgServers) * 100).toFixed(1))
+      : 0;
+    const effectivePings = pingLogs.filter((l) => {
+      const m = l.match(/ads=(\d+)/);
+      return m && Number(m[1]) >= 1;
+    }).length;
+    const zeroAdPings = pingLogs.length - effectivePings;
     const summary = {
       mode: opts.mode,
       ping: opts.ping,
-      maxPerSession: opts.maxPerSession || 'default(1)',
+      maxPerSession: opts.maxPerSession || 'default(3)',
       attempted: rows.length,
       target: opts.count,
       okServers,
       avgServers,
+      firstQuarterAvgServers,
+      lastQuarterAvgServers,
+      quarterDeltaPct,
       status403Count,
       okFrames,
       survivedAll: !abortedReason && rows.length === opts.count,
       abortedReason,
       pingCount: pingLogs.length,
+      effectivePings,
+      zeroAdPings,
+      retryLogs,
       pingLogs,
       harvestLogsCount: harvestLogs.length,
       firstHarvestLog: harvestLogs[0] || null,

@@ -1712,10 +1712,10 @@ export function createMovieMasterRouter(): Router {
     tmdb: number,
     s: number,
     e: number
-  ): Promise<void> => {
+  ): Promise<number> => {
     ensureImpressionShutdownHooks();
     const t0 = Date.now();
-    // P9.7: medido delta RSS > 150 MB (+244..352 MB) -> 6 s por defecto y 1 por sesión
+    // P9.7 / P10.7: hold 6 s, tope default 3 por sesión (MM_IMPRESSION_MAX_PER_SESSION)
     const holdMs = Math.max(500, Number(process.env.MM_IMPRESSION_DURATION_MS) || 6_000);
     const isElectron = Boolean(process.versions && process.versions.electron);
     let adRequests = 0;
@@ -1816,7 +1816,7 @@ export function createMovieMasterRouter(): Router {
         const suffix = abortedReason ? ` aborted=${abortedReason}` : '';
         console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0} ads=${adRequests}${suffix}`);
       }
-      return;
+      return adRequests;
     }
 
     let ctx: any = null;
@@ -1919,7 +1919,19 @@ export function createMovieMasterRouter(): Router {
       const suffix = abortedReason ? ` aborted=${abortedReason}` : '';
       console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0} ads=${adRequests}${suffix}`);
     }
+    return adRequests;
   };
+
+  let impressionShuttingDown = false;
+  const activeRetryTimers = new Set<ReturnType<typeof setTimeout>>();
+  const clearImpressionRetryTimers = () => {
+    impressionShuttingDown = true;
+    for (const t of Array.from(activeRetryTimers)) {
+      clearTimeout(t);
+    }
+    activeRetryTimers.clear();
+  };
+  activeImpressionClosers.add(clearImpressionRetryTimers);
 
   router.post('/mm/impression', (req: Request, res: Response) => {
     const flag = String(process.env.MM_IMPRESSION_PING ?? '1').trim().toLowerCase();
@@ -1941,9 +1953,9 @@ export function createMovieMasterRouter(): Router {
       res.status(200).json({ ok: true, skipped: 'busy', key: impKey });
       return;
     }
-    // P9.7 / P10.3: tope configurable por sesión (MM_IMPRESSION_MAX_PER_SESSION, default 1)
+    // P10.7: tope configurable por sesión (MM_IMPRESSION_MAX_PER_SESSION, default 3)
     const rawCap = process.env.MM_IMPRESSION_MAX_PER_SESSION ?? process.env.MM_IMPRESSION_SESSION_CAP;
-    const sessionCap = rawCap === undefined || rawCap === '' ? 1 : Number(rawCap);
+    const sessionCap = rawCap === undefined || rawCap === '' ? 3 : Number(rawCap);
     if (sessionCap > 0 && impressionSessionCount >= sessionCap) {
       res.status(200).json({ ok: true, skipped: 'session_cap', key: impKey });
       return;
@@ -1953,15 +1965,48 @@ export function createMovieMasterRouter(): Router {
       return;
     }
     impressionInFlight = true;
-    impressionSessionCount += 1;
     impressionSentKeys.add(impKey);
     const embedUrl = buildEmbedUrl(tmdb, type, s || 1, e || 1);
     const rawHost = req.get('host') || `127.0.0.1:${process.env.CINECAST_PORT || process.env.PORT || 3000}`;
     const hostHeader = rawHost.replace(/^localhost(?=:|$)/i, '127.0.0.1');
     const hostOrigin = `${req.protocol || 'http'}://${hostHeader}`;
-    void runImpressionPing(embedUrl, hostOrigin, tmdb, s, e).finally(() => {
-      impressionInFlight = false;
-    });
+    const retryDelayMs = Math.max(1000, Number(process.env.MM_IMPRESSION_RETRY_DELAY_MS) || 30_000);
+
+    // P10.6: solo cuenta para el tope si ads >= 1. Si ads === 0, un único reintento a los 30 s.
+    void runImpressionPing(embedUrl, hostOrigin, tmdb, s, e)
+      .then((ads) => {
+        if (ads >= 1) {
+          impressionSessionCount += 1;
+          return;
+        }
+        if (impressionShuttingDown) return;
+        console.log('[MM] ping sin ads, reintento');
+        const retryTimer = setTimeout(() => {
+          activeRetryTimers.delete(retryTimer);
+          if (impressionShuttingDown) return;
+          if (impressionInFlight) {
+            console.warn(`[MM] ping sin ads: reintento omitido por busy (${impKey}), no cuenta para el tope`);
+            return;
+          }
+          if (sessionCap > 0 && impressionSessionCount >= sessionCap) return;
+          impressionInFlight = true;
+          void runImpressionPing(embedUrl, hostOrigin, tmdb, s, e)
+            .then((retryAds) => {
+              if (retryAds >= 1) {
+                impressionSessionCount += 1;
+              } else {
+                console.warn(`[MM] ping sin ads tras reintento (${impKey}), no cuenta para el tope`);
+              }
+            })
+            .finally(() => {
+              impressionInFlight = false;
+            });
+        }, retryDelayMs);
+        activeRetryTimers.add(retryTimer);
+      })
+      .finally(() => {
+        impressionInFlight = false;
+      });
     res.status(202).json({ ok: true, started: true, key: impKey });
   });
 

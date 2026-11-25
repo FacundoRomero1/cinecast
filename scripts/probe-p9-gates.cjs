@@ -35,6 +35,7 @@ async function runColdPlayGate(browser, { name, impressionPing }) {
   const env = {
     NODE_ENV: 'production',
     MM_IMPRESSION_PING: impressionPing ? '1' : '0',
+    ...(impressionPing ? { MM_IMPRESSION_MAX_PER_SESSION: '1' } : {}),
   };
   const testEnv = await startTestEnv({
     name,
