@@ -369,6 +369,12 @@ async function readMmPlay(r: Response, ctx: string): Promise<any | null> {
     body = (await r.text()).slice(0, 500);
   } catch (_) { }
   console.error(`[MM] /api/mm/play FALLO (${ctx}) status=${r.status} body=${body}`);
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && parsed.error === 'solo_subtitulado') {
+      return { __soloSubtitulado: true, ...parsed };
+    }
+  } catch (_) { }
   return null;
 }
 
@@ -1366,15 +1372,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         signal: mmDeadlineController.signal,
       })
         .then((r) => readMmPlay(r, 'inicial'))
-        .then((mmData) => {
+        .then(async (mmData) => {
+          // P10.1: Cuando allowedLangs vació la lista pero existen servidores SUB, acuñar directo sin onlyLangs
+          // y reproducir en Subtitulado con su badge, sin overlay.
+          if (mmData?.__soloSubtitulado) {
+            console.log(`[MM] solo_subtitulado tmdb=${tmdbIdToUse} s${selectedSeason}e${selectedEpisode}: acuñando SUB directo sin onlyLangs`);
+            const subRes = await fetch('/api/mm/play', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tmdb: tmdbIdToUse,
+                type: directType,
+                season: selectedSeason,
+                episode: selectedEpisode,
+                lang: 'subtitulado',
+              }),
+              signal: mmDeadlineController.signal,
+            });
+            mmData = await readMmPlay(subRes, 'solo_subtitulado');
+          }
           clearTimeout(deadlineTimer);
           abortController.signal.removeEventListener('abort', onParentAbort);
           if (!isMounted || serversEpochRef.current !== epoch) return;
-          if (mmData?.manifestUrl && mmData.lang === 'subtitulado') {
-            console.warn('[MM] Solo hay audio subtitulado: se descarta en peliculas/series.');
-            handleMmUnavailable('solo subtitulado');
-            return;
-          }
           if (mmData?.manifestUrl) {
             console.log(
               `[MM] lang=${mmData.lang} srv=${mmData.serverName} segs=${mmData.segs} dur=${mmData.durationSec}`
@@ -1388,8 +1407,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               Array.isArray(mmData.servers) && mmData.servers.length > 0
                 ? mmData.servers
                 : [{ id: `mm-minted-${tmdbIdToUse}`, name: mmData.serverName || 'Servidor 1', lang: mmData.lang || 'latino' }];
-            // Nunca ofrecer MovieMaster subtitulado en peliculas/series
-            const rawList = rawListAll.filter((x) => x.lang === 'latino' || x.lang === 'castellano');
+            const rawList =
+              mmData.lang === 'subtitulado'
+                ? rawListAll
+                : rawListAll.filter((x) => x.lang === 'latino' || x.lang === 'castellano');
 
             let mintedAssigned = false;
             const mmServers: StreamServer[] = rawList.map((s, idx) => {

@@ -1,9 +1,9 @@
+import { Router, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { Router, type Request, type Response } from 'express';
 
 const requireModule =
   typeof require === 'function'
@@ -21,6 +21,7 @@ const SNAPSHOT_TTL_MS = 4 * 60 * 60 * 1000; // 4 h
 const SNAPSHOT_MAX_ENTRIES = 40;
 const HARVEST_TIMEOUT_MS = 6_000; // Deadline duro cosecha: 6 s
 const MINT_DEADLINE_MS = 7_500; // Deadline mint: 7.5 s (mirrors tras Cloudflare tardan 3-5 s)
+const SEGMENT_PROBE_TIMEOUT_MS = 3_000; // P10.2: validar primer segmento real (200/206 + bytes reales)
 const SERVERS_FETCH_TIMEOUT_MS = 7_000;
 const MAX_MINT_ATTEMPTS = 3;
 
@@ -106,7 +107,7 @@ function loadDiskCaches(): void {
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   try {
     if (fs.existsSync(NEG_DISK_CACHE_PATH)) {
@@ -120,7 +121,7 @@ function loadDiskCaches(): void {
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function saveUiDiskCache(): void {
@@ -133,7 +134,7 @@ function saveUiDiskCache(): void {
       }
     }
     fs.writeFileSync(UI_DISK_CACHE_PATH, JSON.stringify(obj), 'utf8');
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function saveNegDiskCache(): void {
@@ -146,7 +147,7 @@ function saveNegDiskCache(): void {
       }
     }
     fs.writeFileSync(NEG_DISK_CACHE_PATH, JSON.stringify(obj), 'utf8');
-  } catch (_) {}
+  } catch (_) { }
 }
 
 loadDiskCaches();
@@ -266,7 +267,7 @@ async function harvestUiViaElectron(
       onAbort = () => {
         try {
           win?.webContents?.stop?.();
-        } catch (_) {}
+        } catch (_) { }
         finish(null, true);
       };
       if (signal?.aborted) {
@@ -314,7 +315,7 @@ async function harvestUiViaElectron(
             if (ui && ui.trim()) {
               finish(ui.trim(), false);
             }
-          } catch (_) {}
+          } catch (_) { }
         }
       );
 
@@ -361,12 +362,12 @@ async function harvestUiViaElectron(
     try {
       ses.webRequest.onBeforeRequest(null);
       ses.webRequest.onCompleted(null);
-    } catch (_) {}
+    } catch (_) { }
     try {
       if (win && !win.isDestroyed()) {
         win.destroy();
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 }
 
@@ -459,7 +460,7 @@ async function harvestUiViaPlaywright(
           if (ui && ui.trim()) {
             finish(ui.trim(), false);
           }
-        } catch (_) {}
+        } catch (_) { }
       };
 
       page.on('request', (req: any) => checkUrl(req.url()));
@@ -478,7 +479,7 @@ async function harvestUiViaPlaywright(
     }
     try {
       if (ctx) await ctx.close();
-    } catch (_) {}
+    } catch (_) { }
   }
 }
 
@@ -1265,6 +1266,81 @@ export async function mintSnapshot(
       return null;
     }
 
+    // P10.2: Validar el primer segmento real con mismo UA/Accept-Language antes de devolver 200.
+    // Descarta mirrors 403/404/sin CORS o que envían headers 200 y se cuelgan sin entregar bytes (ej. andromedans).
+    const firstSegUrl = normalized.text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith('#'));
+    if (!firstSegUrl) {
+      console.warn(
+        `[MM] Intento ${attemptIdx + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): sin URL de segmento`
+      );
+      return null;
+    }
+
+    const probeAc = new AbortController();
+    const probeTimer = setTimeout(() => probeAc.abort(), SEGMENT_PROBE_TIMEOUT_MS);
+    const onProbeParentAbort = () => probeAc.abort();
+    raceController.signal.addEventListener('abort', onProbeParentAbort, { once: true });
+    let probeOk = false;
+    let probeReason = '';
+    try {
+      const segHeaders: Record<string, string> = {
+        'User-Agent': opts.userAgent ? opts.userAgent.replace('HeadlessChrome/', 'Chrome/') : REAL_UA,
+        Range: 'bytes=0-131071',
+        Origin: 'http://127.0.0.1:3000',
+      };
+      if (opts.acceptLanguage) {
+        segHeaders['Accept-Language'] = opts.acceptLanguage;
+      }
+      const segRes = await fetch(firstSegUrl, {
+        method: 'GET',
+        headers: segHeaders,
+        redirect: 'follow',
+        signal: probeAc.signal,
+      });
+      if (segRes.status !== 200 && segRes.status !== 206) {
+        probeReason = `HTTP ${segRes.status}`;
+        try { await segRes.body?.cancel(); } catch (_) {}
+      } else {
+        let bytesRead = 0;
+        const reader = segRes.body?.getReader?.();
+        if (reader) {
+          try {
+            while (bytesRead < 65_536) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              bytesRead += chunk.value ? chunk.value.byteLength : 0;
+            }
+          } finally {
+            try { await reader.cancel(); } catch (_) {}
+          }
+        } else {
+          const buf = await segRes.arrayBuffer();
+          bytesRead = buf.byteLength;
+        }
+        if (bytesRead >= 188) {
+          probeOk = true;
+        } else {
+          probeReason = `payload vacio (${bytesRead} B)`;
+        }
+      }
+    } catch (err: any) {
+      probeReason = err?.name === 'AbortError' ? 'timeout/stalled' : (err?.message || 'fetch error');
+    } finally {
+      clearTimeout(probeTimer);
+      raceController.signal.removeEventListener('abort', onProbeParentAbort);
+    }
+
+    if (raceController.signal.aborted) return null;
+    if (!probeOk) {
+      console.warn(
+        `[MM] Intento ${attemptIdx + 1}/${maxAttempts} descartado en "${srv.name}" (${srv.lang}): seg0 ${probeReason}`
+      );
+      return null;
+    }
+
     // Si el master trae pistas de audio separadas (#EXT-X-MEDIA:TYPE=AUDIO), conservar el master
     // con Español/Latino forzado como DEFAULT=YES para no perder el audio ni reproducir en inglés.
     const finalManifestText =
@@ -1464,6 +1540,32 @@ export function createMovieMasterRouter(): Router {
       });
 
       if (!snap) {
+        // P10.1: Distinguir "sin stock" de "allowedLangs vació una lista no vacía" (ej. solo subtitulado)
+        if (allowedLangs && allowedLangs.length > 0) {
+          const allServers = await getServers(tmdb, rawType, season, episode);
+          const matchingAllowed = allServers.filter((s) => allowedLangs.includes(s.lang));
+          if (matchingAllowed.length === 0 && allServers.length > 0) {
+            const detail = {
+              error: 'solo_subtitulado',
+              tmdb,
+              type: rawType,
+              season,
+              episode,
+              onlyLangs: allowedLangs,
+              servers: allServers.map((s) => ({
+                id: s.id,
+                name: s.name,
+                lang: s.lang,
+                type: 'hls' as const,
+                mode: 'direct' as const,
+                site: s.site,
+              })),
+            };
+            console.warn('[MM] /mm/play 404 solo_subtitulado', JSON.stringify({ tmdb, type: rawType, season, episode, count: allServers.length }));
+            res.status(404).json(detail);
+            return;
+          }
+        }
         const detail = { error: 'indisponible', tmdb, type: rawType, season, episode, serverName, lang, onlyLangs: allowedLangs };
         console.warn('[MM] /mm/play 404 indisponible', JSON.stringify(detail));
         res.status(404).json(detail);
@@ -1541,13 +1643,13 @@ export function createMovieMasterRouter(): Router {
     for (const closer of Array.from(activeImpressionClosers)) {
       try {
         closer();
-      } catch (_) {}
+      } catch (_) { }
     }
     activeImpressionClosers.clear();
     const bp = sharedImpressionPlaywrightBrowserPromise;
     sharedImpressionPlaywrightBrowserPromise = null;
     if (bp) {
-      bp.then((b) => b?.close?.().catch(() => {})).catch(() => {});
+      bp.then((b) => b?.close?.().catch(() => { })).catch(() => { });
     }
   };
 
@@ -1559,7 +1661,7 @@ export function createMovieMasterRouter(): Router {
       try {
         const electron = requireModule('electron');
         electron?.app?.once?.('before-quit', cleanupActiveImpressions);
-      } catch (_) {}
+      } catch (_) { }
     }
     process.once('SIGTERM', cleanupActiveImpressions);
     process.once('SIGINT', cleanupActiveImpressions);
@@ -1627,7 +1729,7 @@ export function createMovieMasterRouter(): Router {
         closed = true;
         try {
           if (win && !win.isDestroyed()) win.destroy();
-        } catch (_) {}
+        } catch (_) { }
       };
       activeImpressionClosers.add(closeWin);
       try {
@@ -1700,9 +1802,9 @@ export function createMovieMasterRouter(): Router {
               const frames = win.webContents.mainFrame?.frames || [];
               const mmFrame = frames.find((f: any) => String(f.url || '').includes('moviemaster.lat'));
               if (mmFrame) {
-                await mmFrame.executeJavaScript("document.getElementById('go')?.click()", true).catch(() => {});
+                await mmFrame.executeJavaScript("document.getElementById('go')?.click()", true).catch(() => { });
               }
-            } catch (_) {}
+            } catch (_) { }
             await new Promise((r) => setTimeout(r, holdMs));
           }
         }
@@ -1724,7 +1826,7 @@ export function createMovieMasterRouter(): Router {
       if (closed) return;
       closed = true;
       if (ctx) {
-        ctx.close().catch(() => {});
+        ctx.close().catch(() => { });
       }
     };
     activeImpressionClosers.add(closeCtx);
@@ -1741,9 +1843,6 @@ export function createMovieMasterRouter(): Router {
         }
       });
       page.on('response', (res: any) => {
-        if (res.url().includes('/servers')) {
-          serversLoaded = true;
-        }
       });
 
       const hostUrl = `${hostOrigin}/api/mm/imp-host?url=${encodeURIComponent(embedUrl)}`;
@@ -1792,7 +1891,7 @@ export function createMovieMasterRouter(): Router {
           if (mmFrame) {
             const go = mmFrame.locator('#go');
             if ((await go.count().catch(() => 0)) > 0) {
-              await go.click({ timeout: 2000 }).catch(() => {});
+              await go.click({ timeout: 2000 }).catch(() => { });
             }
           }
           await new Promise((r) => setTimeout(r, holdMs));
@@ -1805,18 +1904,18 @@ export function createMovieMasterRouter(): Router {
       closed = true;
       try {
         if (ctx) await ctx.close();
-      } catch (_) {}
+      } catch (_) { }
       // Liberar el navegador dedicado de impresión para no dejar procesos Chromium residentes
       try {
         const bp = sharedImpressionPlaywrightBrowserPromise;
         sharedImpressionPlaywrightBrowserPromise = null;
         if (browserRef) {
-          await browserRef.close().catch(() => {});
+          await browserRef.close().catch(() => { });
         } else if (bp) {
           const b = await bp.catch(() => null);
-          await b?.close?.().catch(() => {});
+          await b?.close?.().catch(() => { });
         }
-      } catch (_) {}
+      } catch (_) { }
       const suffix = abortedReason ? ` aborted=${abortedReason}` : '';
       console.log(`[MM] impression ping s=${s}e=${e} ms=${Date.now() - t0} ads=${adRequests}${suffix}`);
     }
@@ -1842,8 +1941,8 @@ export function createMovieMasterRouter(): Router {
       res.status(200).json({ ok: true, skipped: 'busy', key: impKey });
       return;
     }
-    // P9.7: por defecto solo primer episodio de la sesión (cap=1) dado delta RSS > 150 MB
-    const rawCap = process.env.MM_IMPRESSION_SESSION_CAP;
+    // P9.7 / P10.3: tope configurable por sesión (MM_IMPRESSION_MAX_PER_SESSION, default 1)
+    const rawCap = process.env.MM_IMPRESSION_MAX_PER_SESSION ?? process.env.MM_IMPRESSION_SESSION_CAP;
     const sessionCap = rawCap === undefined || rawCap === '' ? 1 : Number(rawCap);
     if (sessionCap > 0 && impressionSessionCount >= sessionCap) {
       res.status(200).json({ ok: true, skipped: 'session_cap', key: impKey });
