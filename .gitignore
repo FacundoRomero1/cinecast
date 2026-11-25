@@ -21,3 +21,8 @@ public/data/catalog.extended.json
 public/data/catalog.extended.json.tmp
 data/catalog.sqlite
 data/catalog.sqlite-*
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
