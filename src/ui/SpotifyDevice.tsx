@@ -237,6 +237,18 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
           setStage('error');
         });
 
+        player.addListener('playback_error', (err?: { message?: string }) => {
+          console.error(`[SPOTIFY] playback_error message=${err?.message || 'unknown'}`);
+          setErrorMessage(`Error de reproducción de Spotify: ${err?.message || 'no se pudo decodificar el audio'}`);
+        });
+
+        player.addListener('autoplay_failed', () => {
+          console.warn('[SPOTIFY] autoplay_failed: el navegador pidió interacción del usuario');
+          try {
+            player.activateElement?.()?.catch?.(() => {});
+          } catch (_) {}
+        });
+
         player.connect().catch((err: any) => {
           if (connectingTimerRef.current) clearTimeout(connectingTimerRef.current);
           isPlayerConnectedRef.current = false;
@@ -378,6 +390,9 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
   const handleTogglePlay = async () => {
     if (playerRef.current) {
       try {
+        await playerRef.current.activateElement?.();
+      } catch (_) {}
+      try {
         await playerRef.current.togglePlay();
       } catch (_) {}
     }
@@ -390,6 +405,9 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
     if (playerRef.current && isPlayerConnectedRef.current) {
       pendingNextRef.current = false;
       try {
+        await playerRef.current.activateElement?.();
+      } catch (_) {}
+      try {
         await playerRef.current.nextTrack();
       } catch (_) {}
       return;
@@ -400,6 +418,9 @@ export const SpotifyDevice: React.FC<SpotifyDeviceProps> = ({
 
   const handlePrev = useCallback(async () => {
     if (playerRef.current && isPlayerConnectedRef.current) {
+      try {
+        await playerRef.current.activateElement?.();
+      } catch (_) {}
       try {
         await playerRef.current.previousTrack();
       } catch (_) {}

@@ -910,12 +910,15 @@ function createWindow() {
   const spotifySession = session.fromPartition('persist:spotify', { cache: true });
   spotifySession.setUserAgent(REAL_UA);
 
+  // Dominios oficiales de Spotify / Web Playback SDK / CDN de audio (no alterar headers, CORS ni inyectar escudos)
+  const SPOTIFY_TRUSTED_RE = /(?:^|[./])(?:spotify\.com|scdn\.co|spotifycdn\.com|pscdn\.co)(?:$|[:/?])|spotify[^/]*\.akamaized\.net/i;
+
   // =========================================================================
   // 2. BYPASS DE REFERER / ORIGIN PARA EVITAR PANTALLAS NEGRAS EN IFRAMES
   // =========================================================================
   customSession.webRequest.onBeforeSendHeaders((details, callback) => {
     // TAREA 2: En Modo Diagnóstico, apagar reescritura de headers y spoof de User-Agent
-    if (isDiagnosticMode) {
+    if (isDiagnosticMode || SPOTIFY_TRUSTED_RE.test(details.url || '')) {
       return callback({ cancel: false, requestHeaders: details.requestHeaders });
     }
 
@@ -980,7 +983,8 @@ function createWindow() {
   // =========================================================================
   customSession.webRequest.onHeadersReceived((details, callback) => {
     // TAREA D: El fix de CORS NUNCA se apaga en Modo Diagnóstico salvo que 'Sin fix CORS' (isNoCorsFix) esté activo
-    if (isNoCorsFix || /moviemaster\.lat/i.test(details.url || '')) {
+    // Spotify Web Playback SDK (Widevine license + CDN audio chunks) requiere sus cabeceras CORS nativas intactas
+    if (isNoCorsFix || /moviemaster\.lat/i.test(details.url || '') || SPOTIFY_TRUSTED_RE.test(details.url || '')) {
       return callback({ cancel: false, responseHeaders: details.responseHeaders });
     }
 
@@ -1183,7 +1187,7 @@ function createWindow() {
           await f.executeJavaScript(GAMBLING_SHIELD, false).catch(() => {});
           continue;
         }
-        if (/youtube\.com|google\.com|accounts\.google\.com|gstatic\.com|spotify\.com/i.test(url)) continue;
+        if (/youtube\.com|google\.com|accounts\.google\.com|gstatic\.com|spotify\.com|scdn\.co|spotifycdn\.com/i.test(url)) continue;
         // TAREA F: No spoofear navigator.userAgentData en frames de challenges.cloudflare.com ni turnstile
         if (!/challenges\.cloudflare\.com|turnstile/i.test(url)) {
           await f.executeJavaScript(FP_SHIELD, false).catch(() => {});
@@ -1657,6 +1661,7 @@ ipcMain.handle('set-master-volume', async (_event, payload) => {
     const frames = getAllFrames();
     for (const frame of frames) {
       if (mainWindow && !mainWindow.isDestroyed() && frame === mainWindow.webContents.mainFrame) continue;
+      if (/scdn\.co|spotify\.com/i.test(frame.url || '')) continue;
       try {
         perfCounters.embedAudioScript++;
         const count = await frame.executeJavaScript(`
@@ -2633,6 +2638,7 @@ app.whenReady().then(async () => {
     'clipboard-sanitized-write',
     'mediaKeySystem',
     'protected-media-identifier',
+    'speaker-selection',
   ]);
   const ytPerms = new Set(['fullscreen', 'clipboard-sanitized-write', 'mediaKeySystem']);
   const spotifyPerms = new Set([
@@ -2640,6 +2646,7 @@ app.whenReady().then(async () => {
     'clipboard-sanitized-write',
     'protected-media-identifier',
     'mediaKeySystem',
+    'speaker-selection',
   ]);
   hardenSession(session.defaultSession, basePerms);
   hardenSession(session.fromPartition('persist:cinecast-session', { cache: true }), basePerms);
