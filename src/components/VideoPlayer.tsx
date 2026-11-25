@@ -3164,6 +3164,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               }
             }
             if (mmRemintInFlightRef.current) return;
+            // En TV en vivo (IPTV con tokens de redirect efímeros, ej. TNT/Fox/ESPN), si caduca el token del level (404/403/410),
+            // recargar la URL base original para obtener un token fresco sin cortar la transmisión.
+            if (
+              mediaRef.current?.category === 'live_tv' &&
+              (data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR || data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) &&
+              (respCode === 404 || respCode === 403 || respCode === 410)
+            ) {
+              const nowReload = Date.now();
+              if (nowReload - (hlsInstance as any).__lastLiveTokenReloadAt > 4000 || !(hlsInstance as any).__lastLiveTokenReloadAt) {
+                (hlsInstance as any).__lastLiveTokenReloadAt = nowReload;
+                console.log(`[VideoPlayer] [LiveTV] Token de nivel caducado (${respCode}) -> refrescando URL base`);
+                try {
+                  hlsInstance?.loadSource(videoSrc);
+                  hlsInstance?.startLoad();
+                } catch (_) { }
+                return;
+              }
+            }
             // En error de fragmento reintentar startLoad(), y si falla 3 veces marcar fallo
             if (data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR) {
               fragErrorCount += 1;
