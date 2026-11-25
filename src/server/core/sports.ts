@@ -11,7 +11,7 @@ import type { StreamServer } from '../../types.ts';
 
 export const SPORTS_M3U_URL = 'https://iptv-org.github.io/iptv/categories/sports.m3u';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora para descarga cruda de iptv-org
-const SPORTS_VALIDATOR_VERSION = 3;
+const SPORTS_VALIDATOR_VERSION = 4;
 
 let deadUrlsSet: Set<string> | null = null;
 export function getDeadSportsUrls(): Set<string> {
@@ -235,7 +235,7 @@ export async function validateHlsStream(
               const variantRes = await fetch(variantUrl, {
                 method: 'GET',
                 headers: reqHeaders,
-                signal: AbortSignal.timeout(Math.min(timeoutMs, 1500)),
+                signal: AbortSignal.timeout(Math.min(timeoutMs, 3000)),
               });
               if (!variantRes.ok) return false;
               const vCt = (variantRes.headers.get('content-type') || '').toLowerCase();
@@ -310,6 +310,13 @@ async function probeChannelWithMirrors(
   for (const srv of candidateServers) {
     const trust = assessMirrorTrust(ch, srv);
     if (!trust.trusted) {
+      const isOwnCuratedMirror =
+        srv.url === ch.streamUrl ||
+        (Array.isArray(ch.servers) && ch.servers.some((cs) => cs.url === srv.url));
+      if (isOwnCuratedMirror && /host IP crudo/i.test(trust.reason)) {
+        trustedMirrors.push({ srv, score: 85, reason: 'mirror curado hispanohablante' });
+        continue;
+      }
       const candOk =
         extraCandidates.length === 0 &&
         srv.url === ch.streamUrl &&
