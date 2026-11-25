@@ -2576,6 +2576,7 @@ function hardenSession(ses, permitidos) {
   if (!ses) return;
   const allowedSet = permitidos instanceof Set ? permitidos : new Set(permitidos || []);
   const logDenied = (permiso, rawOrigin) => {
+    if (permiso === 'background-sync' || permiso === 'media') return;
     let origin = rawOrigin || 'unknown';
     try {
       if (origin && origin.startsWith('http')) {

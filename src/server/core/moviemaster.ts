@@ -1592,8 +1592,18 @@ export function createMovieMasterRouter(): Router {
         })),
       });
     } catch (err: any) {
-      console.error('[MM] /mm/play 500', err?.stack || err?.message || err);
-      res.status(500).json({ error: err?.message || 'Error en /api/mm/play' });
+      const msg = String(err?.message || err || '');
+      const isTimeout =
+        err?.name === 'TimeoutError' ||
+        err?.name === 'AbortError' ||
+        /timeout|timed out|aborted/i.test(msg);
+      if (isTimeout) {
+        console.warn('[MM] /mm/play 504 indisponible (timeout):', msg);
+        res.status(504).json({ error: 'indisponible', reason: 'timeout' });
+        return;
+      }
+      console.error('[MM] /mm/play 500', err?.stack || msg);
+      res.status(500).json({ error: msg || 'Error en /api/mm/play' });
     }
   });
 

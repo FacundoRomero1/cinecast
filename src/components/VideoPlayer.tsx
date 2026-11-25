@@ -636,6 +636,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const userInteractedRef = useRef<boolean>(false);
   const autoCommittedKeyRef = useRef<string | null>(null);
   const failedServersForEpisodeRef = useRef<Set<string>>(new Set());
+  const penalizedServersForEpisodeRef = useRef<Set<string>>(new Set());
+  const allServersExhaustedRef = useRef<boolean>(false);
   const unavailableServersForEpisodeRef = useRef<Set<string>>(new Set());
   const retryCountByServerEpisodeRef = useRef<Map<string, number>>(new Map());
   const shortDurationLoggedKeyRef = useRef<string | null>(null);
@@ -645,8 +647,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const pendingMmReseekTimeRef = useRef<number>(0);
   const isAdvancingEpisodeRef = useRef<boolean>(false);
 
+  // B11.1: Derivar anime desde category, type, resolveType o género animación (nunca bloquear con filtro solo-ES)
+  const isAnimeContent = useMemo(() => {
+    if (media.category === 'anime' || (media as any).type === 'anime' || resolveType === 'anime') return true;
+    const rawGenres = [
+      ...(Array.isArray((media as any).genres) ? (media as any).genres : []),
+      ...(Array.isArray((media as any).genre) ? (media as any).genre : []),
+    ];
+    return rawGenres.some((g: any) => {
+      if (typeof g === 'number') return g === 16;
+      const name = typeof g === 'string' ? g : String(g?.name || '');
+      return /animaci[oó]n|animation|anime/i.test(name);
+    });
+  }, [media, resolveType]);
+
   const getServerEpisodeKey = useCallback((srv?: StreamServer | null) => {
-    const idPart = (srv as any)?.providerId || (srv as any)?.id || srv?.name || 'unknown';
+    const idPart = (srv as any)?.id || srv?.name || (srv as any)?.providerId || 'unknown';
     return `${media.id}:s${selectedSeasonRef.current}:e${selectedEpisodeRef.current}:${String(idPart).toLowerCase()}`;
   }, [media.id]);
   const serversEpochRef = useRef<number>(0);
@@ -777,7 +793,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
-    const isAnime = media.category === 'anime' || resolveType === 'anime';
+    const isAnime = isAnimeContent;
     const episodeKey = isSeriesOrAnime
       ? `${media.id}_s${selectedSeason}_e${selectedEpisode}`
       : `${media.id}_movie`;
@@ -803,7 +819,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         type: isAnime ? 'anime' : 'series',
         season: selectedSeason,
         episode: selectedEpisode,
-        skipMmHls: noSpanishAudio && !allowSubtitled,
+        skipMmHls: !isAnime && noSpanishAudio && !allowSubtitled,
       });
     }
 
@@ -1330,11 +1346,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           console.warn(`[MM] sin acuñado (${reason}) tmdb=${tmdbIdToUse} s${selectedSeason}e${selectedEpisode} langs=[${langs.join(',')}] latino/castellano=${hasEs}`);
           if (hasEs) {
             mmSpanishVerified = true;
-          } else if (langs.length > 0) {
-            // Confirmado: MovieMaster respondio lista real pero solo tiene subtitulado/EN
+          } else if (langs.length > 0 && !isAnimeContent) {
+            // Confirmado: MovieMaster respondio lista real pero solo tiene subtitulado/EN (overlay solo en series/películas, nunca en anime)
             setNoSpanishAudio(true);
             triggerSignalToast('Este episodio no tiene audio Latino/Castellano en MovieMaster');
-          } else {
+          } else if (langs.length === 0) {
             // Lista vacia por error/timeout de red: permitir fallback embed Latino en vez de mentir que es solo ingles
             mmSpanishVerified = true;
             triggerSignalToast('MovieMaster demoró en responder, abriendo reproductor alternativo...');
@@ -1367,16 +1383,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           season: selectedSeason,
           episode: selectedEpisode,
           lang: 'latino',
-          onlyLangs: ['latino', 'castellano'],
+          onlyLangs: isAnimeContent ? undefined : ['latino', 'castellano'],
         }),
         signal: mmDeadlineController.signal,
       })
         .then((r) => readMmPlay(r, 'inicial'))
         .then(async (mmData) => {
-          // P10.1: Cuando allowedLangs vació la lista pero existen servidores SUB, acuñar directo sin onlyLangs
-          // y reproducir en Subtitulado con su badge, sin overlay.
+          // B11.1 / B11.2: solo_subtitulado es informativo y NUNCA penaliza.
+          // En series/películas (no anime), mantener el overlay "Sin audio Latino ni Castellano" con botón "Ver igual (subtitulado)".
+          // En anime, re-acuñar directo en SUB sin overlay.
           if (mmData?.__soloSubtitulado) {
-            console.log(`[MM] solo_subtitulado tmdb=${tmdbIdToUse} s${selectedSeason}e${selectedEpisode}: acuñando SUB directo sin onlyLangs`);
+            if (!isAnimeContent) {
+              clearTimeout(deadlineTimer);
+              abortController.signal.removeEventListener('abort', onParentAbort);
+              if (!isMounted || serversEpochRef.current !== epoch) return;
+              console.log(`[MM] solo_subtitulado tmdb=${tmdbIdToUse} s${selectedSeason}e${selectedEpisode}: mostrando overlay sin penalizar`);
+              setNoSpanishAudio(true);
+              setIsResolving(false);
+              triggerSignalToast('Este episodio no tiene audio Latino/Castellano en MovieMaster');
+              return;
+            }
+            console.log(`[MM] solo_subtitulado (anime) tmdb=${tmdbIdToUse} s${selectedSeason}e${selectedEpisode}: acuñando SUB directo sin onlyLangs`);
             const subRes = await fetch('/api/mm/play', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1500,7 +1527,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         });
     };
 
-    const isAnime = media.category === 'anime' || resolveType === 'anime';
+    const isAnime = isAnimeContent;
 
     if (isAnime) {
       const expectedRuntime = media.runtime || 24;
@@ -2056,6 +2083,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     userInteractedRef.current = false;
     autoCommittedKeyRef.current = null;
     failedServersForEpisodeRef.current.clear();
+    penalizedServersForEpisodeRef.current.clear();
+    allServersExhaustedRef.current = false;
     unavailableServersForEpisodeRef.current.clear();
     retryCountByServerEpisodeRef.current.clear();
     iframeStallTicksRef.current = 0;
@@ -2233,6 +2262,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       cfAttemptRef.current = 0;
       autoSkipCountRef.current = 0;
       consecutiveUnavailableCountRef.current = 0;
+      allServersExhaustedRef.current = false;
       setAllServersExhausted(false);
       if (rotateTimerRef.current) {
         clearTimeout(rotateTimerRef.current);
@@ -2272,6 +2302,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if ((srv as any)?.providerId === 'moviemaster' && srv.type === 'hls') {
         const clickedName = srv.name;
         const clickedId = (srv as any).id;
+        const needOnlySpanish = !isAnimeContent && !allowSubtitled && (srv as any).mmLang !== 'subtitulado';
         fetch('/api/mm/play', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2282,12 +2313,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             episode: selectedEpisode,
             serverName: (srv as any).mmServerName || undefined,
             lang: (srv as any).mmLang || 'latino',
-            onlyLangs: isSeriesOrAnime && resolveType === 'anime' ? undefined : ['latino', 'castellano'],
+            onlyLangs: needOnlySpanish ? ['latino', 'castellano'] : undefined,
             forceRefresh: !(srv as any).mmServerName,
           }),
         })
           .then((r) => readMmPlay(r, 'click ' + clickedName))
-          .then((mmData) => {
+          .then(async (mmData) => {
+            // B11.2: solo_subtitulado no penaliza -> re-acuñar sin onlyLangs
+            if (mmData?.__soloSubtitulado) {
+              const subRes = await fetch('/api/mm/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  tmdb: tmdbIdToUse,
+                  type: isSeriesOrAnime ? 'tv' : 'movie',
+                  season: selectedSeason,
+                  episode: selectedEpisode,
+                  serverName: (srv as any).mmServerName || undefined,
+                  lang: 'subtitulado',
+                }),
+              });
+              mmData = await readMmPlay(subRes, 'click-sub ' + clickedName);
+            }
             if (mmData?.manifestUrl) {
               console.log(
                 `[MM] lang=${mmData.lang} srv=${mmData.serverName} segs=${mmData.segs} dur=${mmData.durationSec}`
@@ -2422,10 +2469,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, delay);
   }, [handleSelectServer, triggerSignalToast]);
 
-  // ── Requisito 3: Auto-avance (máximo 3 avances, con logging de id del servidor) ──
+  // ── B11.3: Auto-avance acotado (máx 6 intentos, 1 penalización por servidor/episodio, nunca repetir fallidos) ──
   const advanceToNextServer = useCallback((reason: string) => {
     if (isAdvancingEpisodeRef.current || videoRef.current?.ended) {
       console.log(`[AutoAdvance] Ignorado durante transición o fin de episodio (${reason})`);
+      return;
+    }
+
+    if (allServersExhaustedRef.current) {
       return;
     }
 
@@ -2471,7 +2522,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     console.warn(`[AutoAdvance] Falla en servidor id="${currentId}" (${currentSrv?.name}): ${reason}`);
 
-    if (tmdbIdToUse > 0 && currentId) {
+    const epSrvKey = currentSrv ? getServerEpisodeKey(currentSrv) : '';
+    if (currentSrv) {
+      failedServersForEpisodeRef.current.add(epSrvKey);
+      if (lowerReason.includes('disponible') || lowerReason.includes('no hay opciones')) {
+        unavailableServersForEpisodeRef.current.add(epSrvKey);
+      }
+    }
+
+    // B11.3: Máximo 1 penalización por servidor y episodio
+    if (tmdbIdToUse > 0 && currentId && epSrvKey && !penalizedServersForEpisodeRef.current.has(epSrvKey)) {
+      penalizedServersForEpisodeRef.current.add(epSrvKey);
       reportServerPlaybackPenalty({
         providerId: (currentSrv as any)?.providerId || 'vidlink.pro',
         tmdbId: tmdbIdToUse,
@@ -2502,17 +2563,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (animeAttemptCountRef.current >= 3) {
           console.warn(`[VideoPlayer] [Anime] 3 intentos de servidores de anime fallaron.`);
           triggerSignalToast('Fuentes de anime no disponibles.');
+          allServersExhaustedRef.current = true;
           setAllServersExhausted(true);
+          setShowControls(true);
+          setForceShowServerSelector(true);
           return;
         }
-      }
-    }
-
-    if (currentSrv) {
-      const epSrvKey = getServerEpisodeKey(currentSrv);
-      failedServersForEpisodeRef.current.add(epSrvKey);
-      if (lowerReason.includes('disponible') || lowerReason.includes('no hay opciones')) {
-        unavailableServersForEpisodeRef.current.add(epSrvKey);
       }
     }
 
@@ -2531,11 +2587,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
-    if (nextIdx === -1 || servers.length <= 1) {
-      console.warn(`[AutoAdvance] Todos los servidores disponibles probados (${servers.length}) para este capítulo sin repetir servidor fallido. Fin de la lista.`);
+    if (autoAdvanceCountRef.current >= 6 || nextIdx === -1 || servers.length <= 1) {
+      console.warn(`[AutoAdvance] Ciclo cerrado (${autoAdvanceCountRef.current} intentos, ${servers.length} servidores). Sin servidores disponibles.`);
+      allServersExhaustedRef.current = true;
       setShowControls(true);
       setForceShowServerSelector(true);
       setAllServersExhausted(true);
+      triggerSignalToast('Sin servidores disponibles para este episodio');
       return;
     }
 
@@ -2880,8 +2938,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               if (hardLimitTimer) { clearTimeout(hardLimitTimer); hardLimitTimer = null; }
 
               const srv = activeServerRef.current;
-              // Requisito 3: Penalización adaptativa (memoria, TTL 1h)
-              if (tmdbIdToUse > 0 && !isAdvancingEpisodeRef.current && !currentVideo?.ended) {
+              const hlsSrvKey = srv ? getServerEpisodeKey(srv) : '';
+              // B11.3: Máximo 1 penalización por servidor y episodio
+              if (tmdbIdToUse > 0 && hlsSrvKey && !penalizedServersForEpisodeRef.current.has(hlsSrvKey) && !isAdvancingEpisodeRef.current && !currentVideo?.ended) {
+                penalizedServersForEpisodeRef.current.add(hlsSrvKey);
                 reportServerPlaybackPenalty({
                   providerId: (srv as any)?.providerId || 'vidlink.pro',
                   tmdbId: tmdbIdToUse,
@@ -3039,7 +3099,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     season: selectedSeasonRef.current,
                     episode: selectedEpisodeRef.current,
                     forceRefresh: true,
-                    onlyLangs: resolveType === 'anime' ? undefined : ['latino', 'castellano'],
+                    onlyLangs:
+                      isAnimeContent ||
+                      allowSubtitled ||
+                      (activeServerRef.current as any)?.mmLang === 'subtitulado'
+                        ? undefined
+                        : ['latino', 'castellano'],
                   }),
                 })
                   .then((r) => (r.ok ? r.json() : null))

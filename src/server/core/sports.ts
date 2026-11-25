@@ -319,11 +319,14 @@ async function probeChannelWithMirrors(
   // Priorizar espejos cuyo path/host coincida mejor con el canal
   trustedMirrors.sort((a, b) => b.score - a.score);
 
+  const sportsDebug = process.env.SPORTS_DEBUG === '1';
   if (trustedMirrors.length === 0) {
-    console.log(
-      `[Sports Validator] Canal "${ch.name}" (${ch.id}): OFFLINE (sin mirrors confiables)` +
-        (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
-    );
+    if (sportsDebug) {
+      console.log(
+        `[Sports Validator] Canal "${ch.name}" (${ch.id}): OFFLINE (sin mirrors confiables)` +
+          (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
+      );
+    }
     return null;
   }
 
@@ -344,19 +347,23 @@ async function probeChannelWithMirrors(
     (entry): entry is { srv: StreamServer; score: number; reason: string } => Boolean(entry)
   );
   if (aliveEntries.length === 0) {
-    console.log(
-      `[Sports Validator] Canal "${ch.name}" (${ch.id}): OFFLINE (ningún mirror confiable respondió #EXTM3U)` +
-        (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
-    );
+    if (sportsDebug) {
+      console.log(
+        `[Sports Validator] Canal "${ch.name}" (${ch.id}): OFFLINE (ningún mirror confiable respondió #EXTM3U)` +
+          (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
+      );
+    }
     return null;
   }
 
   const primaryEntry = aliveEntries[0]!;
   const primary = primaryEntry.srv;
-  console.log(
-    `[Sports Validator] Canal "${ch.name}" (${ch.id}): ELEGIDO "${primary.name}" -> ${primary.url} (score=${primaryEntry.score}, motivo=${primaryEntry.reason})` +
-      (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
-  );
+  if (sportsDebug) {
+    console.log(
+      `[Sports Validator] Canal "${ch.name}" (${ch.id}): ELEGIDO "${primary.name}" -> ${primary.url} (score=${primaryEntry.score}, motivo=${primaryEntry.reason})` +
+        (rejectedLogs.length ? ` | descartados=[${rejectedLogs.join('; ')}]` : '')
+    );
+  }
 
   return {
     ...ch,
@@ -478,6 +485,9 @@ export async function getValidatedSportsChannels(
     }
 
     const sortedChannels = rankSportsChannels(validatedChannels);
+    console.log(
+      `[Sports Validator] sobreviven ${sortedChannels.length} de ${tasks.length}, descartados ${Math.max(0, tasks.length - sortedChannels.length)}`
+    );
 
     const payload: SportsChannelsPayload = {
       updatedAt: new Date().toISOString(),
