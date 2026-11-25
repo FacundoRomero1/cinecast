@@ -168,11 +168,33 @@ export async function resolveAnimeServers(
     return 0;
   });
 
-  // Limitar a máximo 3 intentos en el orquestador antes de pasar a fallback
-  const topServers = validatedServers.slice(0, 3);
+  // B11.10: Intercalar proveedores (round-robin) para garantizar redundancia multi-extractor
+  // en vez de que un solo extractor cope todos los slots antes del slice.
+  const byProvider = new Map<string, AnimeServer[]>();
+  for (const srv of validatedServers) {
+    const list = byProvider.get(srv.provider) || [];
+    list.push(srv);
+    byProvider.set(srv.provider, list);
+  }
+  const interleaved: AnimeServer[] = [];
+  const queues = Array.from(byProvider.values());
+  const MAX_SERVERS = 6;
+  let added = true;
+  while (added && interleaved.length < MAX_SERVERS) {
+    added = false;
+    for (const q of queues) {
+      const next = q.shift();
+      if (next) {
+        interleaved.push(next);
+        added = true;
+        if (interleaved.length >= MAX_SERVERS) break;
+      }
+    }
+  }
+  const topServers = interleaved;
 
   console.log(
-    `[AnimeOrchestrator] Total servidores válidos para "${title}" (ep=${episode}): ${topServers.length} (de ${scoredServers.length} encontrados)`
+    `[AnimeOrchestrator] Total servidores válidos para "${title}" (ep=${episode}): ${topServers.length} (de ${scoredServers.length} encontrados, extractores=[${Array.from(byProvider.keys()).join(',')}])`
   );
   return topServers;
 }
