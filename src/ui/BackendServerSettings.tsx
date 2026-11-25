@@ -69,10 +69,12 @@ export const BackendServerSettings: React.FC<BackendServerSettingsProps> = ({
       setStatusMsg({ ok: true, text: 'URLs guardadas. En este equipo se usa el servidor local embebido.' });
     } else if (res.mode === 'lan' && res.activeUrl) {
       deviceSync.connect();
-      setStatusMsg({ ok: true, text: `Conectado a tu PC en WiFi (${res.activeUrl}).` });
+      setStatusMsg({ ok: true, text: `Conectado a tu PC en WiFi (${res.activeUrl}). Recargando catálogo...` });
+      setTimeout(() => window.location.reload(), 600);
     } else if (res.mode === 'cloud' && res.activeUrl) {
       deviceSync.connect();
-      setStatusMsg({ ok: true, text: `Conectado al servidor en la nube (${res.activeUrl}).` });
+      setStatusMsg({ ok: true, text: `Conectado al servidor en la nube (${res.activeUrl}). Recargando catálogo...` });
+      setTimeout(() => window.location.reload(), 600);
     } else {
       setStatusMsg({
         ok: false,

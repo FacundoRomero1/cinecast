@@ -11,6 +11,7 @@
 const LAN_SERVER_KEY = 'cinecast_lan_server_url';
 const CLOUD_SERVER_KEY = 'cinecast_cloud_server_url';
 const LEGACY_HOST_KEY = 'cinecast_last_server_host';
+const DEFAULT_LAN_FALLBACK = 'http://192.168.18.39:3000';
 
 export type BackendMode = 'same-origin' | 'lan' | 'cloud' | 'unconfigured';
 
@@ -50,8 +51,8 @@ export function isCapacitorNative(): boolean {
   const host = window.location?.hostname || '';
   const port = window.location?.port || '';
   if (proto === 'capacitor:') return true;
-  // Capacitor Android usa https://localhost (sin puerto) por defecto
-  if (proto === 'https:' && host === 'localhost' && !port && !(window as any).electronAPI?.isElectron) {
+  // Capacitor Android usa http://localhost o https://localhost (sin puerto)
+  if ((proto === 'https:' || proto === 'http:') && host === 'localhost' && !port && !(window as any).electronAPI?.isElectron) {
     return true;
   }
   return false;
@@ -72,11 +73,13 @@ export function isAndroidTvDevice(): boolean {
 }
 
 export function getSavedLanServerUrl(): string {
-  if (typeof localStorage === 'undefined') return '';
+  if (typeof localStorage === 'undefined') return DEFAULT_LAN_FALLBACK;
   const direct = normalizeServerUrl(localStorage.getItem(LAN_SERVER_KEY));
   if (direct) return direct;
   const legacy = normalizeServerUrl(localStorage.getItem(LEGACY_HOST_KEY));
-  return legacy;
+  if (legacy) return legacy;
+  const envLan = normalizeServerUrl((import.meta as any).env?.VITE_DEFAULT_LAN_URL);
+  return envLan || DEFAULT_LAN_FALLBACK;
 }
 
 export function getSavedCloudServerUrl(): string {
