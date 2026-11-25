@@ -22,6 +22,7 @@ import {
   reportAnimeSuccess,
   getAllAnimeQualityScores,
 } from '../anime/orchestrator.js';
+import { getTmdbKey, TMDB_URL } from '../tmdb.js';
 
 export interface ResolveRouterOptions {
   baseDir?: string | undefined;
@@ -600,11 +601,48 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
     });
   });
 
-  // GET /api/anime/servers?tmdbId=...&title=...&episode=...
+  // Caché de conteo de episodios por temporada (TMDB) para mapear T>1 a episodio absoluto en anime
+  const animeSeasonCountsCache = new Map<string, Array<{ season_number: number; episode_count: number }>>();
+  async function resolveAbsoluteAnimeEpisode(tmdbId: string, season: number, episode: number): Promise<number> {
+    if (season <= 1) return episode;
+    const cleanId = String(tmdbId || '').replace(/[^\d]/g, '');
+    if (!cleanId || cleanId === '0') return episode;
+    let seasons = animeSeasonCountsCache.get(cleanId);
+    if (!seasons) {
+      try {
+        const key = getTmdbKey();
+        const r = await fetch(`${TMDB_URL}/tv/${cleanId}?api_key=${encodeURIComponent(key)}&language=es-MX`, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (r.ok) {
+          const j = (await r.json()) as { seasons?: Array<{ season_number?: number; episode_count?: number }> };
+          if (Array.isArray(j?.seasons)) {
+            seasons = j.seasons.map((s) => ({
+              season_number: Number(s.season_number || 0),
+              episode_count: Number(s.episode_count || 0),
+            }));
+            animeSeasonCountsCache.set(cleanId, seasons);
+          }
+        }
+      } catch (_) {}
+    }
+    if (!seasons || seasons.length === 0) return episode;
+    let offset = 0;
+    for (const s of seasons) {
+      if (s.season_number >= 1 && s.season_number < season && s.episode_count > 0) {
+        offset += s.episode_count;
+      }
+    }
+    return offset > 0 ? offset + episode : episode;
+  }
+
+  // GET /api/anime/servers?tmdbId=...&title=...&season=...&episode=...
   router.get('/anime/servers', async (req: Request, res: Response) => {
     const tmdbId = String(req.query.tmdbId || req.query.id || '').trim();
     const rawTitle = String(req.query.title || '').trim();
+    const season = Math.max(1, Number(req.query.season) || 1);
     const episode = Math.max(1, Number(req.query.episode) || 1);
+    const explicitAbs = Math.floor(Number(req.query.absoluteEpisode) || 0);
     const runtime = Number(req.query.runtime) || 24;
 
     if (!rawTitle && !tmdbId) {
@@ -613,12 +651,23 @@ export function createResolveRouter(options: ResolveRouterOptions = {}): Router 
     }
 
     try {
-      const servers = await resolveAnimeServers(tmdbId || '0', rawTitle || tmdbId, episode, runtime);
+      const effectiveEpisode =
+        explicitAbs > 0
+          ? explicitAbs
+          : season > 1
+            ? await resolveAbsoluteAnimeEpisode(tmdbId, season, episode)
+            : episode;
+      if (effectiveEpisode !== episode) {
+        console.log(`[anime/servers] Mapeo T${season}E${episode} -> episodio absoluto ${effectiveEpisode} (tmdb=${tmdbId})`);
+      }
+      const servers = await resolveAnimeServers(tmdbId || '0', rawTitle || tmdbId, effectiveEpisode, runtime);
       res.json({
         success: true,
         tmdbId,
         title: rawTitle,
+        season,
         episode,
+        effectiveEpisode,
         servers,
       });
     } catch (err: any) {

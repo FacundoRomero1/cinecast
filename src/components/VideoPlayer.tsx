@@ -647,18 +647,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const pendingMmReseekTimeRef = useRef<number>(0);
   const isAdvancingEpisodeRef = useRef<boolean>(false);
 
-  // B11.1: Derivar anime desde category, type, resolveType o género animación (nunca bloquear con filtro solo-ES)
+  // B11.1 / Fix Los Simpson: Derivar anime desde category, type, resolveType, id tmdb-anime- o género Animación + origen/idioma japonés.
+  // Nunca clasificar animación occidental (Los Simpson, Rick & Morty, etc.) como anime.
   const isAnimeContent = useMemo(() => {
     if (media.category === 'anime' || (media as any).type === 'anime' || resolveType === 'anime') return true;
+    if (String(media.id || '').startsWith('tmdb-anime-')) return true;
     const rawGenres = [
       ...(Array.isArray((media as any).genres) ? (media as any).genres : []),
       ...(Array.isArray((media as any).genre) ? (media as any).genre : []),
     ];
-    return rawGenres.some((g: any) => {
+    const hasExplicitAnimeGenre = rawGenres.some((g: any) => {
+      const name = typeof g === 'string' ? g : String(g?.name || '');
+      return /\banime\b/i.test(name);
+    });
+    if (hasExplicitAnimeGenre) return true;
+    const hasAnimationGenre = rawGenres.some((g: any) => {
       if (typeof g === 'number') return g === 16;
       const name = typeof g === 'string' ? g : String(g?.name || '');
-      return /animaci[oó]n|animation|anime/i.test(name);
+      return /animaci[oó]n|animation/i.test(name);
     });
+    if (!hasAnimationGenre) return false;
+    const origLang = String((media as any).original_language || (media as any).originalLanguage || '').toLowerCase();
+    const countries: string[] = Array.isArray((media as any).origin_country)
+      ? (media as any).origin_country
+      : Array.isArray((media as any).originCountry)
+        ? (media as any).originCountry
+        : [];
+    return origLang === 'ja' || countries.some((c) => String(c).toUpperCase() === 'JP');
   }, [media, resolveType]);
 
   const getServerEpisodeKey = useCallback((srv?: StreamServer | null) => {
@@ -1531,7 +1546,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (isAnime) {
       const expectedRuntime = media.runtime || 24;
-      const animeUrl = `/api/anime/servers?tmdbId=${tmdbIdToUse}&title=${encodeURIComponent(media.title)}&episode=${selectedEpisode}&runtime=${expectedRuntime}`;
+      // Calcular episodio absoluto si la temporada > 1 usando las temporadas ya cargadas en memoria
+      let absoluteEpisode = selectedEpisode;
+      if (selectedSeason > 1 && Array.isArray(media.seasons) && media.seasons.length > 0) {
+        let offset = 0;
+        let hasPrevCounts = false;
+        for (const st of media.seasons) {
+          const sn = Number((st as any).seasonNumber ?? (st as any).season_number ?? 0);
+          if (sn >= 1 && sn < selectedSeason) {
+            const cnt = Number((st as any).episodeCount ?? (st as any).episode_count ?? (Array.isArray((st as any).episodes) ? (st as any).episodes.length : 0));
+            if (cnt > 0) {
+              offset += cnt;
+              hasPrevCounts = true;
+            }
+          }
+        }
+        if (hasPrevCounts) absoluteEpisode = offset + selectedEpisode;
+      }
+      const absParam = selectedSeason > 1 && absoluteEpisode > selectedEpisode ? `&absoluteEpisode=${absoluteEpisode}` : '';
+      const animeUrl = `/api/anime/servers?tmdbId=${tmdbIdToUse}&title=${encodeURIComponent(media.title)}&season=${selectedSeason}&episode=${selectedEpisode}${absParam}&runtime=${expectedRuntime}`;
       console.log(`[VideoPlayer] [Anime] Consultando Meta-Orquestador de Anime en ${animeUrl}...`);
       fetch(animeUrl, { signal: abortController.signal })
         .then(async (r) => (r.ok ? r.json() : null))
