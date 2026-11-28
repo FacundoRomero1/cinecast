@@ -206,7 +206,7 @@ async function fetchJsonWithTimeout(
     }
     const msg = err instanceof Error ? err.message : String(err);
     throw new CatalogProviderError(
-      `Error de red en ${pathAndQuery}: ${msg}`,
+      `Error de red en ${pathAndQuery} (srv=${base || 'local'}): ${msg}`,
       'NETWORK_ERROR',
       pathAndQuery
     );

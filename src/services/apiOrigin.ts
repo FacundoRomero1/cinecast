@@ -36,7 +36,26 @@ export function normalizeServerUrl(raw?: string | null): string {
     const isLocalIp = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?$|^localhost(?::\d+)?$/i.test(out);
     out = `${isLocalIp ? 'http' : 'https'}://${out}`;
   }
-  return out;
+  try {
+    const u = new URL(out);
+    const h = u.hostname.toLowerCase();
+    // En Android APK, localhost / 127.0.0.1 apunta al propio teléfono (WebView de Capacitor), nunca a la PC
+    if (isCapacitorNative() && (h === 'localhost' || h === '127.0.0.1')) {
+      return '';
+    }
+    // Si es una IP privada LAN sin puerto explícito (ej. 192.168.18.39), agregar :3000 por defecto
+    const isPrivateIpv4 =
+      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(h) ||
+      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h) ||
+      /^172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(h);
+    if (isPrivateIpv4 && !u.port) {
+      u.port = '3000';
+      return u.origin;
+    }
+    return u.origin;
+  } catch {
+    return out;
+  }
 }
 
 export function isCapacitorNative(): boolean {
@@ -289,10 +308,21 @@ export function installApiFetchInterceptor(): void {
   const wrappedFetch: typeof window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const base = getActiveApiBase();
     if (base) {
-      if (typeof input === 'string' && /^\/(?:api|mm|auth)\//i.test(input)) {
-        return originalFetch(`${base}${input}`, init);
-      }
-      if (input instanceof Request && /^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(input.url)) {
+      if (typeof input === 'string') {
+        if (/^\/(?:api|mm|auth)\//i.test(input)) {
+          return originalFetch(`${base}${input}`, init);
+        }
+        if (/^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(input)) {
+          const rel = input.replace(/^https?:\/\/localhost/i, '');
+          return originalFetch(`${base}${rel}`, init);
+        }
+      } else if (input instanceof URL) {
+        const href = input.href;
+        if (/^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(href)) {
+          const rel = href.replace(/^https?:\/\/localhost/i, '');
+          return originalFetch(`${base}${rel}`, init);
+        }
+      } else if (input instanceof Request && /^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(input.url)) {
         const rel = input.url.replace(/^https?:\/\/localhost/i, '');
         return originalFetch(new Request(`${base}${rel}`, input), init);
       }
