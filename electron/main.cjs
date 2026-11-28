@@ -262,6 +262,35 @@ const AD_HOSTS = [
   'interlinecustomroofingllc.com',
   'shein.com',
   'wps.com',
+  'quickcore.fun',
+  'sapphirebet.com',
+  'sapphirebet.org',
+  'sapphirebet.net',
+  'imasdk.googleapis.com',
+  'pubads.g.doubleclick.net',
+  'googlesyndication.com',
+  'adservice.google.com',
+  'exosrv.com',
+  'realsrv.com',
+  'trafficstars.com',
+  'tsyndicate.com',
+  'juicyads.com',
+  'propellerads.com',
+  'onclickalgo.com',
+  'pushame.com',
+  'acscdn.com',
+  'dtscout.com',
+  'magsrv.com',
+  'adsco.re',
+  'popcash.net',
+  'popads.net',
+  'clickadu.com',
+  'galaksion.com',
+  'vidazoo.com',
+  'springserve.com',
+  'spotxchange.com',
+  'connatix.com',
+  'aniview.com',
   ...GAMBLING_HOSTS,
 ];
 
@@ -890,6 +919,9 @@ function registerCineProtocol(sess) {
       if (p.endsWith('.gif')) {
         return new Response(PIXEL_GIF, { headers: { ...CINE_OK_HEADERS, 'content-type': 'image/gif' } });
       }
+      if (p.endsWith('.xml')) {
+        return new Response('<VAST version="3.0"/>', { headers: { ...CINE_OK_HEADERS, 'content-type': 'application/xml' } });
+      }
       return new Response('', { headers: { ...CINE_OK_HEADERS, 'content-type': 'text/html' } });
     });
   } catch (err) {
@@ -1096,7 +1128,8 @@ function createWindow() {
       console.log(`[AdBlock] Bloqueados: ${adBlockCount}`);
     }
     let target = 'cine://blank/index.html';
-    if (/\.js(\?|$)/i.test(u)) target = 'cine://blank/noop.js';
+    if (/(?:vast|vpaid|vmap|preroll|ads\.xml)/i.test(u)) target = 'cine://blank/vast.xml';
+    else if (/\.js(\?|$)/i.test(u)) target = 'cine://blank/noop.js';
     else if (/\.css(\?|$)/i.test(u)) target = 'cine://blank/noop.css';
     else if (/\.(png|gif|jpe?g|webp|svg)(\?|$)/i.test(u)) target = 'cine://blank/pixel.gif';
     callback({ redirectURL: target });

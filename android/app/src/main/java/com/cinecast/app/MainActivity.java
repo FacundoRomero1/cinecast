@@ -9,14 +9,41 @@ import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
 
 public class MainActivity extends BridgeActivity {
     private boolean isLandscapeLocked = false;
+    private static final List<String> AD_HOST_KEYWORDS = Arrays.asList(
+        "quickcore.fun", "sapphirebet", "doubleclick.net", "googlesyndication",
+        "imasdk.googleapis.com", "adservice.google", "adsterra", "exoclick",
+        "exosrv.com", "realsrv.com", "popads", "popcash", "propellerads",
+        "hilltopads", "monetag", "trafficjunky", "trafficstars", "tsyndicate",
+        "juicyads", "clickadu", "galaksion", "magsrv", "acscdn.com",
+        "onclickalgo", "pushame", "adsco.re", "dtscout", "vidazoo",
+        "springserve", "spotxchange", "connatix", "aniview", "shein.com",
+        "1xbet", "betwinner", "melbet", "mostbet", "stake.com"
+    );
+
+    private boolean isAdOrPrerollUrl(String url) {
+        if (url == null || url.isEmpty()) return false;
+        String lower = url.toLowerCase();
+        for (String kw : AD_HOST_KEYWORDS) {
+            if (lower.contains(kw)) return true;
+        }
+        if (lower.contains("/vast") || lower.contains("vast.xml") || lower.contains("vmap") || lower.contains("preroll")) {
+            return true;
+        }
+        return false;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,8 +83,31 @@ public class MainActivity extends BridgeActivity {
             settings.setJavaScriptCanOpenWindowsAutomatically(false);
             wv.addJavascriptInterface(new AndroidBridge(), "CineCastAndroid");
 
-            // Bloquear popups, intent:// (Shein, Play Store, casinos) y redirecciones externas desde iframes
+            // Bloquear popups, intent:// (Shein, Play Store, casinos), anuncios VAST/pre-roll y redirecciones externas
             wv.setWebViewClient(new BridgeWebViewClient(this.bridge) {
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                    if (request != null && request.getUrl() != null) {
+                        String urlStr = request.getUrl().toString();
+                        if (isAdOrPrerollUrl(urlStr)) {
+                            String lower = urlStr.toLowerCase();
+                            if (lower.contains("vast") || lower.contains("vmap") || lower.endsWith(".xml")) {
+                                return new WebResourceResponse(
+                                    "application/xml",
+                                    "utf-8",
+                                    new ByteArrayInputStream("<VAST version=\"3.0\"/>".getBytes(StandardCharsets.UTF_8))
+                                );
+                            }
+                            return new WebResourceResponse(
+                                "text/plain",
+                                "utf-8",
+                                new ByteArrayInputStream(new byte[0])
+                            );
+                        }
+                    }
+                    return super.shouldInterceptRequest(view, request);
+                }
+
                 @Override
                 public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                     if (request != null && request.getUrl() != null) {

@@ -40,13 +40,13 @@ class WatchHistoryService {
   }
 
   /**
-   * Obtiene los títulos que el usuario dejó a medias (más de 15 segundos y menos del 95% completado)
+   * Obtiene los títulos que el usuario dejó a medias (más de 5 segundos y menos del 95% completado)
    */
   public getContinueWatchingList(): WatchProgressItem[] {
     const all = this.getAll();
     return all.filter((item) => {
-      // Ignorar videos de menos de 15 segundos reproducidos
-      if (item.currentTime < 15) return false;
+      // Ignorar videos de menos de 5 segundos reproducidos
+      if (item.currentTime < 5) return false;
       // Si ya vio más del 95%, se considera terminado
       if (item.duration > 0 && (item.currentTime / item.duration) >= 0.95) return false;
       return true;
@@ -293,6 +293,7 @@ class WatchHistoryService {
       const list = this.getAll().filter((item) => item.id !== id && item.mediaId !== id);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
       this.notifyListeners();
+      fetch(`/api/watch-history/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
     } catch (e) {
       console.error('Error removing watch progress:', e);
     }

@@ -13,6 +13,7 @@ import {
   RefreshCw,
   RotateCcw, RotateCw,
   Server,
+  Settings,
   SkipForward,
   Sliders,
   Tv,
@@ -428,6 +429,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [duration, setDuration] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
+  const [showSettingsMenu, setShowSettingsMenu] = useState<boolean>(false);
+  const lastProgressSaveAtRef = useRef<number>(0);
+  const latestProgressMetaRef = useRef<{
+    media: MediaItem;
+    episode: Episode | null;
+    season: number;
+    episodeNum: number;
+    duration: number;
+    isIframe: boolean;
+  }>({
+    media,
+    episode,
+    season: episode?.seasonNumber || 1,
+    episodeNum: episode?.episodeNumber || 1,
+    duration: 0,
+    isIframe: false,
+  });
   const [isIntroActive, setIsIntroActive] = useState<boolean>(false);
   const [isRecapActive, setIsRecapActive] = useState<boolean>(false);
   const [countdownToNext, setCountdownToNext] = useState<number | null>(null);
@@ -4043,7 +4061,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         broadcastImmediate(realState.isPlaying);
 
-        if (!seekUnsupported && realState.currentTime > 15 && Math.round(realState.currentTime) % 4 === 0) {
+        if (!seekUnsupported && realState.currentTime >= 5 && Math.round(realState.currentTime) % 4 === 0) {
           watchHistoryService.saveProgress({
             mediaItem: media, episodeItem: episode,
             seasonNumber: selectedSeason, episodeNumber: selectedEpisode,
@@ -4058,7 +4076,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (t % 2 === 0) {
           broadcastImmediate(undefined, { estimated: true });
         }
-        // No se guarda tiempo simulado en historial cuando el video no es accesible
+        // Guardar progreso también en modo embed/móvil para que aparezca en "Continuar viendo"
+        if (t >= 8 && t % 8 === 0 && media?.category !== 'live_tv') {
+          watchHistoryService.saveProgress({
+            mediaItem: media,
+            episodeItem: episode,
+            seasonNumber: selectedSeason,
+            episodeNumber: selectedEpisode,
+            currentTime: t,
+            duration: duration > 0 ? duration : 5400,
+          });
+        }
       }
     }, 1000);
     return () => clearInterval(interval);
@@ -4129,15 +4157,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     normalAdvanceStreakRef.current = 0;
   }, [selectedSeason, selectedEpisode, media?.id]);
 
+  useEffect(() => {
+    latestProgressMetaRef.current = {
+      media,
+      episode,
+      season: selectedSeason,
+      episodeNum: selectedEpisode,
+      duration,
+      isIframe: isIframeMode,
+    };
+  }, [media, episode, selectedSeason, selectedEpisode, duration, isIframeMode]);
+
   useEffect(() => () => {
-    const finalTime = isIframeMode
-      ? (isEstimatedTimeRef.current ? null : simulatedTimeRef.current)
-      : (videoRef.current?.currentTime || 0);
-    if (finalTime && finalTime > 15) {
+    const meta = latestProgressMetaRef.current;
+    const finalTime = meta.isIframe
+      ? Math.max(lastRealTimeRef.current || 0, simulatedTimeRef.current || 0)
+      : Math.max(videoRef.current?.currentTime || 0, lastRealTimeRef.current || 0);
+    if (finalTime >= 5 && meta.media?.category !== 'live_tv') {
       watchHistoryService.saveProgress({
-        mediaItem: media, episodeItem: episode,
-        seasonNumber: selectedSeason, episodeNumber: selectedEpisode,
-        currentTime: finalTime, duration: duration > 0 ? duration : 5400,
+        mediaItem: meta.media,
+        episodeItem: meta.episode,
+        seasonNumber: meta.season,
+        episodeNumber: meta.episodeNum,
+        currentTime: finalTime,
+        duration: meta.duration > 0 ? meta.duration : 5400,
       });
     }
     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
@@ -4253,6 +4296,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (time > 0.5) {
       recordFirstFrame('video-currentTime>0.5');
     }
+    // Guardar progreso en modo directo/HLS cada 5 segundos para "Continuar viendo" (PC y móvil)
+    if (time >= 5 && media?.category !== 'live_tv') {
+      const now = Date.now();
+      if (now - lastProgressSaveAtRef.current >= 5000) {
+        lastProgressSaveAtRef.current = now;
+        watchHistoryService.saveProgress({
+          mediaItem: media,
+          episodeItem: episode,
+          seasonNumber: selectedSeason,
+          episodeNumber: selectedEpisode,
+          currentTime: time,
+          duration: dur > 0 ? dur : 5400,
+        });
+      }
+    }
     const isTestDirect = Boolean(
       (typeof window !== 'undefined' && (window as any).__CINECAST_TEST) ||
       (videoSrc && videoSrc.includes('/__test/'))
@@ -4302,7 +4360,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       data-episode={selectedEpisode}
       data-title={currentTitle}
       style={isDetailOpen ? { visibility: 'hidden' } : undefined}
-      className="relative w-full h-screen bg-black overflow-hidden select-none flex items-center justify-center font-sans">
+      className="fixed inset-0 w-full h-[100dvh] bg-black overflow-hidden select-none flex items-center justify-center font-sans">
 
       {/* Franjas invisibles de detección de mouse para cuando el iframe captura el cursor */}
       <div onMouseEnter={handleMouseMove} onMouseMove={handleMouseMove} onTouchStart={handleMouseMove} className="absolute top-0 inset-x-0 h-6 z-50 pointer-events-auto" />
@@ -4455,12 +4513,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           ref={videoRef}
           key={corsMode ? 'cors' : 'nocors'}
           src={(!videoSrc || videoSrc.includes('.m3u8') || videoSrc.includes('/api/mm/manifest/') || activeServer?.type === 'hls' || (activeServer as any)?.playable === 'hls') ? undefined : videoSrc}
-          className="w-full h-full object-contain"
+          className="relative z-[1] w-full h-full object-contain bg-black"
           crossOrigin={corsMode ? 'anonymous' : undefined}
           muted={false}
           playsInline
           onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
+          onPause={() => {
+            setIsPlaying(false);
+            const t = videoRef.current?.currentTime || 0;
+            const d = videoRef.current?.duration || 0;
+            if (t >= 5 && media?.category !== 'live_tv') {
+              watchHistoryService.saveProgress({
+                mediaItem: media,
+                episodeItem: episode,
+                seasonNumber: selectedSeason,
+                episodeNumber: selectedEpisode,
+                currentTime: t,
+                duration: d > 0 ? d : 5400,
+              });
+            }
+          }}
           onLoadedData={(e) => {
             const v = e.currentTarget;
             if (v.currentTime > 0) {
@@ -4812,10 +4884,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* BARRA SUPERIOR COMPACTA (<= 64px en modo embed/iframe) */}
+      {/* BARRA SUPERIOR LIMPIA: Volver + Título + Capítulos (si aplica) + Ruedita Configuración + Pantalla Completa */}
       <div
         data-testid="player-top-panel"
-        data-panel-visible={String(!isTopBarHidden && showControls)}
+        data-panel-visible={String(!isTopBarHidden && (showControls || showSettingsMenu))}
         onMouseEnter={() => {
           isPointerOverPanelRef.current = true;
           setIsPointerOverPanel(true);
@@ -4824,20 +4896,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           isPointerOverPanelRef.current = false;
           setIsPointerOverPanel(false);
         }}
-        className={`absolute inset-x-0 top-0 z-40 transition-all duration-300 ${isIframeMode ? 'h-14 sm:h-16 px-3 sm:px-6 py-2 bg-gradient-to-b from-black/95 via-black/80 to-transparent' : 'p-4 sm:p-6 bg-gradient-to-b from-black/95 via-black/80 to-transparent'
-          } ${isTopBarHidden
+        className={`absolute inset-x-0 top-0 z-40 transition-all duration-300 px-3 sm:px-5 py-2.5 bg-gradient-to-b from-black/90 via-black/60 to-transparent ${isTopBarHidden
             ? 'opacity-0 pointer-events-none -translate-y-4'
-            : showControls
+            : (showControls || showSettingsMenu)
               ? 'opacity-100 pointer-events-auto translate-y-0'
               : 'opacity-0 pointer-events-none -translate-y-2'
           }`}
       >
-        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 min-h-[44px] py-1 pointer-events-auto">
-          {/* Lado Izquierdo: Volver + Título + Capítulos + Idioma + Badges */}
-          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2 min-h-[40px] pointer-events-auto">
+          {/* Lado Izquierdo: Volver + Título + Capítulos */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               onClick={onClose}
-              className="p-1.5 sm:p-2 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white transition backdrop-blur-md border border-zinc-700/60 shrink-0"
+              className="p-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 text-white transition border border-zinc-700/60 shrink-0"
               title={isLiveTv ? 'Volver a la grilla' : 'Volver atrás'}
               aria-label="Cerrar Reproductor"
               data-testid="close-player"
@@ -4845,325 +4916,384 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
 
-            <div className="min-w-0 flex items-center gap-2 flex-wrap sm:flex-nowrap">
-              {isLiveTv && (
-                <span
-                  data-testid="live-watching-badge"
-                  className="px-2 py-0.5 rounded-full bg-red-600/90 text-white text-[10px] font-extrabold tracking-wide flex items-center gap-1.5 shrink-0 shadow"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                  VIENDO EN VIVO
-                </span>
-              )}
-              {onOpenDetail && !isLiveTv ? (
-                <button
-                  type="button"
-                  data-testid="player-title-detail"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenDetail(media);
-                  }}
-                  title="Ver ficha, sinopsis y episodios"
-                  aria-label={`Ver ficha de ${media.title}`}
-                  className="group flex items-center gap-1.5 min-w-0 max-w-[160px] sm:max-w-xs md:max-w-md text-left cursor-pointer rounded-lg px-1.5 py-0.5 -mx-1.5 hover:bg-white/10 transition"
-                >
-                  <h2 className="text-xs sm:text-sm md:text-base font-bold text-white group-hover:text-red-400 group-hover:underline drop-shadow truncate transition-colors">
-                    {currentTitle}
-                  </h2>
-                  <Info className="w-3.5 h-3.5 text-zinc-400 group-hover:text-red-400 shrink-0 transition-colors" />
-                </button>
-              ) : (
-                <h2 className="text-xs sm:text-sm md:text-base font-bold text-white drop-shadow truncate max-w-[130px] sm:max-w-xs md:max-w-md">
-                  {currentTitle}
-                </h2>
-              )}
+            {isLiveTv && (
+              <span
+                data-testid="live-watching-badge"
+                className="px-2 py-0.5 rounded-full bg-red-600/90 text-white text-[10px] font-extrabold tracking-wide flex items-center gap-1.5 shrink-0 shadow"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                EN VIVO
+              </span>
+            )}
 
-              {isLiveTv && liveChannelsList.length > 0 && (
-                <button
-                  type="button"
-                  data-testid="live-channel-switcher-btn"
-                  onClick={() => setShowLiveChannelDrawer((prev) => !prev)}
-                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 border shadow-lg shrink-0 cursor-pointer ${
-                    showLiveChannelDrawer
-                      ? 'bg-red-600 text-white border-red-400'
-                      : 'bg-zinc-900/90 text-zinc-200 border-zinc-700/80 hover:bg-zinc-800 hover:text-white'
-                  }`}
-                  title="Cambiar de canal sin salir del reproductor"
-                >
-                  <Tv className="w-3.5 h-3.5 text-red-400" />
-                  <span>Cambiar canal ({liveChannelsList.length})</span>
-                </button>
-              )}
-
-              {isEpisodic && (
-                <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-700/80 px-2 py-0.5 rounded-xl shadow-lg shrink-0">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider hidden md:inline">Capítulo:</span>
-                  <select
-                    data-testid="season-select"
-                    value={selectedSeason}
-                    onChange={(e) => {
-                      const newS = Number(e.target.value);
-                      onRequestEpisodeChange?.(newS, 1);
-                      setIframeReloadKey((k) => k + 1);
-                    }}
-                    className="bg-zinc-800 text-white rounded-md px-1.5 py-0.5 text-[11px] font-bold border border-zinc-600 outline-none hover:bg-zinc-700 cursor-pointer"
-                  >
-                    {(realSeasons.length > 0
-                      ? (realSeasons.some((s) => s.seasonNumber === selectedSeason)
-                        ? realSeasons
-                        : [...realSeasons, { seasonNumber: selectedSeason, name: `Temporada ${selectedSeason}`, episodeCount: 10 }].sort((a, b) => a.seasonNumber - b.seasonNumber))
-                      : Array.from({ length: Math.max(selectedSeason, media.seasonsCount || (media.seasons ? media.seasons.length : 1)) }, (_, i) => ({
-                        seasonNumber: i + 1,
-                        name: `Temporada ${i + 1}`,
-                        episodeCount: 10,
-                      }))
-                    ).map((s) => (
-                      <option key={s.seasonNumber} value={s.seasonNumber}>
-                        T{s.seasonNumber}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    data-testid="episode-select"
-                    value={selectedEpisode}
-                    onChange={(e) => {
-                      const newEp = Number(e.target.value);
-                      onRequestEpisodeChange?.(selectedSeason, newEp);
-                      setEpisodeNotExistsWarning(null);
-                      setIframeReloadKey((k) => k + 1);
-                    }}
-                    className="bg-zinc-800 text-white rounded-md px-1.5 py-0.5 text-[11px] font-bold border border-zinc-600 outline-none hover:bg-zinc-700 cursor-pointer"
-                  >
-                    {(realEpisodes.length > 0
-                      ? (realEpisodes.some((e) => e.episode === selectedEpisode)
-                        ? realEpisodes
-                        : [...realEpisodes, { season: selectedSeason, episode: selectedEpisode, title: `Episodio ${selectedEpisode}` }].sort((a, b) => a.episode - b.episode))
-                      : Array.from({ length: Math.max(selectedEpisode, realSeasons.find((s) => s.seasonNumber === selectedSeason)?.episodeCount || 8) }, (_, i) => ({
-                        season: selectedSeason,
-                        episode: i + 1,
-                        title: `Episodio ${i + 1}`,
-                      }))
-                    ).map((e) => (
-                      <option key={e.episode} value={e.episode}>
-                        E{e.episode}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    data-testid="player-next-episode-btn"
-                    onClick={() => handleAdvanceEpisode(1)}
-                    title="Siguiente capítulo (N)"
-                    className="ml-0.5 px-2 py-0.5 rounded-md bg-red-600/90 hover:bg-red-500 text-white text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
-                  >
-                    <span className="hidden sm:inline">Siguiente</span>
-                    <SkipForward className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-
-              {isEpisodic && (
-                <button
-                  type="button"
-                  onClick={toggleMarathonMode}
-                  className={`px-2 py-0.5 rounded-xl text-[11px] font-bold transition flex items-center gap-1 border shadow-lg shrink-0 ${marathonMode
-                    ? 'bg-emerald-600/90 text-white border-emerald-400'
-                    : 'bg-zinc-900/90 text-zinc-400 border-zinc-700/80 hover:text-white'
-                    }`}
-                  title="Modo Maratón: auto-salto directo sin cuenta atrás"
-                >
-                  <span>🏃</span>
-                  <span className="hidden sm:inline">Maratón</span>
-                  {marathonMode && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                </button>
-              )}
-
-              {/* Selector Rápido Latino / Sub */}
-              {!isLiveTv && (
-              <div className="flex items-center bg-zinc-900/90 border border-zinc-700/80 p-0.5 rounded-xl shadow-lg shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const latIdx = availableServers.findIndex((s) => isLatinoServerMatch(s));
-                    if (latIdx !== -1) {
-                      handleSelectServer(latIdx);
-                      audioPrefs.setForMedia(mediaKey, availableServers[latIdx].name, 'latino', selectedSeason, selectedEpisode);
-                    } else if (availableServers.length > 0) {
-                      handleSelectServer(0);
-                      audioPrefs.setForMedia(mediaKey, availableServers[0].name, 'latino', selectedSeason, selectedEpisode);
-                    }
-                  }}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${isLatinoServerMatch(activeServer)
-                    ? 'bg-red-600 text-white shadow-md'
-                    : 'text-zinc-400 hover:text-white bg-zinc-800/80'
-                    }`}
-                  title="Audio Español Latino"
-                >
-                  <span>🇲🇽</span><span className="hidden sm:inline">Latino</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const strictSubIdx = availableServers.findIndex((s) => isSubServerMatch(s) && !isLatinoServerMatch(s));
-                    const subIdx = strictSubIdx !== -1 ? strictSubIdx : availableServers.findIndex((s) => isSubServerMatch(s));
-                    if (subIdx !== -1) {
-                      handleSelectServer(subIdx);
-                      audioPrefs.setForMedia(mediaKey, availableServers[subIdx].name, 'sub', selectedSeason, selectedEpisode);
-                    } else if (availableServers.length > 1) {
-                      handleSelectServer(1);
-                      audioPrefs.setForMedia(mediaKey, availableServers[1].name, 'sub', selectedSeason, selectedEpisode);
-                    }
-                  }}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${isSubServerMatch(activeServer) && !isLatinoServerMatch(activeServer)
-                    ? 'bg-red-600 text-white shadow-md'
-                    : 'text-zinc-400 hover:text-white bg-zinc-800/80'
-                    }`}
-                  title="Audio Original con Subtítulos"
-                >
-                  <span>💬</span><span className="hidden sm:inline">Sub</span>
-                </button>
-              </div>
-              )}
-
-              {/* TAREA 6 & B8: Badge de idioma activo */}
-              {!isIframeMode && activeServer?.language && (
-                <span
-                  data-testid="active-audio-badge"
-                  className="px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/70 text-emerald-300 text-[10px] font-bold shadow-sm shrink-0"
-                >
-                  {activeServer.language}
-                </span>
-              )}
-              {isIframeMode && (
-                <div className="hidden lg:flex items-center shrink-0">
-                  {detectedTracks === null ? (
-                    audioCheckTimedOut ? (
-                      <span className="px-2 py-0.5 rounded-md bg-zinc-800/90 border border-zinc-700/80 text-zinc-400 text-[10px] font-medium shadow-sm">
-                        Audio: sin verificar
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-md bg-zinc-800/90 border border-zinc-700/80 text-zinc-300 text-[10px] font-medium shadow-sm animate-pulse">
-                        🔎 Verificando audio...
-                      </span>
-                    )
-                  ) : detectedTracks.audio.includes('es') ? (
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/70 text-emerald-300 text-[10px] font-bold shadow-sm animate-fadeIn">
-                      🟢 Audio español
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded-md bg-amber-950/90 border border-amber-500/70 text-amber-300 text-[10px] font-bold shadow-sm animate-fadeIn">
-                      ⚠️ Audio original
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Lado Derecho: Controles + Rotar (APK) + Botón Ocultar Barra + Pantalla Completa */}
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0 flex-wrap justify-end">
-            {typeof window !== 'undefined' && Boolean((window as any).CineCastAndroid?.toggleOrientation) && (
+            {onOpenDetail && !isLiveTv ? (
               <button
                 type="button"
-                onClick={() => {
-                  try {
-                    (window as any).CineCastAndroid.toggleOrientation();
-                  } catch (_) {}
+                data-testid="player-title-detail"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenDetail(media);
                 }}
-                className="px-2 py-1 rounded-xl bg-zinc-900/85 hover:bg-zinc-800 text-zinc-200 border border-zinc-700/60 transition backdrop-blur-md text-xs font-bold"
-                title="Rotar pantalla (Horizontal / Vertical)"
+                title="Ver ficha, sinopsis y episodios"
+                aria-label={`Ver ficha de ${media.title}`}
+                className="group flex items-center gap-1.5 min-w-0 max-w-[140px] sm:max-w-xs md:max-w-md text-left cursor-pointer rounded-lg px-1.5 py-0.5 hover:bg-white/10 transition"
               >
-                🔄
+                <h2 className="text-xs sm:text-sm md:text-base font-bold text-white group-hover:text-red-400 drop-shadow truncate transition-colors">
+                  {currentTitle}
+                </h2>
+                <Info className="w-3.5 h-3.5 text-zinc-400 group-hover:text-red-400 shrink-0 hidden sm:inline" />
               </button>
+            ) : (
+              <h2 className="text-xs sm:text-sm md:text-base font-bold text-white drop-shadow truncate max-w-[130px] sm:max-w-xs md:max-w-md">
+                {currentTitle}
+              </h2>
             )}
-            {/* Botón Subtítulos */}
-            <button
-              type="button"
-              onClick={async () => {
-                const nextSub = !subtitlesEnabled;
-                setSubtitlesEnabled(nextSub);
-                subtitlesEnabledRef.current = nextSub;
-                try {
-                  localStorage.setItem('cinecast_subtitles_pref', nextSub ? '1' : '0');
-                } catch { }
-                await window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: nextSub });
-                onBroadcastState?.({ subtitlesEnabled: nextSub });
-              }}
-              className={`px-2 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 border shadow-lg ${subtitlesEnabled
-                ? 'bg-zinc-900/90 border-zinc-700/80 text-zinc-200 hover:text-white'
-                : 'bg-red-950/80 border-red-700/80 text-red-300'
-                }`}
-              title="Activar / Desactivar Subtítulos"
-            >
-              <span>💬</span>
-              <span className="hidden sm:inline">Subs: {subtitlesEnabled ? 'ON' : 'OFF'}</span>
-            </button>
 
-            {onOpenAudioSettings && !isIframeMode && (
+            {isLiveTv && liveChannelsList.length > 0 && (
               <button
-                onClick={onOpenAudioSettings}
-                className="px-2.5 py-1 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-700/60 transition flex items-center gap-1.5 backdrop-blur-md"
+                type="button"
+                data-testid="live-channel-switcher-btn"
+                onClick={() => setShowLiveChannelDrawer((prev) => !prev)}
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 border shadow-lg shrink-0 cursor-pointer ${
+                  showLiveChannelDrawer
+                    ? 'bg-red-600 text-white border-red-400'
+                    : 'bg-zinc-900/90 text-zinc-200 border-zinc-700/80 hover:bg-zinc-800 hover:text-white'
+                }`}
+                title="Cambiar de canal sin salir del reproductor"
               >
-                <Sliders className="w-3.5 h-3.5 text-red-400" />
-                <span className="hidden md:inline">Ecualizador</span>
+                <Tv className="w-3.5 h-3.5 text-red-400" />
+                <span className="hidden sm:inline">Canales ({liveChannelsList.length})</span>
               </button>
             )}
 
-            {/* Botón 1-click para marcar series/episodios/canales con fallo de reproducción */}
-            <button
-              type="button"
-              onClick={() => {
-                const srv = activeServerRef.current;
-                fetch('/api/report-broken', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    tmdbId: tmdbIdToUse || null,
-                    title: media.title,
-                    type: resolveType,
-                    season: isSeriesOrAnime ? selectedSeasonRef.current : undefined,
-                    episode: isSeriesOrAnime ? selectedEpisodeRef.current : undefined,
-                    serverName: srv?.name || '',
-                    serverUrl: srv?.url || videoSrc || '',
-                    buildMarker: (window as any).__cinecastBuild || undefined,
-                  }),
-                })
-                  .then((r) => (r.ok ? triggerSignalToast('🚩 Reporte guardado en broken-media-reports.json') : triggerSignalToast('No se pudo guardar el reporte')))
-                  .catch(() => triggerSignalToast('No se pudo guardar el reporte'));
-              }}
-              className="px-2.5 py-1 rounded-xl bg-zinc-900/80 hover:bg-red-950/80 text-zinc-300 hover:text-red-300 border border-zinc-700/60 hover:border-red-500/50 transition backdrop-blur-md flex items-center gap-1.5 text-xs font-bold shadow-md cursor-pointer"
-              title="Marcar este contenido/episodio como roto o con fallo de reproducción"
-            >
-              <span>🚩</span>
-              <span className="hidden lg:inline">Reportar</span>
-            </button>
+            {isEpisodic && (
+              <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-700/80 px-1.5 py-0.5 rounded-xl shadow-lg shrink-0">
+                <select
+                  data-testid="season-select"
+                  value={selectedSeason}
+                  onChange={(e) => {
+                    const newS = Number(e.target.value);
+                    onRequestEpisodeChange?.(newS, 1);
+                    setIframeReloadKey((k) => k + 1);
+                  }}
+                  className="bg-zinc-800 text-white rounded-md px-1.5 py-0.5 text-[11px] font-bold border border-zinc-600 outline-none hover:bg-zinc-700 cursor-pointer"
+                >
+                  {(realSeasons.length > 0
+                    ? (realSeasons.some((s) => s.seasonNumber === selectedSeason)
+                      ? realSeasons
+                      : [...realSeasons, { seasonNumber: selectedSeason, name: `Temporada ${selectedSeason}`, episodeCount: 10 }].sort((a, b) => a.seasonNumber - b.seasonNumber))
+                    : Array.from({ length: Math.max(selectedSeason, media.seasonsCount || (media.seasons ? media.seasons.length : 1)) }, (_, i) => ({
+                      seasonNumber: i + 1,
+                      name: `Temporada ${i + 1}`,
+                      episodeCount: 10,
+                    }))
+                  ).map((s) => (
+                    <option key={s.seasonNumber} value={s.seasonNumber}>
+                      T{s.seasonNumber}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  data-testid="episode-select"
+                  value={selectedEpisode}
+                  onChange={(e) => {
+                    const newEp = Number(e.target.value);
+                    onRequestEpisodeChange?.(selectedSeason, newEp);
+                    setEpisodeNotExistsWarning(null);
+                    setIframeReloadKey((k) => k + 1);
+                  }}
+                  className="bg-zinc-800 text-white rounded-md px-1.5 py-0.5 text-[11px] font-bold border border-zinc-600 outline-none hover:bg-zinc-700 cursor-pointer"
+                >
+                  {(realEpisodes.length > 0
+                    ? (realEpisodes.some((e) => e.episode === selectedEpisode)
+                      ? realEpisodes
+                      : [...realEpisodes, { season: selectedSeason, episode: selectedEpisode, title: `Episodio ${selectedEpisode}` }].sort((a, b) => a.episode - b.episode))
+                    : Array.from({ length: Math.max(selectedEpisode, realSeasons.find((s) => s.seasonNumber === selectedSeason)?.episodeCount || 8) }, (_, i) => ({
+                      season: selectedSeason,
+                      episode: i + 1,
+                      title: `Episodio ${i + 1}`,
+                    }))
+                  ).map((e) => (
+                    <option key={e.episode} value={e.episode}>
+                      E{e.episode}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  data-testid="player-next-episode-btn"
+                  onClick={() => handleAdvanceEpisode(1)}
+                  title="Siguiente capítulo (N)"
+                  className="px-2 py-0.5 rounded-md bg-red-600/90 hover:bg-red-500 text-white text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
+                >
+                  <span className="hidden sm:inline">Sig.</span>
+                  <SkipForward className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+          </div>
 
-            {/* TAREA 1: Botón Ocultar Barra (icono ojo/chevron) */}
+          {/* Lado Derecho: SOLO Ruedita de Configuración + Pantalla Completa */}
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => setTopBarHiddenPersisted(true)}
-              onTouchStart={() => setTopBarHiddenPersisted(true)}
-              className="px-2.5 py-1 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-700/60 transition backdrop-blur-md flex items-center gap-1.5 text-xs font-bold shadow-md cursor-pointer"
-              title="Ocultar barra superior (Pulsa tecla 'H' o clic en borde superior para volver a mostrar)"
+              data-testid="player-settings-btn"
+              onClick={() => setShowSettingsMenu((prev) => !prev)}
+              className={`p-2 rounded-full border transition ${
+                showSettingsMenu
+                  ? 'bg-red-600 text-white border-red-400 shadow-lg'
+                  : 'bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 hover:text-white border-zinc-700/60'
+              }`}
+              title="Configuración, servidores, idioma y subtítulos"
+              aria-label="Configuración del reproductor"
             >
-              <EyeOff className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Ocultar (H)</span>
+              <Settings className={`w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300 ${showSettingsMenu ? 'rotate-90' : ''}`} />
             </button>
 
             <button
               onClick={toggleFullscreen}
-              className="p-1.5 sm:p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-700/60 transition backdrop-blur-md"
+              className="p-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/60 transition"
               title="Pantalla Completa"
+              aria-label="Pantalla Completa"
             >
-              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+              {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />}
             </button>
           </div>
         </div>
       </div>
 
+      {/* MENÚ DESPLEGABLE DE CONFIGURACIÓN (Ruedita): Servidores, Idioma, Subtítulos, Maratón, Ecualizador, Rotar, Reportar, Ocultar */}
+      {showSettingsMenu && (
+        <div
+          className="fixed inset-0 z-[55]"
+          onClick={() => setShowSettingsMenu(false)}
+        >
+          <div
+            data-testid="player-settings-panel"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-16 right-3 sm:right-5 w-72 sm:w-80 max-h-[75vh] overflow-y-auto rounded-2xl bg-zinc-950/95 border border-zinc-700/80 shadow-2xl p-3.5 space-y-3.5 text-white pointer-events-auto"
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Settings className="w-4 h-4 text-red-500" />
+                <span className="text-xs font-extrabold uppercase tracking-wider text-zinc-200">
+                  Opciones del reproductor
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSettingsMenu(false)}
+                className="p-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Servidores */}
+            {availableServers.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-red-500" />
+                  <span>Servidores ({availableServers.length})</span>
+                </p>
+                <div className="flex flex-col gap-1 max-h-40 overflow-y-auto pr-0.5">
+                  {availableServers.map((srv, idx) => {
+                    const isSelected = activeServerIndex === idx;
+                    return (
+                      <button
+                        key={`gear_srv_${srv.name}_${idx}`}
+                        type="button"
+                        onClick={() => {
+                          handleSelectServer(idx);
+                          setShowSettingsMenu(false);
+                        }}
+                        className={`w-full px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 border text-left ${
+                          isSelected
+                            ? 'bg-red-600 text-white border-red-500 shadow-md shadow-red-900/40'
+                            : 'bg-zinc-900/90 text-zinc-200 border-zinc-800 hover:bg-zinc-800 hover:text-white'
+                        }`}
+                      >
+                        <span className="truncate">{srv.name}</span>
+                        {srv.language && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${isSelected ? 'bg-black/30 text-amber-200' : 'bg-zinc-800 text-zinc-400'}`}>
+                            {srv.language}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Idioma (Latino / Subtitulado) */}
+            {!isLiveTv && (
+              <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
+                <p className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">Idioma de audio</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const latIdx = availableServers.findIndex((s) => isLatinoServerMatch(s));
+                      if (latIdx !== -1) {
+                        handleSelectServer(latIdx);
+                        audioPrefs.setForMedia(mediaKey, availableServers[latIdx].name, 'latino', selectedSeason, selectedEpisode);
+                      } else if (availableServers.length > 0) {
+                        handleSelectServer(0);
+                        audioPrefs.setForMedia(mediaKey, availableServers[0].name, 'latino', selectedSeason, selectedEpisode);
+                      }
+                      setShowSettingsMenu(false);
+                    }}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                      isLatinoServerMatch(activeServer)
+                        ? 'bg-red-600 text-white border-red-500'
+                        : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span>🇲🇽</span><span>Latino</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const strictSubIdx = availableServers.findIndex((s) => isSubServerMatch(s) && !isLatinoServerMatch(s));
+                      const subIdx = strictSubIdx !== -1 ? strictSubIdx : availableServers.findIndex((s) => isSubServerMatch(s));
+                      if (subIdx !== -1) {
+                        handleSelectServer(subIdx);
+                        audioPrefs.setForMedia(mediaKey, availableServers[subIdx].name, 'sub', selectedSeason, selectedEpisode);
+                      } else if (availableServers.length > 1) {
+                        handleSelectServer(1);
+                        audioPrefs.setForMedia(mediaKey, availableServers[1].name, 'sub', selectedSeason, selectedEpisode);
+                      }
+                      setShowSettingsMenu(false);
+                    }}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                      isSubServerMatch(activeServer) && !isLatinoServerMatch(activeServer)
+                        ? 'bg-red-600 text-white border-red-500'
+                        : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span>💬</span><span>Subtitulado</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Opciones rápidas */}
+            <div className="space-y-1.5 pt-1 border-t border-zinc-800/80">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">Preferencias</p>
+
+              {/* Subtítulos */}
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextSub = !subtitlesEnabled;
+                  setSubtitlesEnabled(nextSub);
+                  subtitlesEnabledRef.current = nextSub;
+                  try { localStorage.setItem('cinecast_subtitles_pref', nextSub ? '1' : '0'); } catch {}
+                  await window.electronAPI?.controlActiveMedia?.({ action: 'toggleSubtitles', value: nextSub });
+                  onBroadcastState?.({ subtitlesEnabled: nextSub });
+                }}
+                className="w-full px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold flex items-center justify-between transition"
+              >
+                <span className="flex items-center gap-2"><span>💬</span> Subtítulos</span>
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${subtitlesEnabled ? 'bg-emerald-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+                  {subtitlesEnabled ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              {/* Modo Maratón */}
+              {isEpisodic && (
+                <button
+                  type="button"
+                  onClick={toggleMarathonMode}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold flex items-center justify-between transition"
+                >
+                  <span className="flex items-center gap-2"><span>🏃</span> Modo Maratón</span>
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${marathonMode ? 'bg-emerald-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+                    {marathonMode ? 'ON' : 'OFF'}
+                  </span>
+                </button>
+              )}
+
+              {/* Ecualizador */}
+              {onOpenAudioSettings && !isIframeMode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSettingsMenu(false);
+                    onOpenAudioSettings();
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold flex items-center gap-2 transition"
+                >
+                  <Sliders className="w-3.5 h-3.5 text-red-400" />
+                  <span>Ecualizador de audio</span>
+                </button>
+              )}
+
+              {/* Rotar pantalla (Android APK) */}
+              {typeof window !== 'undefined' && Boolean((window as any).CineCastAndroid?.toggleOrientation) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { (window as any).CineCastAndroid.toggleOrientation(); } catch (_) {}
+                    setShowSettingsMenu(false);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold flex items-center gap-2 transition"
+                >
+                  <span>🔄</span>
+                  <span>Rotar pantalla (Horizontal / Vertical)</span>
+                </button>
+              )}
+
+              {/* Ocultar barra */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSettingsMenu(false);
+                  setTopBarHiddenPersisted(true);
+                }}
+                className="w-full px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold flex items-center gap-2 transition"
+              >
+                <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+                <span>Ocultar barra superior (H)</span>
+              </button>
+
+              {/* Reportar enlace caído */}
+              <button
+                type="button"
+                onClick={() => {
+                  const srv = activeServerRef.current;
+                  fetch('/api/report-broken', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      tmdbId: tmdbIdToUse || null,
+                      title: media.title,
+                      type: resolveType,
+                      season: isSeriesOrAnime ? selectedSeasonRef.current : undefined,
+                      episode: isSeriesOrAnime ? selectedEpisodeRef.current : undefined,
+                      serverName: srv?.name || '',
+                      serverUrl: srv?.url || videoSrc || '',
+                      buildMarker: (window as any).__cinecastBuild || undefined,
+                    }),
+                  })
+                    .then((r) => (r.ok ? triggerSignalToast('🚩 Reporte guardado en Configuración') : triggerSignalToast('No se pudo guardar el reporte')))
+                    .catch(() => triggerSignalToast('No se pudo guardar el reporte'));
+                  setShowSettingsMenu(false);
+                }}
+                className="w-full px-3 py-2 rounded-xl bg-zinc-900 hover:bg-red-950/70 text-zinc-300 hover:text-red-300 border border-zinc-800 hover:border-red-500/40 text-xs font-bold flex items-center gap-2 transition"
+              >
+                <span>🚩</span>
+                <span>Reportar fallo de reproducción</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Franja fina para iframe si no arrancó en 6 s */}
       {isIframeMode && showIframePlayBanner && !hasStartedWatchingRef.current && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-zinc-950/90 border border-zinc-700/80 backdrop-blur-md px-4 py-1.5 rounded-full shadow-lg flex items-center gap-2 animate-fadeIn">
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-zinc-950/90 border border-zinc-700/80 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-2 animate-fadeIn">
           <span className="text-xs text-zinc-300 font-medium">¿El reproductor no inició?</span>
           <button
             type="button"
@@ -5175,46 +5305,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           >
             <Play className="w-3 h-3 fill-current" /> Iniciar reproducción
           </button>
-        </div>
-      )}
-
-      {/* BARRA INFERIOR FLOTANTE DE SERVIDORES (libera la barra superior para nunca tapar el embed) */}
-      {availableServers.length > 1 && (
-        <div
-          style={isFullscreen && !((showControls || forceShowServerSelector) && !isTopBarHidden) ? { zIndex: -1, opacity: 0 } : undefined}
-          className={`absolute bottom-4 left-1/2 -translate-x-1/2 bg-zinc-950/90 border border-zinc-700/80 backdrop-blur-md px-3 py-1.5 rounded-2xl shadow-2xl flex items-center gap-1.5 max-w-[92vw] overflow-x-auto no-scrollbar transition-all duration-300 ${isFullscreen
-            ? (showControls || forceShowServerSelector) && !isTopBarHidden
-              ? 'z-40 opacity-100 pointer-events-auto'
-              : '-z-10 opacity-0 pointer-events-none'
-            : (showControls || forceShowServerSelector) && !isTopBarHidden
-              ? 'z-40 opacity-100 pointer-events-auto'
-              : 'z-40 opacity-0 pointer-events-none'
-            }`}
-        >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 shrink-0 flex items-center gap-1 mr-1">
-            <Server className="w-3.5 h-3.5 text-red-500" /> Servidores:
-          </span>
-          {availableServers.map((srv, idx) => {
-            const isSelected = activeServerIndex === idx;
-            return (
-              <button
-                key={`${srv.name}_${idx}`}
-                type="button"
-                onClick={() => handleSelectServer(idx)}
-                className={`px-2.5 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border shrink-0 ${isSelected
-                  ? 'bg-red-600 text-white border-red-500 shadow-md shadow-red-900/40'
-                  : 'bg-zinc-900/90 text-zinc-300 border-zinc-700/70 hover:bg-zinc-800 hover:text-white'
-                  }`}
-              >
-                <span>{srv.name}</span>
-                {srv.language && (
-                  <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${isSelected ? 'bg-black/30 text-amber-200' : 'bg-zinc-800 text-zinc-400'}`}>
-                    {srv.language}
-                  </span>
-                )}
-              </button>
-            );
-          })}
         </div>
       )}
 

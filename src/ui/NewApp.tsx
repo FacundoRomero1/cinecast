@@ -1048,6 +1048,7 @@ const MyListView: React.FC<MyListViewProps> = ({
 }) => {
   const {
     myListIds,
+    myListItems,
     toggleMyList,
     connectedScreenName,
     triggerNotification,
@@ -1062,24 +1063,73 @@ const MyListView: React.FC<MyListViewProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    if (myListIds.length === 0) {
+    if (myListIds.length === 0 && myListItems.length === 0) {
       setItems([]);
       setLoading(false);
       return;
     }
 
-    setLoading(true);
+    // 1. Construir primero desde los snapshots guardados (funciona offline y para títulos de búsqueda/TMDB)
+    const snapshotCards: CardItem[] = [];
+    const missingIds: string[] = [];
+    const seenIds = new Set<string>();
+
+    for (const snap of myListItems) {
+      if (!snap || !snap.id) continue;
+      const id = String(snap.id);
+      if (seenIds.has(id)) continue;
+      if (snap.posterUrl || (snap.title && snap.title !== id)) {
+        seenIds.add(id);
+        snapshotCards.push({
+          id,
+          tmdbId: Number(snap.tmdbId || 0) || 0,
+          title: snap.title || snap.titleEs || snap.originalTitle || id,
+          titleEs: snap.titleEs,
+          originalTitle: snap.originalTitle,
+          posterUrl: snap.posterUrl || '',
+          backdropUrl: snap.backdropUrl || snap.posterUrl || '',
+          year: Number(snap.year || 2024) || 2024,
+          rating: Number(snap.rating || 7.5) || 7.5,
+          genres: Array.isArray(snap.genres) ? snap.genres : [],
+          category: snap.category || snap.type || 'movie',
+          type: snap.type || snap.category || 'movie',
+          quality: snap.quality || '1080p',
+          upcoming: Boolean(snap.upcoming),
+        });
+      } else {
+        missingIds.push(id);
+      }
+    }
+
+    for (const id of myListIds) {
+      if (!seenIds.has(id) && !missingIds.includes(id)) {
+        missingIds.push(id);
+      }
+    }
+
+    if (missingIds.length === 0) {
+      setItems(snapshotCards);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(snapshotCards.length === 0);
+    setItems(snapshotCards);
     const base = deviceSync.getApiBase();
-    const url = `${base}/api/catalog?ids=${encodeURIComponent(myListIds.join(','))}&fields=card`;
+    const url = `${base}/api/catalog?ids=${encodeURIComponent(missingIds.join(','))}&fields=card`;
 
     fetch(url)
       .then((res) => (res.ok ? res.json() : null))
       .then((raw: unknown) => {
         if (cancelled) return;
-        const serverItems: CardItem[] = [];
+        const merged: CardItem[] = [...snapshotCards];
+        const foundIds = new Set(merged.map((i) => i.id));
         if (isRecordObj(raw) && Array.isArray(raw.items)) {
           for (const entry of raw.items) {
             if (!isRecordObj(entry)) continue;
+            const entryId = typeof entry.id === 'string' ? entry.id : '';
+            if (!entryId || foundIds.has(entryId)) continue;
+            foundIds.add(entryId);
             const safeTitleEs = typeof entry.titleEs === 'string' ? entry.titleEs.trim() : undefined;
             const safeOrigTitle = typeof entry.originalTitle === 'string' ? entry.originalTitle.trim() : undefined;
             const rawTitle = typeof entry.title === 'string' ? entry.title.trim() : '';
@@ -1087,8 +1137,8 @@ const MyListView: React.FC<MyListViewProps> = ({
               rawTitle && rawTitle.toLowerCase() !== 'sin título'
                 ? rawTitle
                 : safeTitleEs || safeOrigTitle || '';
-            serverItems.push({
-              id: typeof entry.id === 'string' ? entry.id : '',
+            merged.push({
+              id: entryId,
               tmdbId: typeof entry.tmdbId === 'number' ? entry.tmdbId : Number(entry.tmdbId) || 0,
               title: safeTitle,
               titleEs: safeTitleEs,
@@ -1108,16 +1158,15 @@ const MyListView: React.FC<MyListViewProps> = ({
           }
         }
 
-        // Complementar con MEDIA_CATALOG local para IDs tipo slug ('deadpool-wolverine', etc.)
-        const foundIds = new Set(serverItems.map((i) => i.id));
-        for (const id of myListIds) {
+        // Complementar con MEDIA_CATALOG local para IDs tipo slug
+        for (const id of missingIds) {
           if (foundIds.has(id)) continue;
           const localMatch = MEDIA_CATALOG.find(
             (m) => m.id === id || String(m.tmdbId) === id
           );
           if (localMatch && !foundIds.has(localMatch.id)) {
             foundIds.add(localMatch.id);
-            serverItems.push({
+            merged.push({
               id: localMatch.id,
               tmdbId: localMatch.tmdbId ?? 0,
               title: localMatch.title,
@@ -1134,10 +1183,10 @@ const MyListView: React.FC<MyListViewProps> = ({
           }
         }
 
-        setItems(serverItems);
+        setItems(merged);
       })
       .catch(() => {
-        if (!cancelled) setItems([]);
+        if (!cancelled) setItems(snapshotCards);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -1146,7 +1195,7 @@ const MyListView: React.FC<MyListViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [myListIds]);
+  }, [myListIds, myListItems]);
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
@@ -1242,6 +1291,7 @@ const TitleDetailRouteView: React.FC = () => {
     handleCastMediaToScreen,
     myListIds,
     toggleMyList,
+    triggerNotification,
     connectedScreenName,
   } = useAppRuntime();
 
@@ -1422,8 +1472,12 @@ const TitleDetailRouteView: React.FC = () => {
           : undefined;
         handleCastMediaToScreen(m, enrichedEp);
       }}
-      isMyList={Boolean(media && myListIds.includes(media.id))}
-      onToggleMyList={(mediaId) => toggleMyList(mediaId)}
+      isMyList={Boolean(media && (myListIds.includes(media.id) || (media.tmdbId && myListIds.includes(String(media.tmdbId)))))}
+      onToggleMyList={(mediaId) => {
+        const adding = !myListIds.includes(mediaId);
+        toggleMyList(mediaId, media);
+        triggerNotification(adding ? `Guardado en Mi lista: ${media?.title || ''}` : `Quitado de Mi lista`);
+      }}
       connectedScreenName={connectedScreenName}
       allCatalog={MEDIA_CATALOG}
       onSelectSimilar={(similar) => {
@@ -2238,6 +2292,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     refreshContinueWatching,
     myListIds,
     toggleMyList,
+    triggerNotification,
     isAudioModalOpen,
     setIsAudioModalOpen,
     isGuestModalOpen,
@@ -2504,8 +2559,12 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                     setPlayerDetailMedia(null);
                     handleCastMediaToScreen(m, enrichedEp);
                   }}
-                  isMyList={myListIds.includes(playerDetailMedia.id)}
-                  onToggleMyList={(mediaId) => toggleMyList(mediaId)}
+                  isMyList={myListIds.includes(playerDetailMedia.id) || Boolean(playerDetailMedia.tmdbId && myListIds.includes(String(playerDetailMedia.tmdbId)))}
+                  onToggleMyList={(mediaId) => {
+                    const adding = !myListIds.includes(mediaId);
+                    toggleMyList(mediaId, playerDetailMedia);
+                    triggerNotification(adding ? `Guardado en Mi lista: ${playerDetailMedia.title}` : 'Quitado de Mi lista');
+                  }}
                   connectedScreenName={connectedScreenName}
                   allCatalog={MEDIA_CATALOG}
                   onSelectSimilar={(similar) => {

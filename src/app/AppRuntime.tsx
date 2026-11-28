@@ -91,7 +91,8 @@ export interface AppRuntimeContextValue {
   continueWatchingList: WatchProgressItem[];
   refreshContinueWatching: () => void;
   myListIds: string[];
-  toggleMyList: (mediaId: string) => void;
+  myListItems: any[];
+  toggleMyList: (mediaId: string, snapshot?: any) => void;
 
   // Modales compartidos
   isAudioModalOpen: boolean;
@@ -195,13 +196,31 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [isAudioModalOpen, setIsAudioModalOpen] = useState<boolean>(false);
   const [isGuestModalOpen, setIsGuestModalOpen] = useState<boolean>(false);
 
-  // COPIA de App.tsx L143-150; borrar al eliminar la UI clásica
+  // Mi lista: almacena snapshots completos (para títulos de TMDB/búsqueda) + sincroniza con /api/my-list
+  const [myListItems, setMyListItems] = useState<any[]>(() => {
+    try {
+      const savedV2 = localStorage.getItem('cinecast_my_list_v2');
+      if (savedV2) {
+        const parsed = JSON.parse(savedV2);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (_) {}
+    return [];
+  });
+
   const [myListIds, setMyListIds] = useState<string[]>(() => {
     try {
+      const savedV2 = localStorage.getItem('cinecast_my_list_v2');
+      if (savedV2) {
+        const parsed = JSON.parse(savedV2);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((x: any) => String(x?.id || '')).filter(Boolean);
+        }
+      }
       const saved = localStorage.getItem('cinecast_my_list');
-      return saved ? JSON.parse(saved) : ['deadpool-wolverine', 'stranger-things', 'solo-leveling'];
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return ['deadpool-wolverine'];
+      return [];
     }
   });
 
@@ -320,6 +339,44 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
     } catch (_) { }
   }, [isPlayingLocally, deviceRole]);
+
+  // Sincronización de "Mi lista" con el servidor central (/api/my-list)
+  useEffect(() => {
+    const syncMyListFromServer = () => {
+      fetch('/api/my-list')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data || !Array.isArray(data.items) || data.items.length === 0) return;
+          setMyListItems((prev) => {
+            const byId = new Map<string, any>();
+            for (const it of data.items) {
+              if (it && it.id) byId.set(String(it.id), it);
+            }
+            for (const it of prev) {
+              if (it && it.id && !byId.has(String(it.id))) byId.set(String(it.id), it);
+            }
+            const merged = Array.from(byId.values());
+            try {
+              localStorage.setItem('cinecast_my_list_v2', JSON.stringify(merged));
+              localStorage.setItem('cinecast_my_list', JSON.stringify(merged.map((x) => String(x.id))));
+            } catch (_) {}
+            setMyListIds(merged.map((x) => String(x.id)));
+            return merged;
+          });
+        })
+        .catch(() => {});
+    };
+
+    syncMyListFromServer();
+    const unsubBackendList = subscribeBackendState((st) => {
+      if (st.activeUrl || st.mode === 'same-origin') {
+        syncMyListFromServer();
+      }
+    });
+    return () => {
+      unsubBackendList();
+    };
+  }, []);
 
   // TAREA 5: Sincronización central de "Continuar Viendo" entre PC y Celular
   useEffect(() => {
@@ -633,13 +690,58 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   }, []);
 
-  // COPIA de App.tsx L335-341; borrar al eliminar la UI clásica
-  // Save My List changes
-  const toggleMyList = (mediaId: string) => {
-    setMyListIds((prev) => {
-      const next = prev.includes(mediaId) ? prev.filter((id) => id !== mediaId) : [...prev, mediaId];
-      localStorage.setItem('cinecast_my_list', JSON.stringify(next));
-      return next;
+  // Save My List changes (localStorage + sync con servidor /api/my-list)
+  const toggleMyList = (mediaId: string, snapshot?: any) => {
+    const cleanId = String(mediaId || '').trim();
+    if (!cleanId) return;
+    const altTmdbId = snapshot?.tmdbId ? String(snapshot.tmdbId) : '';
+
+    setMyListItems((prevItems) => {
+      const existsIdx = prevItems.findIndex(
+        (it) =>
+          String(it.id) === cleanId ||
+          (altTmdbId && String(it.tmdbId || '') === altTmdbId)
+      );
+      let nextItems: any[];
+      if (existsIdx >= 0) {
+        nextItems = prevItems.filter((_, i) => i !== existsIdx);
+      } else {
+        const entry = snapshot && typeof snapshot === 'object'
+          ? {
+              id: cleanId,
+              tmdbId: Number(snapshot.tmdbId || 0) || 0,
+              title: snapshot.titleEs || snapshot.title || snapshot.originalTitle || cleanId,
+              titleEs: snapshot.titleEs,
+              originalTitle: snapshot.originalTitle,
+              posterUrl: snapshot.posterUrl || '',
+              backdropUrl: snapshot.backdropUrl || snapshot.posterUrl || '',
+              year: Number(snapshot.year || 2024) || 2024,
+              rating: Number(snapshot.rating ?? snapshot.voteAverage ?? 7.5) || 7.5,
+              genres: Array.isArray(snapshot.genres) ? snapshot.genres : [],
+              category: snapshot.category || snapshot.type || 'movie',
+              type: snapshot.type || snapshot.category || 'movie',
+              quality: snapshot.quality || snapshot.qualityBadge || '1080p',
+              upcoming: Boolean(snapshot.upcoming),
+              addedAt: Date.now(),
+            }
+          : { id: cleanId, title: cleanId, addedAt: Date.now() };
+        nextItems = [entry, ...prevItems];
+      }
+
+      const nextIds = nextItems.map((x) => String(x.id));
+      setMyListIds(nextIds);
+      try {
+        localStorage.setItem('cinecast_my_list_v2', JSON.stringify(nextItems));
+        localStorage.setItem('cinecast_my_list', JSON.stringify(nextIds));
+      } catch (_) {}
+
+      fetch('/api/my-list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: nextItems }),
+      }).catch(() => {});
+
+      return nextItems;
     });
   };
 
@@ -2704,6 +2806,7 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     continueWatchingList,
     refreshContinueWatching,
     myListIds,
+    myListItems,
     toggleMyList,
     isAudioModalOpen,
     setIsAudioModalOpen,

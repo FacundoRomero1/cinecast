@@ -320,7 +320,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
           <X className="w-5 h-5" />
         </button>
 
-        <div className="overflow-y-auto max-h-[92vh]">
+        <div className="overflow-y-auto overflow-x-hidden w-full max-h-[92vh]">
           {/* Header Billboard / Trailer */}
           <div className="relative h-72 sm:h-96 w-full bg-black">
             {showTrailer && effectiveTrailerKey ? (
@@ -443,7 +443,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
           </div>
 
           {/* Body Content */}
-          <div className="p-6 space-y-6">
+          <div className="p-4 sm:p-6 space-y-6 w-full max-w-full overflow-x-hidden">
             {/* Meta Row: Score, Year, Duration, Genres, Marathon Toggle */}
             <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-zinc-800">
               <div className="flex flex-wrap items-center gap-3 text-xs">
@@ -523,7 +523,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   <User size={15} />
                   <span>Reparto Principal ({effectiveCast.length})</span>
                 </h3>
-                <div className="flex gap-3 overflow-x-auto pb-3 pt-1 no-scrollbar">
+                <div className="flex gap-3 overflow-x-auto overscroll-x-contain pb-3 pt-1 no-scrollbar max-w-full">
                   {effectiveCast.map((actor, idx) => (
                     <div
                       key={idx}
@@ -563,7 +563,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   </h3>
                   <span className="text-xs text-zinc-500">{effectiveCollection.parts.length} entregas</span>
                 </div>
-                <div className="flex gap-3 overflow-x-auto pb-3 pt-1 no-scrollbar">
+                <div className="flex gap-3 overflow-x-auto overscroll-x-contain pb-3 pt-1 no-scrollbar max-w-full">
                   {effectiveCollection.parts.map((part: CollectionPart) => {
                     const isCurrent = Number(part.tmdbId) === Number(media.tmdbId);
                     return (
@@ -668,9 +668,9 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                     {seasonEpisodes.map((ep) => (
                       <div
                         key={ep.id}
-                        className="p-3.5 rounded-2xl bg-zinc-950/60 border border-zinc-800/80 hover:bg-zinc-800/60 hover:border-zinc-700 transition flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between group"
+                        className="p-3.5 rounded-2xl bg-zinc-950/60 border border-zinc-800/80 hover:bg-zinc-800/60 hover:border-zinc-700 transition flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center justify-between group w-full max-w-full overflow-hidden"
                       >
-                        <div className="flex gap-4 items-start sm:items-center min-w-0">
+                        <div className="flex gap-3 sm:gap-4 items-start sm:items-center min-w-0 flex-1 overflow-hidden">
                           {/* Thumbnail */}
                           <div
                             onClick={() => handleStartPlay(ep)}
@@ -743,7 +743,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   </h3>
                   <span className="text-xs text-zinc-500">{effectiveRecommendations.length} títulos</span>
                 </div>
-                <div className="flex gap-3 overflow-x-auto pb-3 pt-1 no-scrollbar">
+                <div className="flex gap-3 overflow-x-auto overscroll-x-contain pb-3 pt-1 no-scrollbar max-w-full">
                   {effectiveRecommendations.map((rec: any) => (
                     <div
                       key={rec.id}

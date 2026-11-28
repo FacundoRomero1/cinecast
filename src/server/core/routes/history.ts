@@ -126,6 +126,91 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
     res.json({ items: loadWatchHistoryFromDisk() });
   });
 
+  router.delete('/watch-history/:id', (req, res) => {
+    try {
+      const targetId = decodeURIComponent(String(req.params.id || '')).trim();
+      if (!targetId) {
+        res.json({ ok: false });
+        return;
+      }
+      const current = loadWatchHistoryFromDisk();
+      const filtered = current.filter(
+        (it) => it.id !== targetId && it.mediaId !== targetId && getCanonicalSeriesKey(it) !== targetId
+      );
+      saveWatchHistoryToDisk(filtered);
+      const wsMsg = JSON.stringify({ type: 'watchHistoryUpdated', items: filtered });
+      globalDevices.forEach((client) => {
+        if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+          try { client.ws.send(wsMsg); } catch (_) {}
+        }
+      });
+      res.json({ ok: true, items: filtered });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Error deleting history item' });
+    }
+  });
+
+  // ── Mi Lista (persistida en disco y sincronizada entre PC y celular) ──────
+  function getMyListFilePath(): string {
+    const histPath = getWatchHistoryFilePath();
+    return path.join(path.dirname(histPath), 'my_list.json');
+  }
+
+  function loadMyListFromDisk(): any[] {
+    try {
+      const fp = getMyListFilePath();
+      if (fs.existsSync(fp)) {
+        const parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  function saveMyListToDisk(items: any[]): boolean {
+    try {
+      const fp = getMyListFilePath();
+      fs.writeFileSync(fp, JSON.stringify((items || []).slice(0, 200)), 'utf8');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  router.get('/my-list', (_req, res) => {
+    res.json({ items: loadMyListFromDisk() });
+  });
+
+  router.post('/my-list', (req, res) => {
+    try {
+      const body = req.body as { items?: unknown } | undefined;
+      if (!body || !Array.isArray(body.items)) {
+        res.status(400).json({ ok: false, error: 'items array required' });
+        return;
+      }
+      const seen = new Set<string>();
+      const cleaned: any[] = [];
+      for (const raw of body.items) {
+        if (!raw || typeof raw !== 'object') continue;
+        const it = raw as any;
+        const id = String(it.id || '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        cleaned.push(it);
+      }
+      saveMyListToDisk(cleaned);
+      const wsMsg = JSON.stringify({ type: 'myListUpdated', items: cleaned });
+      globalDevices.forEach((client) => {
+        if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+          try { client.ws.send(wsMsg); } catch (_) {}
+        }
+      });
+      res.json({ ok: true, items: cleaned });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || 'Error saving my list' });
+    }
+  });
+
   router.post('/watch-history', (req, res) => {
     const body = req.body as { items?: unknown; id?: string } | undefined;
     const incoming: unknown[] = Array.isArray(body?.items)
