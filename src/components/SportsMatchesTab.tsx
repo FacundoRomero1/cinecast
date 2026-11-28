@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Calendar, Clock, Tv, RefreshCw, Trophy, Play, Video, Film, Radio, Sparkles, AlertCircle } from 'lucide-react';
+import { AlertCircle, Clock, Film, Play, Radio, RefreshCw, Sparkles, Trophy, Tv } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MediaItem } from '../types';
 
 export interface TudeporteChannel {
@@ -362,10 +362,7 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
 
   // Reproducción segura de señal en vivo (URL limpia extraída por el backend o HLS nativo)
   const handlePlayLiveChannel = (match: TudeporteLiveMatch, channel: TudeporteChannel) => {
-    const resolveLink = (u: string) =>
-      u.startsWith('/') && typeof window !== 'undefined' && window.location?.origin
-        ? `${window.location.origin}${u}`
-        : u;
+    const resolveLink = (u: string) => u;
     const primaryLink = resolveLink(channel.link);
     const isHls = primaryLink.includes('.m3u8');
     const streamType: 'hls' | 'iframe' = isHls ? 'hls' : 'iframe';
@@ -374,11 +371,10 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
       title: `${match.title} (${channel.name})`,
       originalTitle: match.title,
       type: 'movie',
-      overview: `${match.competition || match.category} - Transmisión en vivo por ${channel.name} (${channel.server}). ${
-        isHls
-          ? 'Reproducción nativa HLS Full HD sin publicidad ni popups.'
-          : 'Señal limpia directa sin publicidad ni popups.'
-      }`,
+      overview: `${match.competition || match.category} - Transmisión en vivo por ${channel.name} (${channel.server}). ${isHls
+        ? 'Reproducción nativa HLS Full HD sin publicidad ni popups.'
+        : 'Señal limpia directa sin publicidad ni popups.'
+        }`,
       year: new Date().getFullYear(),
       ratingBadge: 'EN VIVO',
       matchScore: 99,
@@ -479,11 +475,10 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
             <button
               type="button"
               onClick={onTogglePlayTarget}
-              className={`px-3.5 py-2 rounded-2xl border text-xs font-extrabold flex items-center gap-1.5 transition active:scale-95 ${
-                preferLocalPlay
-                  ? 'bg-emerald-600/20 border-emerald-500/60 text-emerald-300'
-                  : 'bg-red-600/20 border-red-500/60 text-red-300'
-              }`}
+              className={`px-3.5 py-2 rounded-2xl border text-xs font-extrabold flex items-center gap-1.5 transition active:scale-95 ${preferLocalPlay
+                ? 'bg-emerald-600/20 border-emerald-500/60 text-emerald-300'
+                : 'bg-red-600/20 border-red-500/60 text-red-300'
+                }`}
               title="Tocá para alternar si los partidos se abren acá o se transmiten a tu TV/PC"
             >
               <Tv className="w-3.5 h-3.5" />
@@ -496,11 +491,10 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
                 setViewMode('live');
                 setSelectedCategory('all');
               }}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
-                viewMode === 'live'
-                  ? 'bg-red-600 text-white shadow-md shadow-red-950'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${viewMode === 'live'
+                ? 'bg-red-600 text-white shadow-md shadow-red-950'
+                : 'text-zinc-400 hover:text-white'
+                }`}
             >
               <Radio className={`w-3.5 h-3.5 ${viewMode === 'live' ? 'animate-pulse' : ''}`} />
               <span>Agenda en Vivo ({liveMatches.length})</span>
@@ -510,11 +504,10 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
                 setViewMode('replays');
                 setSelectedCategory('all');
               }}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
-                viewMode === 'replays'
-                  ? 'bg-red-600 text-white shadow-md shadow-red-950'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${viewMode === 'replays'
+                ? 'bg-red-600 text-white shadow-md shadow-red-950'
+                : 'text-zinc-400 hover:text-white'
+                }`}
             >
               <Film className="w-3.5 h-3.5" />
               <span>Repeticiones ({replays.length})</span>
@@ -543,11 +536,10 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
                 setSelectedSport(sport.id);
                 setSelectedCategory('all');
               }}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition border shadow-md flex items-center gap-2 ${
-                isSelected
-                  ? 'bg-red-600 text-white border-red-500 shadow-red-950/60 scale-[1.02]'
-                  : 'bg-zinc-900/90 text-zinc-400 border-zinc-800/80 hover:text-white hover:border-zinc-700'
-              }`}
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition border shadow-md flex items-center gap-2 ${isSelected
+                ? 'bg-red-600 text-white border-red-500 shadow-red-950/60 scale-[1.02]'
+                : 'bg-zinc-900/90 text-zinc-400 border-zinc-800/80 hover:text-white hover:border-zinc-700'
+                }`}
             >
               <span>{sport.label}</span>
             </button>
@@ -585,11 +577,10 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
             <button
               key={cat.id}
               onClick={() => setSelectedCategory(cat.id)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition border shadow-sm ${
-                selectedCategory === cat.id
-                  ? 'bg-red-600 text-white border-red-500 shadow-red-900/40'
-                  : 'bg-zinc-900/90 text-zinc-400 border-zinc-800/80 hover:text-white hover:border-zinc-700'
-              }`}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition border shadow-sm ${selectedCategory === cat.id
+                ? 'bg-red-600 text-white border-red-500 shadow-red-900/40'
+                : 'bg-zinc-900/90 text-zinc-400 border-zinc-800/80 hover:text-white hover:border-zinc-700'
+                }`}
             >
               {cat.label}
             </button>
@@ -623,11 +614,10 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
                 return (
                   <div
                     key={m.id}
-                    className={`p-5 rounded-2xl border transition flex flex-col justify-between shadow-xl relative overflow-hidden backdrop-blur-md ${
-                      isLive
-                        ? 'bg-gradient-to-b from-red-950/40 to-zinc-900/90 border-red-500/50 shadow-red-950/30'
-                        : 'bg-zinc-900/90 border-zinc-800/80 hover:border-zinc-700/80'
-                    }`}
+                    className={`p-5 rounded-2xl border transition flex flex-col justify-between shadow-xl relative overflow-hidden backdrop-blur-md ${isLive
+                      ? 'bg-gradient-to-b from-red-950/40 to-zinc-900/90 border-red-500/50 shadow-red-950/30'
+                      : 'bg-zinc-900/90 border-zinc-800/80 hover:border-zinc-700/80'
+                      }`}
                   >
                     <div>
                       {/* Cabecera de la Tarjeta */}
@@ -661,7 +651,7 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
                     {/* Footer: Canales de Transmisión Limpios */}
                     <div className="mt-4 pt-3 border-t border-zinc-800/80">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
-                        {m.channels.filter((c) => c.link && c.link.startsWith('http')).length < 3 ? (
+                        {m.channels.filter((c) => c.link && (c.link.startsWith('http') || c.link.startsWith('/api/'))).length === 0 ? (
                           <div className="flex items-center gap-1.5 text-zinc-500 text-xs italic font-semibold py-1">
                             <AlertCircle className="w-3.5 h-3.5 text-zinc-600" />
                             <span>Sin señal disponible</span>
@@ -670,18 +660,17 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <Tv className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                             {m.channels
-                              .filter((c) => c.link && c.link.startsWith('http'))
+                              .filter((c) => c.link && (c.link.startsWith('http') || c.link.startsWith('/api/')))
                               .map((ch, idx) => {
                                 const isHls = ch.link.includes('.m3u8');
                                 return (
                                   <button
                                     key={`${ch.link}_${idx}`}
                                     onClick={() => handlePlayLiveChannel(m, ch)}
-                                    className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
-                                      isHls
-                                        ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-600/60 shadow-emerald-950/40'
-                                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700/70'
-                                    }`}
+                                    className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95 ${isHls
+                                      ? 'bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border-emerald-600/60 shadow-emerald-950/40'
+                                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700/70'
+                                      }`}
                                     title={
                                       isHls
                                         ? `Reproducir señal Full HD (HLS Directo) de ${ch.name}`
@@ -697,14 +686,13 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
                           </div>
                         )}
 
-                        {isLive && m.channels.filter((c) => c.link && c.link.startsWith('http')).length >= 3 && (
+                        {isLive && m.channels.filter((c) => c.link && (c.link.startsWith('http') || c.link.startsWith('/api/'))).length > 0 && (
                           <button
                             onClick={() => handlePlayLiveChannel(m, m.channels[0])}
-                            className={`px-3 py-1 rounded-xl text-white text-xs font-bold transition flex items-center gap-1 shadow-md ${
-                              m.channels[0].link.includes('.m3u8')
-                                ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-950'
-                                : 'bg-red-600 hover:bg-red-500 shadow-red-950'
-                            }`}
+                            className={`px-3 py-1 rounded-xl text-white text-xs font-bold transition flex items-center gap-1 shadow-md ${m.channels[0].link.includes('.m3u8')
+                              ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-950'
+                              : 'bg-red-600 hover:bg-red-500 shadow-red-950'
+                              }`}
                           >
                             <Play className="w-3 h-3 fill-current" />
                             <span>

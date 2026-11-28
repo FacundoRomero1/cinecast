@@ -91,7 +91,93 @@ export function createSportsRouter(options: SportsOptions = {}): Router {
   let sportsMatchesCache: SportsMatchesPayload | null = null;
   let sportsMatchesCacheTime = 0;
 
-  // GET /api/sports/streamtp/:slug (.m3u8): resuelve dinámicamente el token HLS en vivo y redirige (302)
+  const SPORTS_PROXY_UA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+
+  function rewriteHlsPlaylistForProxy(playlistText: string, baseUrl: string, referer: string): string {
+    const resolveAbs = (rawLine: string): string => {
+      try {
+        return new URL(rawLine, baseUrl).href;
+      } catch {
+        return rawLine;
+      }
+    };
+    const wrapProxy = (absUrl: string): string =>
+      `/api/sports/hls-proxy?url=${encodeURIComponent(absUrl)}&ref=${encodeURIComponent(referer)}`;
+
+    return playlistText
+      .split(/\r?\n/)
+      .map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return line;
+        if (trimmed.startsWith('#')) {
+          // Reescribir URI="..." en #EXT-X-KEY o #EXT-X-MAP
+          if (trimmed.includes('URI="')) {
+            return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${wrapProxy(resolveAbs(uri))}"`);
+          }
+          return line;
+        }
+        return wrapProxy(resolveAbs(trimmed));
+      })
+      .join('\n');
+  }
+
+  // GET /api/sports/hls-proxy?url=...&ref=... : Proxy HLS server-side (misma IP que el token streamtp + CORS abierto)
+  router.get('/sports/hls-proxy', async (req, res) => {
+    try {
+      const targetUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+      const referer =
+        typeof req.query.ref === 'string' && req.query.ref.trim()
+          ? req.query.ref.trim()
+          : 'https://streamtp99a.sbs/';
+      if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
+        res.status(400).json({ error: 'URL inválida' });
+        return;
+      }
+      const upstream = await fetch(targetUrl, {
+        headers: {
+          'User-Agent': SPORTS_PROXY_UA,
+          Referer: referer,
+          Origin: new URL(referer).origin,
+          Accept: '*/*',
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!upstream.ok) {
+        res.status(upstream.status).end();
+        return;
+      }
+      const ct = (upstream.headers.get('content-type') || '').toLowerCase();
+      const isPlaylist =
+        ct.includes('mpegurl') ||
+        ct.includes('m3u') ||
+        /\.m3u8?(?:\?|$)/i.test(targetUrl);
+
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'no-store');
+
+      if (isPlaylist) {
+        const text = await upstream.text();
+        if (text.trimStart().startsWith('#EXTM3U')) {
+          const rewritten = rewriteHlsPlaylistForProxy(text, upstream.url || targetUrl, referer);
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+          res.send(rewritten);
+          return;
+        }
+        res.setHeader('Content-Type', ct || 'text/plain');
+        res.send(text);
+        return;
+      }
+
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader('Content-Type', ct || 'video/mp2t');
+      res.send(buf);
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message || 'Error en proxy HLS' });
+    }
+  });
+
+  // GET /api/sports/streamtp/:slug (.m3u8): resuelve dinámicamente el token HLS y hace proxy del manifest/segmentos
   router.get('/sports/streamtp/:slug', async (req, res) => {
     try {
       const rawSlug = String(req.params.slug || '').replace(/\.m3u8$/i, '').trim();
@@ -100,14 +186,56 @@ export function createSportsRouter(options: SportsOptions = {}): Router {
         return;
       }
       const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
-      const m3u8Url = await extractStreamTpM3u8(rawSlug, 5000, forceRefresh);
+      let m3u8Url = await extractStreamTpM3u8(rawSlug, 6000, forceRefresh);
       if (!m3u8Url) {
         res.status(404).json({ error: 'Señal no disponible en este momento' });
         return;
       }
+
+      const referer = 'https://streamtp99a.sbs/';
+      let upstream = await fetch(m3u8Url, {
+        headers: {
+          'User-Agent': SPORTS_PROXY_UA,
+          Referer: referer,
+          Origin: 'https://streamtp99a.sbs',
+          Accept: '*/*',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      // Si el token cacheado expiró (403/404), refrescar una vez el slug
+      if (!upstream.ok && !forceRefresh) {
+        const freshUrl = await extractStreamTpM3u8(rawSlug, 6000, true);
+        if (freshUrl) {
+          m3u8Url = freshUrl;
+          upstream = await fetch(m3u8Url, {
+            headers: {
+              'User-Agent': SPORTS_PROXY_UA,
+              Referer: referer,
+              Origin: 'https://streamtp99a.sbs',
+              Accept: '*/*',
+            },
+            signal: AbortSignal.timeout(8000),
+          });
+        }
+      }
+
+      if (!upstream.ok) {
+        res.status(502).json({ error: `Upstream HTTP ${upstream.status}` });
+        return;
+      }
+
+      const playlistText = await upstream.text();
+      if (!playlistText.trimStart().startsWith('#EXTM3U')) {
+        res.status(502).json({ error: 'Respuesta HLS inválida' });
+        return;
+      }
+
+      const rewritten = rewriteHlsPlaylistForProxy(playlistText, upstream.url || m3u8Url, referer);
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Cache-Control', 'no-store');
-      res.redirect(302, m3u8Url);
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+      res.send(rewritten);
     } catch (err: any) {
       console.warn('[Sports Router] Error resolviendo streamtp:', err?.message || err);
       res.status(502).json({ error: 'Error al resolver señal en vivo' });

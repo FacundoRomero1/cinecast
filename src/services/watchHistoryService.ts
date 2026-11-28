@@ -45,8 +45,8 @@ class WatchHistoryService {
   public getContinueWatchingList(): WatchProgressItem[] {
     const all = this.getAll();
     return all.filter((item) => {
-      // Ignorar videos de menos de 5 segundos reproducidos
-      if (item.currentTime < 5) return false;
+      if (item.category === 'live_tv' || item.type === 'live_tv') return false;
+      if (item.currentTime < 1) return false;
       // Si ya vio más del 95%, se considera terminado
       if (item.duration > 0 && (item.currentTime / item.duration) >= 0.95) return false;
       return true;

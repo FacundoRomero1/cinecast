@@ -2236,6 +2236,16 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }, targetScreenIdToSend);
 
     triggerNotification(`📱 Reproduciendo ${cleanMedia.title} en ${connectedScreenName}...`);
+    if (cleanMedia.category !== 'live_tv') {
+      watchHistoryService.saveProgress({
+        mediaItem: cleanMedia,
+        episodeItem: targetEp,
+        seasonNumber: targetEp?.seasonNumber,
+        episodeNumber: targetEp?.episodeNumber,
+        currentTime: Math.max(initialTime || 0, 10),
+        duration: 5400,
+      });
+    }
   };
 
   // Local Play (or automatically Cast if user is on their phone in remote mode!)
@@ -2288,6 +2298,18 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlayerInitialTime(initialTime || 0);
     setIsPlayingLocally(true);
     setIsScreenInStandby(false);
+
+    // Registrar inmediatamente en "Continuar viendo" al iniciar reproducción (pelis, series y anime)
+    if (cleanMedia.category !== 'live_tv') {
+      watchHistoryService.saveProgress({
+        mediaItem: cleanMedia,
+        episodeItem: ep,
+        seasonNumber: ep?.seasonNumber,
+        episodeNumber: ep?.episodeNumber,
+        currentTime: Math.max(initialTime || 0, 10),
+        duration: 5400,
+      });
+    }
 
     // Broadcast full media details to all remotes immediately
     const srvs =
