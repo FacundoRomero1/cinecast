@@ -2157,20 +2157,15 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       : null;
 
-    if (deviceRole === 'remote') {
-      const targetScreen = selectedScreenId
-        ? validScreens.find((s) => s.id === selectedScreenId)
-        : validScreens.length === 1
-          ? validScreens[0]
-          : null;
-      if (!targetScreen) {
-        triggerNotification('Seleccioná una pantalla para reproducir');
-        return;
-      }
-      // Nunca reproducir localmente en el teléfono al enviar a la TV / Pantalla
-      setIsPlayingLocally(false);
+    const targetScreen = selectedScreenId
+      ? validScreens.find((s) => s.id === selectedScreenId && s.connected !== false)
+      : validScreens.length === 1 && validScreens[0].connected !== false
+        ? validScreens[0]
+        : null;
+    if (!targetScreen) {
+      triggerNotification('⚠️ No hay ninguna pantalla conectada. Vinculá tu TV/PC en Pantallas o cambiá a "Acá".');
+      return;
     }
-
     // Nunca reproducir localmente en este dispositivo cuando se transmite a otra pantalla (TV/PC)
     setIsPlayingLocally(false);
 
@@ -2255,9 +2250,10 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     initialTime?: number,
     forceLocal: boolean = false
   ) => {
-    const preferLocal =
-      typeof localStorage !== 'undefined' && localStorage.getItem('cinecast_mobile_play_target') === 'local';
-    if (deviceRole === 'remote' && !forceLocal && !preferLocal) {
+    const targetMode =
+      typeof localStorage !== 'undefined' ? localStorage.getItem('cinecast_mobile_play_target') : null;
+    const isTvPcModeSelected = targetMode === 'pc';
+    if (!forceLocal && (isTvPcModeSelected || (deviceRole === 'remote' && targetMode !== 'local'))) {
       handleCastMediaToScreen(media, episode || undefined, initialTime);
       return;
     }

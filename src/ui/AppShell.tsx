@@ -30,6 +30,7 @@ export interface AppShellProps {
   onOpenControl?: (() => void) | undefined;
   isControlOpen?: boolean | undefined;
   preferLocalPlay?: boolean | undefined;
+  hasConnectedScreen?: boolean | undefined;
   onToggleQuickRole?: (() => void) | undefined;
 }
 
@@ -66,6 +67,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   onOpenControl,
   isControlOpen = false,
   preferLocalPlay = true,
+  hasConnectedScreen = false,
   onToggleQuickRole,
 }) => {
   useScrollRestoration();
@@ -256,6 +258,31 @@ export const AppShell: React.FC<AppShellProps> = ({
           </NavLink>
         </div>
       </header>
+
+      {/* Aviso claro en móvil cuando está seleccionado TV/PC pero no hay pantalla conectada */}
+      {!preferLocalPlay && !hasConnectedScreen && (
+        <div className="md:hidden bg-amber-950/90 border-b border-amber-500/40 px-3.5 py-2 flex items-center justify-between gap-2 text-xs text-amber-200">
+          <span className="font-semibold truncate">⚠️ Modo TV/PC: sin pantalla conectada</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('/pantallas')}
+              className="px-2.5 py-1 rounded-lg bg-amber-500 text-black font-extrabold text-[11px] active:scale-95 transition"
+            >
+              Vincular
+            </button>
+            {onToggleQuickRole && (
+              <button
+                type="button"
+                onClick={onToggleQuickRole}
+                className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-amber-500/40 text-amber-200 font-bold text-[11px] active:scale-95 transition"
+              >
+                Ver acá
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Contenido principal con padding inferior adaptado y padding derecho si la columna de control está abierta */}
       <main

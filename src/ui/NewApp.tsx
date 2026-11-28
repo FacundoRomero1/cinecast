@@ -1439,7 +1439,7 @@ const TitleDetailRouteView: React.FC = () => {
                 ) || 1,
             }
           : undefined;
-        handlePlayLocal(m, enrichedEp, 0, true);
+        handlePlayLocal(m, enrichedEp, 0, false);
       }}
       onCastToScreen={(m, ep) => {
         const enrichedEp = ep
@@ -2315,12 +2315,22 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
     prevPlayerVisibleRef.current = isLocalPlayerVisible;
   }, [isLocalPlayerVisible]);
 
+  const hasConnectedScreen = Boolean(
+    connectedScreenName &&
+      connectedScreenName.trim() !== '' &&
+      connectedScreenName !== 'Sin pantalla' &&
+      connectedScreenName !== 'Ninguna'
+  );
+
   const togglePlayTarget = () => {
     setPreferLocalPlay((prev) => {
       const next = !prev;
       try {
         localStorage.setItem('cinecast_mobile_play_target', next ? 'local' : 'pc');
       } catch (_) {}
+      if (!next && !hasConnectedScreen) {
+        triggerNotification('⚠️ No hay ninguna pantalla conectada. Vinculá tu TV/PC en Pantallas.');
+      }
       return next;
     });
   };
@@ -2554,7 +2564,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                         }
                       : undefined;
                     setPlayerDetailMedia(null);
-                    handlePlayLocal(m, enrichedEp, 0, true);
+                    handlePlayLocal(m, enrichedEp, 0, false);
                   }}
                   onCastToScreen={(m, ep) => {
                     const enrichedEp = ep
@@ -2610,6 +2620,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
           onOpenControl={() => setIsRemoteSheetOpen((p) => !p)}
           isControlOpen={isRemoteSheetOpen}
           preferLocalPlay={preferLocalPlay}
+          hasConnectedScreen={hasConnectedScreen}
           onToggleQuickRole={togglePlayTarget}
           bottomSlot={
             deviceRole === 'remote' ? (
