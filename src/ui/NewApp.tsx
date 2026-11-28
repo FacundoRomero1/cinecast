@@ -2297,6 +2297,33 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
   } = useAppRuntime();
 
   const [playerDetailMedia, setPlayerDetailMedia] = useState<MediaItem | null>(null);
+  const savedScrollBeforePlayerRef = useRef<number>(0);
+  const prevPlayerVisibleRef = useRef<boolean>(false);
+  const isLocalPlayerVisible = Boolean(
+    isPlayingLocally && activeMedia && (activeHub === 'cinecast' || activeHub === 'sports')
+  );
+
+  useEffect(() => {
+    if (isLocalPlayerVisible && !prevPlayerVisibleRef.current) {
+      savedScrollBeforePlayerRef.current = typeof window !== 'undefined' ? window.scrollY : 0;
+    } else if (!isLocalPlayerVisible && prevPlayerVisibleRef.current) {
+      const targetY = savedScrollBeforePlayerRef.current;
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: targetY, behavior: 'instant' as ScrollBehavior });
+      });
+    }
+    prevPlayerVisibleRef.current = isLocalPlayerVisible;
+  }, [isLocalPlayerVisible]);
+
+  const togglePlayTarget = () => {
+    setPreferLocalPlay((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('cinecast_mobile_play_target', next ? 'local' : 'pc');
+      } catch (_) {}
+      return next;
+    });
+  };
 
   // Manejar botón físico / gesto Atrás en Android APK sin cerrar la app inesperadamente
   useEffect(() => {
@@ -2427,15 +2454,17 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             </button>
           </div>
         </div>
-      ) : isPlayingLocally && activeMedia && (activeHub === 'cinecast' || activeHub === 'sports') ? (
-        /* 9. Reproductor a pantalla completa sobre todo con las props de App.tsx L1158-1188 */
-        <div
-          className="contents"
-          onPointerDownCapture={() => notifyUserActivity('player_pointer')}
-          onKeyDownCapture={() => notifyUserActivity('player_key')}
-        >
-          <Suspense fallback={<div className="w-full h-screen bg-black flex items-center justify-center text-white">Cargando...</div>}>
-            <VideoPlayer
+      ) : (
+        <>
+          {isLocalPlayerVisible && activeMedia && (
+            /* 9. Reproductor a pantalla completa como overlay (mantiene AppShell y el scroll intactos al cerrar) */
+            <div
+              className="fixed inset-0 z-[200] bg-black"
+              onPointerDownCapture={() => notifyUserActivity('player_pointer')}
+              onKeyDownCapture={() => notifyUserActivity('player_key')}
+            >
+              <Suspense fallback={<div className="w-full h-screen bg-black flex items-center justify-center text-white">Cargando...</div>}>
+                <VideoPlayer
               key={
                 activeMedia.category === 'live_tv'
                   ? 'live-tv-player'
@@ -2572,7 +2601,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             </Suspense>
           )}
         </div>
-      ) : (
+          )}
+          <div className={isLocalPlayerVisible ? 'hidden' : 'contents'}>
         <AppShell
           extraBottomPadding={deviceRole === 'remote'}
           hasMiniRemote={deviceRole === 'remote' && location.pathname !== '/control'}
@@ -2580,15 +2610,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
           onOpenControl={() => setIsRemoteSheetOpen((p) => !p)}
           isControlOpen={isRemoteSheetOpen}
           preferLocalPlay={preferLocalPlay}
-          onToggleQuickRole={() => {
-            setPreferLocalPlay((prev) => {
-              const next = !prev;
-              try {
-                localStorage.setItem('cinecast_mobile_play_target', next ? 'local' : 'pc');
-              } catch (_) {}
-              return next;
-            });
-          }}
+          onToggleQuickRole={togglePlayTarget}
           bottomSlot={
             deviceRole === 'remote' ? (
               <>
@@ -2680,9 +2702,10 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                       </span>
                     </div>
                     <SportsMatchesTab
-                      preferLocalPlay={deviceRole === 'remote' ? preferLocalPlay : true}
+                      preferLocalPlay={preferLocalPlay}
+                      onTogglePlayTarget={togglePlayTarget}
                       onPlayChannel={(mediaItem) => {
-                        if (deviceRole === 'remote' && !preferLocalPlay) {
+                        if (!preferLocalPlay) {
                           handleCastMediaToScreen(mediaItem);
                         } else {
                           handlePlayLocal(mediaItem, undefined, 0, true);
@@ -2716,7 +2739,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                       </button>
                     </div>
                     <SportsLiveGrid
-                      preferLocalPlay={deviceRole === 'remote' ? preferLocalPlay : true}
+                      preferLocalPlay={preferLocalPlay}
                       onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem, undefined, 0, true)}
                       onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
                       connectedScreenName={connectedScreenName}
@@ -2735,6 +2758,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             </Routes>
           </Suspense>
         </AppShell>
+          </div>
+        </>
       )}
 
       {/* Modal a pantalla completa en PC: "¿Seguís ahí?" */}

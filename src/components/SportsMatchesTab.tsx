@@ -36,6 +36,7 @@ interface SportsMatchesTabProps {
   onPlayChannel: (mediaItem: MediaItem) => void;
   onCastChannel?: (mediaItem: MediaItem) => void;
   preferLocalPlay?: boolean;
+  onTogglePlayTarget?: () => void;
 }
 
 export type SportFilter = 'all' | 'futbol' | 'nba' | 'nfl' | 'tenis' | 'otros';
@@ -214,6 +215,7 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
   onPlayChannel,
   onCastChannel,
   preferLocalPlay = true,
+  onTogglePlayTarget,
 }) => {
   const [viewMode, setViewMode] = useState<'live' | 'replays'>('live');
   const [liveMatches, setLiveMatches] = useState<TudeporteLiveMatch[]>([]);
@@ -471,8 +473,23 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
           </p>
         </div>
 
-        {/* Selector de Modo: En Vivo vs Repeticiones */}
-        <div className="flex items-center gap-2">
+        {/* Selector de Modo: En Vivo vs Repeticiones + Destino de reproducción */}
+        <div className="flex flex-wrap items-center gap-2">
+          {onTogglePlayTarget && (
+            <button
+              type="button"
+              onClick={onTogglePlayTarget}
+              className={`px-3.5 py-2 rounded-2xl border text-xs font-extrabold flex items-center gap-1.5 transition active:scale-95 ${
+                preferLocalPlay
+                  ? 'bg-emerald-600/20 border-emerald-500/60 text-emerald-300'
+                  : 'bg-red-600/20 border-red-500/60 text-red-300'
+              }`}
+              title="Tocá para alternar si los partidos se abren acá o se transmiten a tu TV/PC"
+            >
+              <Tv className="w-3.5 h-3.5" />
+              <span>{preferLocalPlay ? 'Ver acá' : 'Transmitir a TV/PC'}</span>
+            </button>
+          )}
           <div className="bg-zinc-900 p-1 rounded-2xl border border-zinc-800 flex items-center shadow-lg">
             <button
               onClick={() => {

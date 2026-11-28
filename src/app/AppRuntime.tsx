@@ -2171,10 +2171,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setIsPlayingLocally(false);
     }
 
-    if (deviceRole === 'screen') {
-      setActiveMedia(cleanMedia);
-      setActiveEpisode(targetEp);
-    }
+    // Nunca reproducir localmente en este dispositivo cuando se transmite a otra pantalla (TV/PC)
+    setIsPlayingLocally(false);
 
     const effectiveTmdbId =
       cleanMedia.tmdbId ||

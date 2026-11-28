@@ -195,12 +195,11 @@ export async function validateHlsStream(
   headers?: { referrer?: string | null; userAgent?: string | null }
 ): Promise<boolean> {
   if (!url) return false;
-  // Resolver enlaces dinámicos internos /api/sports/streamtp/<slug>.m3u8 directamente
+  // Los enlaces dinámicos internos /api/sports/streamtp/<slug>.m3u8 se resuelven bajo demanda al reproducir.
+  // No hacer peticiones masivas contra streamtp/domhsd durante "Actualizar Señales" para no cortar canales activos en la PC.
   const streamTpMatch = url.match(/\/api\/sports\/streamtp\/([a-z0-9_-]+)(?:\.m3u8)?$/i);
   if (streamTpMatch?.[1]) {
-    const resolved = await extractStreamTpM3u8(streamTpMatch[1], Math.max(timeoutMs, 4500));
-    if (!resolved) return false;
-    return validateHlsStream(resolved, Math.max(timeoutMs, 4000));
+    return true;
   }
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     return false;
@@ -864,7 +863,7 @@ export async function extractStreamXhdM3u8(url: string, timeoutMs = 4000): Promi
 }
 
 const streamTpResolveCache = new Map<string, { url: string; ts: number }>();
-const STREAMTP_CACHE_TTL_MS = 90 * 1000; // 90s (los tokens domhsd duran ~5h)
+const STREAMTP_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min (los tokens domhsd duran ~5h)
 
 /**
  * Extrae el enlace HLS directo (.m3u8) desde streamtp99a.sbs / streamtp*.com

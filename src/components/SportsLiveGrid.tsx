@@ -282,7 +282,7 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
               if (typeof window !== 'undefined') {
                 saveScrollSnapshot('/canales', '/canales', window.scrollY);
               }
-              if (isRemote && !preferLocalPlay) {
+              if (!preferLocalPlay) {
                 onCastChannel(mediaItem);
               } else {
                 onPlayChannel(mediaItem);
