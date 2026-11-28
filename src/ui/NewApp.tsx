@@ -360,19 +360,10 @@ const HomeView: React.FC<HomeViewProps> = ({
 
           <button
             type="button"
-            aria-label="Abrir Deportes en TV"
+            aria-label="Abrir Deportes"
             onClick={() => {
-              const isConnected = Boolean(
-                connectedScreenName &&
-                connectedScreenName.trim() !== '' &&
-                connectedScreenName !== 'Sin pantalla' &&
-                connectedScreenName !== 'Ninguna'
-              );
-              if (!isConnected) {
-                navigate('/pantallas');
-                return;
-              }
-              sendRemoteCommand({ action: 'switchHub', payload: { hub: 'sports' } });
+              // Navegar a Deportes en este dispositivo sin cortar lo que se reproduce en la TV/PC
+              navigate('/deportes');
             }}
             className="min-h-[44px] px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 transition border border-zinc-700/80 shadow"
           >
@@ -2689,7 +2680,14 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                       </span>
                     </div>
                     <SportsMatchesTab
-                      onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
+                      preferLocalPlay={deviceRole === 'remote' ? preferLocalPlay : true}
+                      onPlayChannel={(mediaItem) => {
+                        if (deviceRole === 'remote' && !preferLocalPlay) {
+                          handleCastMediaToScreen(mediaItem);
+                        } else {
+                          handlePlayLocal(mediaItem, undefined, 0, true);
+                        }
+                      }}
                       onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
                     />
                   </div>
@@ -2718,7 +2716,8 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                       </button>
                     </div>
                     <SportsLiveGrid
-                      onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem)}
+                      preferLocalPlay={deviceRole === 'remote' ? preferLocalPlay : true}
+                      onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem, undefined, 0, true)}
                       onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
                       connectedScreenName={connectedScreenName}
                     />

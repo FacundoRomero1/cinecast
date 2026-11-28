@@ -723,7 +723,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                             className="px-3.5 py-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shadow"
                           >
                             <Tv className="w-3.5 h-3.5" />
-                            <span>PC</span>
+                            <span>TV</span>
                           </button>
                         </div>
                       </div>

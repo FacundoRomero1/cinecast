@@ -198,7 +198,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             <button
               type="button"
               onClick={onToggleQuickRole}
-              title="Cambiar entre reproducir en este celular o enviar a la PC/TV"
+              title="Cambiar entre reproducir en este dispositivo o enviar a la TV / Pantalla"
               className="relative min-h-[36px] p-0.5 rounded-xl bg-zinc-900 border border-zinc-800 inline-flex items-center text-[11px] font-extrabold active:scale-95 transition-transform duration-150 select-none"
             >
               <span
@@ -219,7 +219,7 @@ export const AppShell: React.FC<AppShellProps> = ({
                 }`}
               >
                 <Tv className="w-3 h-3" />
-                <span>PC</span>
+                <span>TV</span>
               </span>
             </button>
           )}

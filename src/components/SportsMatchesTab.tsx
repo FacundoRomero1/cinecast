@@ -35,6 +35,7 @@ export interface TudeporteReplay {
 interface SportsMatchesTabProps {
   onPlayChannel: (mediaItem: MediaItem) => void;
   onCastChannel?: (mediaItem: MediaItem) => void;
+  preferLocalPlay?: boolean;
 }
 
 export type SportFilter = 'all' | 'futbol' | 'nba' | 'nfl' | 'tenis' | 'otros';
@@ -177,7 +178,43 @@ const CATEGORY_ICONS: Record<string, string> = {
   'futbol': '⚽',
 };
 
-export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChannel }) => {
+function getMatchPopularityScore(m: TudeporteLiveMatch): number {
+  const text = `${m.competition || ''} ${m.category || ''} ${m.title || ''}`.toLowerCase();
+  let score = 0;
+  // Ligas y equipos más vistos en Argentina / LatAm / Europa
+  if (/liga profesional|copa argentina|primera nacional|supercl[aá]sico|boca juniors|river plate|racing club|independiente|san lorenzo|selecci[oó]n argentina|argentina\b/.test(text)) {
+    score += 120;
+  }
+  if (/champions league|copa libertadores|copa sudamericana|mundial|world cup|eliminatorias|copa am[eé]rica/.test(text)) {
+    score += 110;
+  }
+  if (/premier league|laliga|la liga|real madrid|barcelona|atl[eé]tico|manchester|liverpool|arsenal|chelsea|inter|milan|juventus|bayern|psg|europa league|serie a|bundesliga/.test(text)) {
+    score += 80;
+  }
+  if (/\bnba\b|f[oó]rmula 1|\bf1\b|\bufc\b|boxeo|boxing|colapinto|messi|inter miami/.test(text)) {
+    score += 70;
+  }
+  if (/liga mx|brasileir|mls|\bnfl\b|atp|wta|roland garros|wimbledon|us open|motogp/.test(text)) {
+    score += 45;
+  }
+  // Más canales disponibles = evento de mayor relevancia
+  score += Math.min(20, (m.channels?.length || 0) * 3);
+  return score;
+}
+
+function getStatusRank(status?: string): number {
+  const s = (status || '').toLowerCase();
+  if (s === 'en_vivo' || s === 'live') return 0;
+  if (s === 'pronto' || s === 'upcoming' || s === 'por_comenzar') return 1;
+  if (s === 'finalizado' || s === 'finished') return 3;
+  return 2;
+}
+
+export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({
+  onPlayChannel,
+  onCastChannel,
+  preferLocalPlay = true,
+}) => {
   const [viewMode, setViewMode] = useState<'live' | 'replays'>('live');
   const [liveMatches, setLiveMatches] = useState<TudeporteLiveMatch[]>([]);
   const [replays, setReplays] = useState<TudeporteReplay[]>([]);
@@ -278,9 +315,9 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChanne
     ];
   }, [viewMode, liveMatches, replays, selectedSport]);
 
-  // Filtro de partidos en vivo
+  // Filtro y orden inteligente de partidos: EN VIVO primero, luego los más populares/vistos y más cercanos
   const filteredLiveMatches = useMemo(() => {
-    return liveMatches.filter((m) => {
+    const filtered = liveMatches.filter((m) => {
       if (selectedSport !== 'all') {
         const sport = getSportType(m.category, m.title);
         if (sport !== selectedSport) return false;
@@ -291,6 +328,17 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChanne
         m.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         m.category.toLowerCase().includes(searchQuery.toLowerCase());
       return matchCat && matchSearch;
+    });
+
+    return [...filtered].sort((a, b) => {
+      const rankA = getStatusRank(a.status);
+      const rankB = getStatusRank(b.status);
+      if (rankA !== rankB) return rankA - rankB;
+
+      const popDiff = getMatchPopularityScore(b) - getMatchPopularityScore(a);
+      if (popDiff !== 0) return popDiff;
+
+      return (a.timeLocal || a.time || '').localeCompare(b.timeLocal || b.time || '');
     });
   }, [liveMatches, selectedSport, selectedCategory, searchQuery]);
 
@@ -363,7 +411,11 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChanne
           }),
       ],
     };
-    onPlayChannel(item);
+    if (!preferLocalPlay && onCastChannel) {
+      onCastChannel(item);
+    } else {
+      onPlayChannel(item);
+    }
   };
 
   // Reproducción segura de repetición (Dailymotion / señal limpia)
@@ -393,7 +445,11 @@ export const SportsMatchesTab: React.FC<SportsMatchesTabProps> = ({ onPlayChanne
         language: 'Español',
       })),
     };
-    onPlayChannel(item);
+    if (!preferLocalPlay && onCastChannel) {
+      onCastChannel(item);
+    } else {
+      onPlayChannel(item);
+    }
   };
 
   return (

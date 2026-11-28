@@ -9,12 +9,14 @@ interface SportsLiveGridProps {
   onPlayChannel: (mediaItem: MediaItem) => void;
   onCastChannel: (mediaItem: MediaItem) => void;
   connectedScreenName?: string;
+  preferLocalPlay?: boolean;
 }
 
 export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
   onPlayChannel,
   onCastChannel,
   connectedScreenName = 'TV Sala',
+  preferLocalPlay = true,
 }) => {
   const [channels, setChannels] = useState<LiveSportsChannel[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -280,7 +282,7 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
               if (typeof window !== 'undefined') {
                 saveScrollSnapshot('/canales', '/canales', window.scrollY);
               }
-              if (isRemote) {
+              if (isRemote && !preferLocalPlay) {
                 onCastChannel(mediaItem);
               } else {
                 onPlayChannel(mediaItem);

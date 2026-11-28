@@ -2167,6 +2167,8 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         triggerNotification('Seleccioná una pantalla para reproducir');
         return;
       }
+      // Nunca reproducir localmente en el teléfono al enviar a la TV / Pantalla
+      setIsPlayingLocally(false);
     }
 
     if (deviceRole === 'screen') {

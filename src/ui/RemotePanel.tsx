@@ -919,8 +919,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
         <button
           type="button"
           onClick={() => {
+            // Solo abrir la pestaña Deportes en el control sin cortar lo que se está viendo en la TV/PC (zapping suave)
             setActiveMainTab('sports');
-            onSendCommand({ action: 'switchHub', payload: { hub: 'sports' } });
           }}
           className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition ${activeMainTab === 'sports'
             ? 'bg-blue-600 text-white shadow'
@@ -981,8 +981,8 @@ export const RemotePanel: React.FC<RemotePanelProps> = ({
             <button
               type="button"
               onClick={() => {
+                // Abrir Deportes localmente en el control para hacer zapping sin interrumpir la pantalla actual
                 setActiveMainTab('sports');
-                onSendCommand({ action: 'switchHub', payload: { hub: 'sports' } });
               }}
               className={`min-h-[44px] px-2 py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition ${activeHub === 'sports' || activeMainTab === 'sports'
                 ? 'bg-blue-600 text-white shadow'
