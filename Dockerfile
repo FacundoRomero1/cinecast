@@ -9,8 +9,8 @@ ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV NODE_OPTIONS="--max-old-space-size=384"
 
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --omit=optional --legacy-peer-deps --no-audit --no-fund && npm install -g tsx
+COPY package.json ./
+RUN npm install --omit=dev --legacy-peer-deps --no-audit --no-fund && npm install -g tsx
 
 COPY . .
 
