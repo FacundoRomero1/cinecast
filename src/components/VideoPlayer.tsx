@@ -590,6 +590,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [setTopBarHiddenPersisted, onClose, isEpisodic, isDetailOpen]);
 
+  // En APK Android móvil: entrar automáticamente en horizontal inmersivo al abrir el reproductor y restaurar al salir
+  useEffect(() => {
+    const androidBridge = (window as any).CineCastAndroid;
+    if (androidBridge && typeof androidBridge.enterPlayerLandscape === 'function') {
+      try {
+        androidBridge.enterPlayerLandscape();
+      } catch (_) {}
+      return () => {
+        try {
+          androidBridge.exitPlayerFullscreen?.();
+        } catch (_) {}
+      };
+    }
+  }, []);
+
   // Tarea A: Extracción robusta de TMDB ID que soporta tmdb-series-1418_s1_e15, slugs y números
   const tmdbIdToUse = useMemo(() => {
     if (
@@ -4410,7 +4425,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               className="w-full h-full border-0 bg-black"
               allowFullScreen
               allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-              sandbox={isMovieMasterEmbed ? undefined : "allow-scripts allow-same-origin allow-forms allow-presentation"}
               referrerPolicy={isMovieMasterEmbed ? 'no-referrer-when-downgrade' : (activeServer?.referrer ? 'no-referrer' : 'origin')}
               onError={(e: any) => {
                 const msg = String(e?.message || '');
@@ -4818,9 +4832,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               : 'opacity-0 pointer-events-none -translate-y-2'
           }`}
       >
-        <div className="flex items-center justify-between gap-2 sm:gap-4 h-full pointer-events-auto">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 min-h-[44px] py-1 pointer-events-auto">
           {/* Lado Izquierdo: Volver + Título + Capítulos + Idioma + Badges */}
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-1">
             <button
               onClick={onClose}
               className="p-1.5 sm:p-2 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white transition backdrop-blur-md border border-zinc-700/60 shrink-0"
@@ -4942,7 +4956,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     title="Siguiente capítulo (N)"
                     className="ml-0.5 px-2 py-0.5 rounded-md bg-red-600/90 hover:bg-red-500 text-white text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
                   >
-                    <span>Siguiente</span>
+                    <span className="hidden sm:inline">Siguiente</span>
                     <SkipForward className="w-3 h-3" />
                   </button>
                 </div>
@@ -5046,8 +5060,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </div>
           </div>
 
-          {/* Lado Derecho: Controles + Botón Ocultar Barra + Pantalla Completa */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Lado Derecho: Controles + Rotar (APK) + Botón Ocultar Barra + Pantalla Completa */}
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0 flex-wrap justify-end">
+            {typeof window !== 'undefined' && Boolean((window as any).CineCastAndroid?.toggleOrientation) && (
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    (window as any).CineCastAndroid.toggleOrientation();
+                  } catch (_) {}
+                }}
+                className="px-2 py-1 rounded-xl bg-zinc-900/85 hover:bg-zinc-800 text-zinc-200 border border-zinc-700/60 transition backdrop-blur-md text-xs font-bold"
+                title="Rotar pantalla (Horizontal / Vertical)"
+              >
+                🔄
+              </button>
+            )}
             {/* Botón Subtítulos */}
             <button
               type="button"

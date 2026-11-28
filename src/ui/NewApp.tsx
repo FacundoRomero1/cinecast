@@ -2252,6 +2252,61 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
 
   const [playerDetailMedia, setPlayerDetailMedia] = useState<MediaItem | null>(null);
 
+  // Manejar botón físico / gesto Atrás en Android APK sin cerrar la app inesperadamente
+  useEffect(() => {
+    (window as any).__cinecastHandleBack = (): boolean => {
+      if (playerDetailMedia) {
+        setPlayerDetailMedia(null);
+        return true;
+      }
+      if (isPlayingLocally && activeMedia) {
+        setPlayerDetailMedia(null);
+        setIsPlayingLocally(false);
+        setIsScreenInStandby(false);
+        setActiveMedia(null);
+        setActiveEpisode(null);
+        refreshContinueWatching();
+        return true;
+      }
+      if (isRemoteSheetOpen) {
+        setIsRemoteSheetOpen(false);
+        return true;
+      }
+      if (isAudioModalOpen) {
+        setIsAudioModalOpen(false);
+        return true;
+      }
+      if (isGuestModalOpen) {
+        setIsGuestModalOpen(false);
+        return true;
+      }
+      if (location.pathname !== '/') {
+        navigate(-1);
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      delete (window as any).__cinecastHandleBack;
+    };
+  }, [
+    playerDetailMedia,
+    isPlayingLocally,
+    activeMedia,
+    isRemoteSheetOpen,
+    isAudioModalOpen,
+    isGuestModalOpen,
+    location.pathname,
+    navigate,
+    setIsPlayingLocally,
+    setIsScreenInStandby,
+    setActiveMedia,
+    setActiveEpisode,
+    refreshContinueWatching,
+    setIsAudioModalOpen,
+    setIsGuestModalOpen,
+  ]);
+
   useEffect(() => {
     if (!isPlayingLocally) {
       setPlayerDetailMedia(null);

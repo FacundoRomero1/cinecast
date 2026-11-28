@@ -424,7 +424,7 @@ export class DeviceSyncService {
   }
 
   private tryAcquireTabLease(force = false): boolean {
-    if (typeof window === 'undefined') return true;
+    if (typeof window === 'undefined' || isCapacitorNative()) return true;
     const now = Date.now();
     try {
       const raw = localStorage.getItem('cinecast_tab_lease');
