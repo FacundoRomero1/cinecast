@@ -52,6 +52,7 @@ const SportsLiveGrid = React.lazy(() => import('../components/SportsLiveGrid').t
 const SpotifyHub = React.lazy(() => import('../components/SpotifyHub').then((m) => ({ default: m.SpotifyHub })));
 import { SpotifyDevice, SpotifySettingsSection } from './SpotifyDevice';
 import { BackendServerSettings } from './BackendServerSettings';
+import { BrokenReportsPanel } from './BrokenReportsPanel';
 const YouTubeHub = React.lazy(() => import('../components/YouTubeHub').then((m) => ({ default: m.YouTubeHub })));
 import { SPOTIFY_TRACKS } from '../data/spotifyCatalog';
 import { YOUTUBE_VIDEOS } from '../data/youtubeCatalog';
@@ -1365,7 +1366,7 @@ const TitleDetailRouteView: React.FC = () => {
                 ) || 1,
             }
           : undefined;
-        handlePlayLocal(m, enrichedEp, 0);
+        handlePlayLocal(m, enrichedEp, 0, true);
       }}
       onCastToScreen={(m, ep) => {
         const enrichedEp = ep
@@ -1689,25 +1690,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
             </div>
           </div>
         </button>
-
-        <button
-          type="button"
-          onClick={() => navigate('/pantallas')}
-          aria-label="Mis pantallas"
-          className="min-h-[64px] p-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800/90 border border-zinc-800 text-left flex items-center justify-between gap-3 transition"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-              <Tv className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-white">Mis pantallas y TV</div>
-              <div className="text-xs text-zinc-400">
-                Conectar a TV, Living o agregar nuevas pantallas
-              </div>
-            </div>
-          </div>
-        </button>
       </div>
 
       {/* Modo ligero (Lite) */}
@@ -1888,6 +1870,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onSwitchToClassic }) => {
 
       {/* Modo del dispositivo (Independiente / Control Remoto / TV) y Servidor Híbrido */}
       <BackendServerSettings deviceRole={deviceRole} setDeviceRole={setDeviceRole} />
+
+      {/* Gestión de reportes de canales, películas, series y anime caídos */}
+      <BrokenReportsPanel />
 
       {/* Sección Spotify (dispositivo CineCast) */}
       <SpotifySettingsSection isScreen={deviceRole === 'screen' || deviceRole === 'hybrid'} />
@@ -2396,7 +2381,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                         }
                       : undefined;
                     setPlayerDetailMedia(null);
-                    handlePlayLocal(m, enrichedEp, 0);
+                    handlePlayLocal(m, enrichedEp, 0, true);
                   }}
                   onCastToScreen={(m, ep) => {
                     const enrichedEp = ep
@@ -2446,6 +2431,12 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
           hasConnectedRemote={deviceRole !== 'remote' && hasConnectedRemote}
           onOpenControl={() => setIsRemoteSheetOpen((p) => !p)}
           isControlOpen={isRemoteSheetOpen}
+          deviceRole={deviceRole}
+          onToggleQuickRole={() => {
+            const nextRole = deviceRole === 'remote' ? 'hybrid' : 'remote';
+            setDeviceRole(nextRole);
+            deviceSync.setDeviceRole(nextRole);
+          }}
           bottomSlot={
             deviceRole === 'remote' ? (
               <>

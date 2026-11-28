@@ -7,12 +7,14 @@ import {
   Music,
   Search,
   Settings,
+  Smartphone,
   Trophy,
   Tv,
   Youtube,
 } from 'lucide-react';
 import React from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import type { DeviceType } from '../types';
 
 import { useScrollRestoration } from './useScrollRestoration';
 import { getRememberedTabUrl, saveTabScroll } from './navigationMemory';
@@ -27,6 +29,8 @@ export interface AppShellProps {
   hasConnectedRemote?: boolean | undefined;
   onOpenControl?: (() => void) | undefined;
   isControlOpen?: boolean | undefined;
+  deviceRole?: DeviceType | undefined;
+  onToggleQuickRole?: (() => void) | undefined;
 }
 
 interface NavItemConfig {
@@ -40,8 +44,7 @@ const DESKTOP_MAIN_ITEMS: NavItemConfig[] = [
   { to: '/explorar', label: 'Explorar', icon: Compass },
   { to: '/buscar', label: 'Buscar', icon: Search },
   { to: '/lista', label: 'Mi lista', icon: Bookmark },
-  { to: '/canales', label: 'Deportes / TV en vivo', icon: Tv },
-  { to: '/deportes', label: 'Agenda Deportes', icon: Trophy },
+  { to: '/canales', label: 'Deportes / TV', icon: Trophy },
   { to: '/musica', label: 'Música', icon: Music },
   { to: '/youtube', label: 'YouTube', icon: Youtube },
 ];
@@ -51,7 +54,6 @@ const MOBILE_TAB_ITEMS: NavItemConfig[] = [
   { to: '/explorar', label: 'Explorar', icon: Compass },
   { to: '/canales', label: 'Deportes', icon: Trophy },
   { to: '/buscar', label: 'Buscar', icon: Search },
-  { to: '/lista', label: 'Mi lista', icon: Bookmark },
   { to: '/control', label: 'Control', icon: Gamepad2 },
 ];
 
@@ -63,6 +65,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   hasConnectedRemote = false,
   onOpenControl,
   isControlOpen = false,
+  deviceRole,
+  onToggleQuickRole,
 }) => {
   useScrollRestoration();
   useViewportPin();
@@ -175,6 +179,75 @@ export const AppShell: React.FC<AppShellProps> = ({
           </NavLink>
         </div>
       </aside>
+
+      {/* Barra superior compacta en móvil (< 768px): acceso 1 toque a Modo (Ver acá/Control), Mi lista y Ajustes */}
+      <header className="md:hidden sticky top-0 z-40 h-14 px-3 bg-zinc-950/95 backdrop-blur-md border-b border-zinc-900 flex items-center justify-between gap-2 select-none">
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="flex items-center gap-2 min-h-[40px]"
+        >
+          <div className="w-7 h-7 rounded-lg bg-red-600 flex items-center justify-center shadow">
+            <Film className="w-3.5 h-3.5 text-white" />
+          </div>
+          <span className="font-display text-xl tracking-wider text-white">CINECAST</span>
+        </button>
+
+        <div className="flex items-center gap-1.5">
+          {onToggleQuickRole && (
+            <button
+              type="button"
+              onClick={onToggleQuickRole}
+              title="Cambiar entre reproducir en este celular o controlar la PC/TV"
+              className={`min-h-[36px] px-2.5 py-1 rounded-xl text-[11px] font-extrabold border inline-flex items-center gap-1.5 transition ${
+                deviceRole === 'remote'
+                  ? 'bg-red-600/20 border-red-500/60 text-red-300'
+                  : 'bg-emerald-600/20 border-emerald-500/60 text-emerald-300'
+              }`}
+            >
+              {deviceRole === 'remote' ? (
+                <>
+                  <Tv className="w-3.5 h-3.5" />
+                  <span>Control PC</span>
+                </>
+              ) : (
+                <>
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Ver aquí</span>
+                </>
+              )}
+            </button>
+          )}
+
+          <NavLink
+            to="/lista"
+            aria-label="Mi lista"
+            className={({ isActive }) =>
+              `min-w-[38px] min-h-[38px] rounded-xl flex items-center justify-center border transition ${
+                isActive
+                  ? 'bg-red-600 border-red-500 text-white'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-300'
+              }`
+            }
+          >
+            <Bookmark className="w-4 h-4" />
+          </NavLink>
+
+          <NavLink
+            to="/ajustes"
+            aria-label="Ajustes"
+            className={({ isActive }) =>
+              `min-w-[38px] min-h-[38px] rounded-xl flex items-center justify-center border transition ${
+                isActive
+                  ? 'bg-red-600 border-red-500 text-white'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-300'
+              }`
+            }
+          >
+            <Settings className="w-4 h-4" />
+          </NavLink>
+        </div>
+      </header>
 
       {/* Contenido principal con padding inferior adaptado y padding derecho si la columna de control está abierta */}
       <main

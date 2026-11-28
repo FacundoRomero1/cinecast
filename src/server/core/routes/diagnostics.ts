@@ -11,7 +11,11 @@ export interface DiagnosticsOptions {
 }
 
 export interface BrokenMediaReport {
+  id: string;
   timestamp: string;
+  firstTimestamp?: string;
+  count: number;
+  status: 'open' | 'resolved';
   tmdbId: number | string | null;
   title: string;
   type: string;
@@ -30,12 +34,34 @@ function getBrokenReportsPath(): string {
   return path.join(dir, 'broken-media-reports.json');
 }
 
+function makeReportId(r: {
+  tmdbId?: number | string | null;
+  title?: string;
+  season?: number;
+  episode?: number;
+  serverName?: string;
+}): string {
+  const base = `${r.tmdbId ?? r.title ?? 'item'}|${r.season ?? ''}|${r.episode ?? ''}|${r.serverName ?? ''}`;
+  let hash = 0;
+  for (let i = 0; i < base.length; i++) {
+    hash = ((hash << 5) - hash + base.charCodeAt(i)) | 0;
+  }
+  return `rep_${Math.abs(hash).toString(36)}`;
+}
+
 function readBrokenReports(): BrokenMediaReport[] {
   try {
     const p = getBrokenReportsPath();
     if (!fs.existsSync(p)) return [];
     const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((raw: any) => ({
+      ...raw,
+      id: raw.id || makeReportId(raw),
+      count: typeof raw.count === 'number' && raw.count > 0 ? raw.count : 1,
+      status: raw.status === 'resolved' ? 'resolved' : 'open',
+      firstTimestamp: raw.firstTimestamp || raw.timestamp,
+    }));
   } catch (_) {
     return [];
   }
@@ -92,12 +118,21 @@ export function createDiagnosticsRouter(options: DiagnosticsOptions): Router {
     res.json({ diagnosticMode: options.getMode(), noCorsFix: options.getNoCorsFix() });
   });
 
-  // Marcar series/episodios/canales que no se ven correctamente (1 click desde el reproductor)
+  // Listar reportes de canales / pelis / series / anime caídos
   router.get('/report-broken', (_req, res) => {
     const reports = readBrokenReports();
-    res.json({ ok: true, count: reports.length, reports });
+    const openCount = reports.filter((r) => r.status !== 'resolved').length;
+    res.json({
+      ok: true,
+      count: reports.length,
+      openCount,
+      resolvedCount: reports.length - openCount,
+      filePath: getBrokenReportsPath(),
+      reports,
+    });
   });
 
+  // Marcar series/episodios/canales que no se ven correctamente (1 click desde el reproductor)
   router.post('/report-broken', (req, res) => {
     const b = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
     const title = String(b.title || '').trim();
@@ -105,11 +140,17 @@ export function createDiagnosticsRouter(options: DiagnosticsOptions): Router {
       res.status(400).json({ ok: false, error: 'title requerido' });
       return;
     }
-    const entry: BrokenMediaReport = {
-      timestamp: new Date().toISOString(),
+    const nowIso = new Date().toISOString();
+    const rawType = String(b.type || (b.tmdbId ? 'series' : 'channel'));
+    const normalizedType =
+      !b.tmdbId && /live|tv|channel|sport/i.test(rawType + ' ' + String(b.serverName || ''))
+        ? 'channel'
+        : rawType;
+
+    const draft = {
       tmdbId: b.tmdbId ?? null,
       title,
-      type: String(b.type || 'series'),
+      type: normalizedType,
       season: b.season !== undefined ? Number(b.season) : undefined,
       episode: b.episode !== undefined ? Number(b.episode) : undefined,
       serverName: b.serverName ? String(b.serverName) : undefined,
@@ -117,17 +158,59 @@ export function createDiagnosticsRouter(options: DiagnosticsOptions): Router {
       reason: b.reason ? String(b.reason).slice(0, 200) : 'reportado_por_usuario',
       buildMarker: b.buildMarker ? String(b.buildMarker) : undefined,
     };
+
+    const id = makeReportId(draft);
     const reports = readBrokenReports();
-    const dedupKey = `${entry.tmdbId}|${entry.season ?? ''}|${entry.episode ?? ''}|${entry.serverName ?? ''}`;
-    const filtered = reports.filter(
-      (r) => `${r.tmdbId}|${r.season ?? ''}|${r.episode ?? ''}|${r.serverName ?? ''}` !== dedupKey
-    );
+    const existing = reports.find((r) => r.id === id);
+    const entry: BrokenMediaReport = {
+      ...draft,
+      id,
+      timestamp: nowIso,
+      firstTimestamp: existing?.firstTimestamp || nowIso,
+      count: (existing?.count || 0) + 1,
+      status: 'open',
+    };
+
+    const filtered = reports.filter((r) => r.id !== id);
     filtered.unshift(entry);
-    writeBrokenReports(filtered.slice(0, 200));
+    writeBrokenReports(filtered.slice(0, 250));
     console.log(
-      `[ReportBroken] ${entry.title} (tmdb=${entry.tmdbId} S${entry.season ?? '-'}E${entry.episode ?? '-'}) srv="${entry.serverName || '-'}"`
+      `[ReportBroken] ${entry.title} (tmdb=${entry.tmdbId} S${entry.season ?? '-'}E${entry.episode ?? '-'}) srv="${entry.serverName || '-'}" x${entry.count}`
     );
     res.json({ ok: true, count: filtered.length, entry });
+  });
+
+  // Alternar estado abierto / resuelto
+  router.post('/report-broken/:id/toggle', (req, res) => {
+    const id = String(req.params.id || '').trim();
+    const reports = readBrokenReports();
+    const idx = reports.findIndex((r) => r.id === id);
+    if (idx === -1) {
+      res.status(404).json({ ok: false, error: 'Reporte no encontrado' });
+      return;
+    }
+    const cur = reports[idx]!;
+    cur.status = cur.status === 'resolved' ? 'open' : 'resolved';
+    writeBrokenReports(reports);
+    res.json({ ok: true, entry: cur });
+  });
+
+  // Eliminar un reporte individual
+  router.delete('/report-broken/:id', (req, res) => {
+    const id = String(req.params.id || '').trim();
+    const reports = readBrokenReports();
+    const next = reports.filter((r) => r.id !== id);
+    writeBrokenReports(next);
+    res.json({ ok: true, count: next.length });
+  });
+
+  // Limpiar reportes resueltos o todos (?scope=resolved | all)
+  router.delete('/report-broken', (req, res) => {
+    const scope = String(req.query.scope || 'resolved');
+    const reports = readBrokenReports();
+    const next = scope === 'all' ? [] : reports.filter((r) => r.status !== 'resolved');
+    writeBrokenReports(next);
+    res.json({ ok: true, count: next.length });
   });
 
   return router;

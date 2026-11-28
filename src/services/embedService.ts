@@ -485,7 +485,7 @@ export function generateServersForMedia(options: GenerateServersOptions): Stream
         } as StreamServer);
         // Fallback real Latino: embed de MovieMaster (lang=LAT). No depende del acuñado HLS.
         const mmEmbedUrl = buildProviderUrl(p, { tmdbId, type, season, episode });
-        if (mmEmbedUrl && options.includeMmEmbed) {
+        if (mmEmbedUrl) {
           servers.push({
             id: `mm-embed-${tmdbId}-${season || 1}-${episode || 1}`,
             name: 'MovieMaster Embed (Latino)',

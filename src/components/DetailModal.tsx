@@ -375,13 +375,13 @@ export const DetailModal: React.FC<DetailModalProps> = ({
 
                   {/* Action Buttons */}
                   <div className="flex flex-wrap items-center gap-2.5">
-                    {/* Botón Grande Reproducir */}
+                    {/* Botón Grande Ver aquí (reproduce en ESTE dispositivo siempre) */}
                     <button
                       onClick={() => handleStartPlay()}
                       className="px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-black text-sm transition flex items-center gap-2 shadow-xl shadow-red-900/40 transform hover:scale-102"
                     >
                       <Play className="w-4 h-4 fill-current" />
-                      <span>Reproducir</span>
+                      <span>Ver aquí</span>
                     </button>
 
                     <button
@@ -389,7 +389,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                       className="px-5 py-3 bg-zinc-800/90 hover:bg-zinc-700 text-white rounded-2xl font-bold text-xs sm:text-sm transition flex items-center gap-2 border border-zinc-700 shadow-lg"
                     >
                       <Tv className="w-4 h-4 text-emerald-400" />
-                      <span>Ver en {connectedScreenName}</span>
+                      <span>Enviar a {connectedScreenName}</span>
                     </button>
 
                     {/* TAREA 5: Botón Capítulo Random para Series */}

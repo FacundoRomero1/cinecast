@@ -2134,9 +2134,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     media: MediaItem,
     episode?: Episode | null,
     initialTime?: number,
-    _forceLocal: boolean = false
+    forceLocal: boolean = false
   ) => {
-    if (deviceRole === 'remote') {
+    if (deviceRole === 'remote' && !forceLocal) {
       handleCastMediaToScreen(media, episode || undefined, initialTime);
       return;
     }
