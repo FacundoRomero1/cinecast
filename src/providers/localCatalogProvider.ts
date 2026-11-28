@@ -199,14 +199,13 @@ async function fetchJsonWithTimeout(
         );
       }
       throw new CatalogProviderError(
-        `Tiempo de espera agotado (${timeoutMs} ms) en ${pathAndQuery}`,
+        `No se pudo conectar con el servidor de CineCast. Abrí CineCast TV en tu PC o configurá un servidor en la nube en Ajustes.`,
         'TIMEOUT',
         pathAndQuery
       );
     }
-    const msg = err instanceof Error ? err.message : String(err);
     throw new CatalogProviderError(
-      `Error de red en ${pathAndQuery} (srv=${base || 'local'}): ${msg}`,
+      `Sin conexión con el servidor de CineCast (${base || 'red local'}). Verificá que la app de PC esté abierta o configurá un servidor en la nube en Ajustes.`,
       'NETWORK_ERROR',
       pathAndQuery
     );
@@ -226,13 +225,29 @@ export class LocalCatalogProvider implements CatalogProvider {
   private readonly queryCache = new Map<string, CatalogQueryResult>();
 
   public async getHome(seen?: string[]): Promise<HomeResponse> {
+    const HOME_CACHE_KEY = 'cinecast_home_cache_v1';
     const params = new URLSearchParams();
     params.set('fields', 'card');
     if (Array.isArray(seen) && seen.length > 0) {
       params.set('seen', seen.slice(0, 200).join(','));
     }
     const qs = params.toString();
-    const raw = await fetchJsonWithTimeout(`/api/home${qs ? `?${qs}` : ''}`);
+    let raw: unknown;
+    try {
+      raw = await fetchJsonWithTimeout(`/api/home${qs ? `?${qs}` : ''}`);
+    } catch (err) {
+      // Fallback offline: si la PC está apagada y todavía no hay servidor en la nube, devolver el último catálogo guardado
+      try {
+        const cachedRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(HOME_CACHE_KEY) : null;
+        if (cachedRaw) {
+          const parsed = JSON.parse(cachedRaw) as HomeResponse;
+          if (parsed && Array.isArray(parsed.rows) && parsed.rows.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (_) {}
+      throw err;
+    }
     if (!isRecord(raw) || !Array.isArray(raw.rows)) {
       throw new CatalogProviderError('Respuesta inválida de /api/home', 'INVALID_RESPONSE', '/api/home');
     }
@@ -245,7 +260,15 @@ export class LocalCatalogProvider implements CatalogProvider {
         items: Array.isArray(r.items) ? r.items.map(normalizeCardItem) : [],
       }));
 
-    return { rows };
+    const result: HomeResponse = { rows };
+
+    try {
+      if (typeof localStorage !== 'undefined' && rows.length > 0) {
+        localStorage.setItem(HOME_CACHE_KEY, JSON.stringify(result));
+      }
+    } catch (_) {}
+
+    return result;
   }
 
   public async query(q: CatalogQuery): Promise<CatalogQueryResult> {

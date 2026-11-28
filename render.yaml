@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: cinecast-server
+    runtime: docker
+    plan: free
+    region: oregon
+    autoDeploy: true
+    healthCheckPath: /api/local-ip
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: CINECAST_DISABLE_PREWARM
+        value: "1"

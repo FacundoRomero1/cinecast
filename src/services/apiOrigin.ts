@@ -119,9 +119,18 @@ let currentState: BackendConnectionState = {
   lastCheckedAt: 0,
 };
 
-// Inicializar activeUrl de forma síncrona con el último conocido para que el primer fetch no espere
+// Inicializar activeUrl de forma síncrona para que el primer fetch no espere.
+// Si hay servidor en la nube configurado (ej. APK distribuido a amigos con VITE_CLOUD_SERVER_URL)
+// y el usuario no guardó manualmente una IP LAN propia en este dispositivo, arrancamos directo en Nube
+// para evitar 10 s de espera buscando una PC que no existe en su WiFi.
+const hasExplicitLocalLan =
+  typeof localStorage !== 'undefined' && Boolean(normalizeServerUrl(localStorage.getItem(LAN_SERVER_KEY)));
+
 if (currentState.isNativeApp) {
-  if (currentState.lanUrl) {
+  if (currentState.cloudUrl && !hasExplicitLocalLan) {
+    currentState.activeUrl = currentState.cloudUrl;
+    currentState.mode = 'cloud';
+  } else if (currentState.lanUrl) {
     currentState.activeUrl = currentState.lanUrl;
     currentState.mode = 'lan';
   } else if (currentState.cloudUrl) {
@@ -305,22 +314,44 @@ export function installApiFetchInterceptor(): void {
     return;
   }
 
+  const fetchWithCloudFallback = async (relPath: string, init?: RequestInit): Promise<Response> => {
+    const base = getActiveApiBase();
+    const cloud = currentState.cloudUrl;
+    if (!base) return originalFetch(relPath, init);
+    try {
+      return await originalFetch(`${base}${relPath}`, init);
+    } catch (err) {
+      // Si falló LAN (PC apagada o fuera de casa) y hay servidor en la nube, conmutar automáticamente y reintentar
+      if (cloud && base !== cloud) {
+        currentState = {
+          ...currentState,
+          mode: 'cloud',
+          activeUrl: cloud,
+          lastCheckedAt: Date.now(),
+        };
+        notify();
+        return originalFetch(`${cloud}${relPath}`, init);
+      }
+      throw err;
+    }
+  };
+
   const wrappedFetch: typeof window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const base = getActiveApiBase();
     if (base) {
       if (typeof input === 'string') {
         if (/^\/(?:api|mm|auth)\//i.test(input)) {
-          return originalFetch(`${base}${input}`, init);
+          return fetchWithCloudFallback(input, init);
         }
         if (/^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(input)) {
           const rel = input.replace(/^https?:\/\/localhost/i, '');
-          return originalFetch(`${base}${rel}`, init);
+          return fetchWithCloudFallback(rel, init);
         }
       } else if (input instanceof URL) {
         const href = input.href;
         if (/^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(href)) {
           const rel = href.replace(/^https?:\/\/localhost/i, '');
-          return originalFetch(`${base}${rel}`, init);
+          return fetchWithCloudFallback(rel, init);
         }
       } else if (input instanceof Request && /^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(input.url)) {
         const rel = input.url.replace(/^https?:\/\/localhost/i, '');
