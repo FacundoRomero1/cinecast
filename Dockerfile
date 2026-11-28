@@ -14,6 +14,9 @@ RUN npm install --omit=dev --omit=optional --legacy-peer-deps --no-audit --no-fu
 
 COPY . .
 
+# Compilar la PWA (iOS / Web) sin instalar Electron ni Playwright
+RUN npm run build
+
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV CINECAST_DISABLE_PREWARM=1

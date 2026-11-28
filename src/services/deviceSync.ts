@@ -314,15 +314,23 @@ export class DeviceSyncService {
       const params = new URLSearchParams(window.location?.search || '');
       const roomFromUrl = params.get('room');
       const SHARED_LEGACY_ROOMS = new Set(['', 'default', 'living-room', 'cinecast-home', 'cinecast-room']);
+      const curHost = (window.location?.hostname || '').toLowerCase();
+      const isPublicCloudWeb =
+        Boolean(curHost) &&
+        curHost !== 'localhost' &&
+        curHost !== '127.0.0.1' &&
+        !/^192\.168\.|^10\.|^172\.(?:1[6-9]|2\d|3[0-1])\./.test(curHost);
+      const shouldIsolateRoom = isCapacitorNative() || isPublicCloudWeb;
+
       if (roomFromUrl) {
         this.roomId = roomFromUrl;
         if (typeof localStorage !== 'undefined') localStorage.setItem('cinecast_room_id', roomFromUrl);
       } else if (typeof localStorage !== 'undefined') {
         const savedRoom = (localStorage.getItem('cinecast_room_id') || '').trim();
-        if (savedRoom && (!isCapacitorNative() || !SHARED_LEGACY_ROOMS.has(savedRoom.toLowerCase()))) {
+        if (savedRoom && (!shouldIsolateRoom || !SHARED_LEGACY_ROOMS.has(savedRoom.toLowerCase()))) {
           this.roomId = savedRoom;
-        } else if (isCapacitorNative()) {
-          // Cada instalación de APK en celular/TV arranca en su propia sala privada para no mezclar hogares en la nube
+        } else if (shouldIsolateRoom) {
+          // Cada instalación de APK o PWA en la nube (iOS/Android) arranca en su propia sala privada
           const privateRoom = 'cine-' + Math.random().toString(36).substring(2, 8);
           this.roomId = privateRoom;
           localStorage.setItem('cinecast_room_id', privateRoom);
