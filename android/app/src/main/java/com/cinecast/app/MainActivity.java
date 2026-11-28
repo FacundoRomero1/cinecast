@@ -8,10 +8,12 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebViewClient;
 
 public class MainActivity extends BridgeActivity {
     private boolean isLandscapeLocked = false;
@@ -50,7 +52,29 @@ public class MainActivity extends BridgeActivity {
             settings.setMediaPlaybackRequiresUserGesture(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
             settings.setDomStorageEnabled(true);
+            settings.setSupportMultipleWindows(false);
+            settings.setJavaScriptCanOpenWindowsAutomatically(false);
             wv.addJavascriptInterface(new AndroidBridge(), "CineCastAndroid");
+
+            // Bloquear popups, intent:// (Shein, Play Store, casinos) y redirecciones externas desde iframes
+            wv.setWebViewClient(new BridgeWebViewClient(this.bridge) {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    if (request != null && request.getUrl() != null) {
+                        String scheme = request.getUrl().getScheme();
+                        String host = request.getUrl().getHost();
+                        if (scheme != null && !scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https")) {
+                            // Bloquear intent://, market://, shein://, etc.
+                            return true;
+                        }
+                        if (request.isForMainFrame() && host != null && !host.equalsIgnoreCase("localhost") && !host.equalsIgnoreCase("127.0.0.1")) {
+                            // Nunca permitir que un anuncio saque el frame principal de CineCast
+                            return true;
+                        }
+                    }
+                    return super.shouldOverrideUrlLoading(view, request);
+                }
+            });
             if (BuildConfig.IS_TV) {
                 wv.evaluateJavascript("window.__cinecastTvMode = true;", null);
             }

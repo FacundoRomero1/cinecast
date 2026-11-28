@@ -334,6 +334,29 @@ export function installApiFetchInterceptor(): void {
     window.fetch = wrappedFetch;
   } catch (_) {}
 
+  // También interceptar XMLHttpRequest.prototype.open (usado por hls.js para MovieMaster HLS y streamtp en vivo!)
+  try {
+    const origXhrOpen = XMLHttpRequest.prototype.open;
+    (XMLHttpRequest.prototype as any).open = function (
+      method: string,
+      url: string | URL,
+      ...rest: any[]
+    ) {
+      const base = getActiveApiBase();
+      if (base && url) {
+        const raw = typeof url === 'string' ? url : url.href;
+        if (/^\/(?:api|mm|auth)\//i.test(raw)) {
+          return origXhrOpen.apply(this, [method, `${base}${raw}`, ...rest] as any);
+        }
+        if (/^https?:\/\/localhost\/(?:api|mm|auth)\//i.test(raw)) {
+          const rel = raw.replace(/^https?:\/\/localhost/i, '');
+          return origXhrOpen.apply(this, [method, `${base}${rel}`, ...rest] as any);
+        }
+      }
+      return origXhrOpen.apply(this, [method, url as any, ...rest] as any);
+    };
+  } catch (_) {}
+
   // Sondeo inicial + al recuperar red o volver al frente (cambio WiFi <-> 4G)
   void probeAndSelectBackend();
   window.addEventListener('online', () => {
