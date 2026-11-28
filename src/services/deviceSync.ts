@@ -351,8 +351,9 @@ export class DeviceSyncService {
               ? 'Celular Control'
               : 'PC / Pantalla Principal';
       } else if (isNative) {
-        // APK móvil: por defecto híbrido (reproductor independiente + control remoto)
-        this.deviceType = 'hybrid';
+        // APK móvil: rol 'remote' en WebSocket para controlar PC/TV sin sobrescribir su estado;
+        // la reproducción local en el celular funciona siempre en paralelo vía 'Ver aquí'.
+        this.deviceType = 'remote';
         this.deviceName = 'Celular CineCast';
       } else if (isMobileUA) {
         this.deviceType = 'remote';

@@ -15,6 +15,8 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { deviceSync } from '../services/deviceSync';
+import { isCapacitorNative, probeAndSelectBackend, setLanServerUrl } from '../services/apiOrigin';
+import { watchHistoryService } from '../services/watchHistoryService';
 
 export interface SavedScreen {
   id: string;
@@ -167,24 +169,40 @@ export const ScreensManagerView: React.FC = () => {
   }, [loadStoredScreens, pingAllScreens]);
 
   // 3. Conectar a una pantalla
-  const handleConnect = (screen: SavedScreen) => {
+  const handleConnect = async (screen: SavedScreen) => {
     saveScreensToStorage(screens, screen.id);
     const currentHost = typeof window !== 'undefined' ? window.location.host : '';
 
+    // En APK Capacitor (Android / Android TV): NUNCA usar window.location.href hacia una IP externa
+    // porque Android abre Chrome. En su lugar, actualizar el origen LAN in-app y reconectar WebSocket.
+    if (isCapacitorNative()) {
+      setFeedbackMsg(`Conectando a ${screen.name}...`);
+      setLanServerUrl(screen.address);
+      const st = await probeAndSelectBackend();
+      deviceSync.connect();
+      void watchHistoryService.syncWithServer();
+      if (st.activeUrl) {
+        setFeedbackMsg(`✓ Conectado a ${screen.name} (${st.activeUrl})`);
+      } else {
+        setFeedbackMsg(`Dirección guardada (${screen.address}). Verificá que la PC esté en el mismo WiFi.`);
+      }
+      setTimeout(() => setFeedbackMsg(''), 3500);
+      return;
+    }
+
     // Si es la misma dirección que sirve la app, solo activar
     if (screen.address === currentHost || !currentHost) {
+      deviceSync.connect();
       setFeedbackMsg(`Conectado a ${screen.name}`);
       setTimeout(() => setFeedbackMsg(''), 3000);
       return;
     }
 
-    // Si es otra dirección IP/puerto:
-    // Guardar en cinecast_last_server_host para que getApiBase lo use si recarga
+    // Si es otra dirección IP/puerto en navegador web:
     try {
       localStorage.setItem('cinecast_last_server_host', screen.address);
     } catch (_) {}
 
-    // Redirigir a la pantalla remota (la forma más robusta sin problemas de CORS ni estado stale)
     const targetUrl = screen.address.startsWith('http')
       ? `${screen.address}/?role=remote#/control`
       : `http://${screen.address}/?role=remote#/control`;

@@ -7,6 +7,7 @@ import { authService } from '../services/authService';
 import { deviceSync } from '../services/deviceSync';
 import { generateServersForMedia, refreshProviderHealth } from '../services/embedService';
 import { watchHistoryService, WatchProgressItem } from '../services/watchHistoryService';
+import { subscribeBackendState } from '../services/apiOrigin';
 import {
   AudioSettings,
   DeviceInfo,
@@ -330,10 +331,16 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const unsubRemote = deviceSync.onWatchHistory(() => {
       watchHistoryService.syncWithServer().then(refreshContinueWatching);
     });
+    const unsubBackend = subscribeBackendState((st) => {
+      if (st.activeUrl || st.mode === 'same-origin') {
+        watchHistoryService.syncWithServer().then(refreshContinueWatching);
+      }
+    });
 
     return () => {
       unsubLocal();
       unsubRemote();
+      unsubBackend();
     };
   }, [refreshContinueWatching]);
 
@@ -2136,7 +2143,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     initialTime?: number,
     forceLocal: boolean = false
   ) => {
-    if (deviceRole === 'remote' && !forceLocal) {
+    const preferLocal =
+      typeof localStorage !== 'undefined' && localStorage.getItem('cinecast_mobile_play_target') === 'local';
+    if (deviceRole === 'remote' && !forceLocal && !preferLocal) {
       handleCastMediaToScreen(media, episode || undefined, initialTime);
       return;
     }

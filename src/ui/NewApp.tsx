@@ -1046,7 +1046,16 @@ const MyListView: React.FC<MyListViewProps> = ({
   onPlayItem,
   onCastItem,
 }) => {
-  const { myListIds, toggleMyList, connectedScreenName, triggerNotification } = useAppRuntime();
+  const {
+    myListIds,
+    toggleMyList,
+    connectedScreenName,
+    triggerNotification,
+    continueWatchingList,
+    handlePlayLocal,
+    handleCastMediaToScreen,
+    refreshContinueWatching,
+  } = useAppRuntime();
   const [items, setItems] = useState<CardItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const navigate = useNavigate();
@@ -1141,6 +1150,29 @@ const MyListView: React.FC<MyListViewProps> = ({
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
+      {/* Historial reciente / Seguir viendo (sincronizado con PC) */}
+      {continueWatchingList.length > 0 && (
+        <div className="pb-2 border-b border-zinc-900">
+          <ContinueRow
+            items={continueWatchingList}
+            onPlay={(media, episode, initialTime) => {
+              handlePlayLocal(media, episode, initialTime);
+            }}
+            onCast={(media, episode, initialTime) => {
+              handleCastMediaToScreen(media, episode || undefined, initialTime);
+            }}
+            onOpenDetail={(media) => {
+              navigate(buildTitleRoute(media));
+            }}
+            onRemove={(id) => {
+              watchHistoryService.remove(id);
+              refreshContinueWatching();
+              triggerNotification('Quitado del historial');
+            }}
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-white">Mi lista</h1>
@@ -2153,6 +2185,17 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [isRemoteSheetOpen, setIsRemoteSheetOpen] = useState<boolean>(false);
+  const [preferLocalPlay, setPreferLocalPlay] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('cinecast_mobile_play_target');
+      if (saved === 'pc') return false;
+      if (saved === 'local') return true;
+      localStorage.setItem('cinecast_mobile_play_target', 'local');
+      return true;
+    } catch {
+      return true;
+    }
+  });
   const {
     deviceRole,
     setDeviceRole,
@@ -2283,7 +2326,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
             </button>
           </div>
         </div>
-      ) : isPlayingLocally && activeMedia && (activeHub === 'cinecast' || activeHub === 'sports') && deviceRole === 'screen' ? (
+      ) : isPlayingLocally && activeMedia && (activeHub === 'cinecast' || activeHub === 'sports') ? (
         /* 9. Reproductor a pantalla completa sobre todo con las props de App.tsx L1158-1188 */
         <div
           className="contents"
@@ -2431,11 +2474,15 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
           hasConnectedRemote={deviceRole !== 'remote' && hasConnectedRemote}
           onOpenControl={() => setIsRemoteSheetOpen((p) => !p)}
           isControlOpen={isRemoteSheetOpen}
-          deviceRole={deviceRole}
+          preferLocalPlay={preferLocalPlay}
           onToggleQuickRole={() => {
-            const nextRole = deviceRole === 'remote' ? 'hybrid' : 'remote';
-            setDeviceRole(nextRole);
-            deviceSync.setDeviceRole(nextRole);
+            setPreferLocalPlay((prev) => {
+              const next = !prev;
+              try {
+                localStorage.setItem('cinecast_mobile_play_target', next ? 'local' : 'pc');
+              } catch (_) {}
+              return next;
+            });
           }}
           bottomSlot={
             deviceRole === 'remote' ? (
@@ -2626,10 +2673,22 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
         connectedScreenName={connectedScreenName}
         isScreenReconnecting={isScreenReconnecting}
         onSendCommand={sendRemoteCommand}
-        onOpenCastModal={() => navigate('/pantallas')}
-        onOpenAudioModal={() => setIsAudioModalOpen(true)}
-        onOpenGuestModal={() => setIsGuestModalOpen(true)}
-        onNavigateToCatalog={() => navigate('/explorar')}
+        onOpenCastModal={() => {
+          setIsRemoteSheetOpen(false);
+          navigate('/pantallas');
+        }}
+        onOpenAudioModal={() => {
+          setIsRemoteSheetOpen(false);
+          setIsAudioModalOpen(true);
+        }}
+        onOpenGuestModal={() => {
+          setIsRemoteSheetOpen(false);
+          setIsGuestModalOpen(true);
+        }}
+        onNavigateToCatalog={() => {
+          setIsRemoteSheetOpen(false);
+          navigate('/explorar');
+        }}
       />
 
       {/* Modales clásicos con las mismas props de App.tsx L1675-1746 */}
