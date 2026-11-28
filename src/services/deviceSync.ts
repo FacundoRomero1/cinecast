@@ -313,12 +313,20 @@ export class DeviceSyncService {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location?.search || '');
       const roomFromUrl = params.get('room');
+      const SHARED_LEGACY_ROOMS = new Set(['', 'default', 'living-room', 'cinecast-home', 'cinecast-room']);
       if (roomFromUrl) {
         this.roomId = roomFromUrl;
         if (typeof localStorage !== 'undefined') localStorage.setItem('cinecast_room_id', roomFromUrl);
       } else if (typeof localStorage !== 'undefined') {
-        const savedRoom = localStorage.getItem('cinecast_room_id');
-        if (savedRoom) this.roomId = savedRoom;
+        const savedRoom = (localStorage.getItem('cinecast_room_id') || '').trim();
+        if (savedRoom && (!isCapacitorNative() || !SHARED_LEGACY_ROOMS.has(savedRoom.toLowerCase()))) {
+          this.roomId = savedRoom;
+        } else if (isCapacitorNative()) {
+          // Cada instalación de APK en celular/TV arranca en su propia sala privada para no mezclar hogares en la nube
+          const privateRoom = 'cine-' + Math.random().toString(36).substring(2, 8);
+          this.roomId = privateRoom;
+          localStorage.setItem('cinecast_room_id', privateRoom);
+        }
       }
 
       const roleFromUrl = params.get('role');

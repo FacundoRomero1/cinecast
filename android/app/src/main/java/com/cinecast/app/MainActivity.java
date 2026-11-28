@@ -81,6 +81,12 @@ public class MainActivity extends BridgeActivity {
             settings.setDomStorageEnabled(true);
             settings.setSupportMultipleWindows(false);
             settings.setJavaScriptCanOpenWindowsAutomatically(false);
+            if (BuildConfig.IS_TV) {
+                String ua = settings.getUserAgentString();
+                if (ua != null && !ua.contains("CineCastTV")) {
+                    settings.setUserAgentString(ua + " CineCastTV");
+                }
+            }
             wv.addJavascriptInterface(new AndroidBridge(), "CineCastAndroid");
 
             // Bloquear popups, intent:// (Shein, Play Store, casinos), anuncios VAST/pre-roll y redirecciones externas

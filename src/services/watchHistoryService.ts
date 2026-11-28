@@ -23,8 +23,27 @@ const STORAGE_KEY = 'cinecast_watch_progress_v2';
 const MAX_HISTORY_ITEMS = 30;
 
 class WatchHistoryService {
+  private getDedupeKey(item: WatchProgressItem): string {
+    const rawId = String(item.mediaId || item.id || '').replace(/_s\d+_e\d+$/, '').toLowerCase();
+    const tmdb = item.mediaItem?.tmdbId || rawId.match(/\d{2,}$/)?.[0];
+    const normTitle = (item.title || item.mediaItem?.title || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+    const isSeries =
+      item.type === 'series' ||
+      item.category === 'series' ||
+      item.category === 'anime' ||
+      Boolean(item.seasonNumber);
+    const kind = isSeries ? 'tv' : 'movie';
+    if (tmdb) return `${kind}_tmdb_${tmdb}`;
+    if (normTitle) return `${kind}_title_${normTitle}`;
+    return rawId || item.id;
+  }
+
   /**
-   * Obtiene todos los elementos en progreso de visualización, ordenados por última fecha.
+   * Obtiene todos los elementos en progreso de visualización, deduplicados y ordenados por última fecha.
    */
   public getAll(): WatchProgressItem[] {
     try {
@@ -32,7 +51,17 @@ class WatchHistoryService {
       if (!raw) return [];
       const list: WatchProgressItem[] = JSON.parse(raw);
       if (!Array.isArray(list)) return [];
-      return list.sort((a, b) => b.lastWatchedAt - a.lastWatchedAt);
+      const sorted = list.sort((a, b) => (b.lastWatchedAt || 0) - (a.lastWatchedAt || 0));
+      const seen = new Set<string>();
+      const deduped: WatchProgressItem[] = [];
+      for (const it of sorted) {
+        if (!it || !it.id) continue;
+        const k = this.getDedupeKey(it);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        deduped.push(it);
+      }
+      return deduped;
     } catch (e) {
       console.error('Error reading watch progress history:', e);
       return [];
@@ -155,19 +184,9 @@ class WatchHistoryService {
     };
 
     try {
+      const newKey = this.getDedupeKey(newItem);
       const isSameSeriesOrMedia = (item: WatchProgressItem) => {
-        if (isSeries) {
-          const itemMediaId = String(item.mediaId || item.id || '').replace(/_s\d+_e\d+$/, '').toLowerCase();
-          const curMediaId = canonicalMediaId.toLowerCase();
-          if (itemMediaId === curMediaId) return true;
-          const itemTmdb = item.mediaItem?.tmdbId || itemMediaId.match(/\d+$/)?.[0];
-          const curTmdb = mediaItem.tmdbId || curMediaId.match(/\d+$/)?.[0];
-          if (itemTmdb && curTmdb && String(itemTmdb) === String(curTmdb)) return true;
-          const itemTitle = (item.title || item.mediaItem?.title || '').trim().toLowerCase();
-          const curTitle = (mediaItem.title || '').trim().toLowerCase();
-          if (itemTitle && curTitle && itemTitle === curTitle) return true;
-          return false;
-        }
+        if (this.getDedupeKey(item) === newKey) return true;
         return item.id === progressId || item.mediaId === progressId;
       };
 
@@ -178,8 +197,9 @@ class WatchHistoryService {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
       this.notifyListeners();
 
-      // Enviar progreso al servidor en segundo plano para sincronizar entre PC y celular
-      fetch('/api/watch-history', {
+      // Enviar progreso al servidor en segundo plano aislado por sala
+      const roomQs = this.getRoomQuery();
+      fetch(`/api/watch-history${roomQs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: [newItem] }),
@@ -189,12 +209,21 @@ class WatchHistoryService {
     }
   }
 
+  private getRoomQuery(): string {
+    try {
+      const r = typeof localStorage !== 'undefined' ? (localStorage.getItem('cinecast_room_id') || '').trim() : '';
+      return r ? `?room=${encodeURIComponent(r)}` : '';
+    } catch {
+      return '';
+    }
+  }
+
   /**
    * Sincroniza el historial local con el servidor central para paridad PC-móvil.
    */
   public async syncWithServer(): Promise<WatchProgressItem[]> {
     try {
-      const res = await fetch('/api/watch-history');
+      const res = await fetch(`/api/watch-history${this.getRoomQuery()}`);
       if (!res.ok) return this.getAll();
       const data = await res.json();
       const serverItems: WatchProgressItem[] = Array.isArray(data.items) ? data.items : [];
@@ -293,7 +322,7 @@ class WatchHistoryService {
       const list = this.getAll().filter((item) => item.id !== id && item.mediaId !== id);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
       this.notifyListeners();
-      fetch(`/api/watch-history/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+      fetch(`/api/watch-history/${encodeURIComponent(id)}${this.getRoomQuery()}`, { method: 'DELETE' }).catch(() => {});
     } catch (e) {
       console.error('Error removing watch progress:', e);
     }

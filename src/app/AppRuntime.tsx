@@ -343,7 +343,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Sincronización de "Mi lista" con el servidor central (/api/my-list)
   useEffect(() => {
     const syncMyListFromServer = () => {
-      fetch('/api/my-list')
+      const r = typeof localStorage !== 'undefined' ? (localStorage.getItem('cinecast_room_id') || '').trim() : '';
+      const roomQs = r ? `?room=${encodeURIComponent(r)}` : '';
+      fetch(`/api/my-list${roomQs}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           if (!data || !Array.isArray(data.items) || data.items.length === 0) return;
@@ -735,7 +737,9 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         localStorage.setItem('cinecast_my_list', JSON.stringify(nextIds));
       } catch (_) {}
 
-      fetch('/api/my-list', {
+      const r = typeof localStorage !== 'undefined' ? (localStorage.getItem('cinecast_room_id') || '').trim() : '';
+      const roomQs = r ? `?room=${encodeURIComponent(r)}` : '';
+      fetch(`/api/my-list${roomQs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: nextItems }),

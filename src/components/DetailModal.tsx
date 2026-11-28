@@ -214,28 +214,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({
         }),
     };
 
-    const isRemoteDevice = deviceSync.getDeviceType() === 'remote';
-
-    if (isRemoteDevice) {
-      deviceSync.sendCommand({
-        action: 'randomEpisode',
-        payload: {
-          mediaItem: enrichedMedia,
-          season: targetSeason,
-          episode: targetEpisodeNum,
-          episodeItem: randomEp,
-        },
-      });
-      setTimeout(() => {
-        onClose();
-      }, 700);
-      return;
-    }
-
     setTimeout(() => {
       onPlayLocal(enrichedMedia, randomEp);
       onClose();
-    }, 900);
+    }, 500);
   };
 
   const effectiveTitle =

@@ -19,18 +19,23 @@ export interface WatchHistoryItem {
 export function getCanonicalSeriesKey(it: WatchHistoryItem): string {
   const mediaItem = it.mediaItem as any;
   const rawId = String(it.mediaId || it.id || '').replace(/_s\d+_e\d+$/, '');
-  const tmdb = mediaItem?.tmdbId || (it as any).tmdbId || rawId.match(/\d+$/)?.[0];
+  const tmdb = mediaItem?.tmdbId || (it as any).tmdbId || rawId.match(/\d{2,}$/)?.[0];
   const isSeries =
     it.type === 'series' ||
     it.category === 'series' ||
     it.category === 'anime' ||
     Boolean(it.seasonNumber);
-  if (isSeries && tmdb) {
-    return `series_tmdb_${tmdb}`;
+  const kind = isSeries ? 'tv' : 'movie';
+  if (tmdb) {
+    return `${kind}_tmdb_${tmdb}`;
   }
-  const title = String(it.title || mediaItem?.title || '').trim().toLowerCase();
-  if (isSeries && title) {
-    return `series_title_${title}`;
+  const title = String(it.title || mediaItem?.title || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+  if (title) {
+    return `${kind}_title_${title}`;
   }
   return rawId || it.id;
 }
@@ -59,14 +64,21 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
   const router = Router();
   const baseDir = options.baseDir || process.cwd();
 
-  function getWatchHistoryFilePath(): string {
+  function sanitizeRoom(raw: unknown): string {
+    const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return /^[a-z0-9_-]{3,40}$/.test(s) ? s : '';
+  }
+
+  function getWatchHistoryFilePath(room?: string): string {
+    const safeRoom = sanitizeRoom(room);
+    const filename = safeRoom ? `watch_history_${safeRoom}.json` : 'watch_history.json';
     const envDataDir = process.env.CINECAST_DATA_DIR?.trim();
     if (envDataDir) {
       const d = path.resolve(envDataDir);
       try {
         if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
       } catch (_) {}
-      return path.join(d, 'watch_history.json');
+      return path.join(d, filename);
     }
     const candidates = [
       path.join(baseDir, 'public', 'data'),
@@ -76,18 +88,18 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
     for (const d of candidates) {
       try {
         if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-        return path.join(d, 'watch_history.json');
+        return path.join(d, filename);
       } catch (_) {}
     }
     if (options.userDataPath) {
-      return path.join(options.userDataPath, 'watch_history.json');
+      return path.join(options.userDataPath, filename);
     }
-    return path.join(baseDir, 'watch_history.json');
+    return path.join(baseDir, filename);
   }
 
-  function loadWatchHistoryFromDisk(): WatchHistoryItem[] {
+  function loadWatchHistoryFromDisk(room?: string): WatchHistoryItem[] {
     try {
-      const fp = getWatchHistoryFilePath();
+      const fp = getWatchHistoryFilePath(room);
       if (fs.existsSync(fp)) {
         const raw = fs.readFileSync(fp, 'utf8');
         const parsed: unknown = JSON.parse(raw);
@@ -112,9 +124,9 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
     return [];
   }
 
-  function saveWatchHistoryToDisk(items: WatchHistoryItem[]): boolean {
+  function saveWatchHistoryToDisk(items: WatchHistoryItem[], room?: string): boolean {
     try {
-      const fp = getWatchHistoryFilePath();
+      const fp = getWatchHistoryFilePath(room);
       fs.writeFileSync(fp, JSON.stringify((items || []).slice(0, 50)), 'utf8');
       return true;
     } catch (_) {
@@ -122,25 +134,27 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
     }
   }
 
-  router.get('/watch-history', (_req, res) => {
-    res.json({ items: loadWatchHistoryFromDisk() });
+  router.get('/watch-history', (req, res) => {
+    const room = sanitizeRoom(req.query.room);
+    res.json({ items: loadWatchHistoryFromDisk(room) });
   });
 
   router.delete('/watch-history/:id', (req, res) => {
     try {
+      const room = sanitizeRoom(req.query.room);
       const targetId = decodeURIComponent(String(req.params.id || '')).trim();
       if (!targetId) {
         res.json({ ok: false });
         return;
       }
-      const current = loadWatchHistoryFromDisk();
+      const current = loadWatchHistoryFromDisk(room);
       const filtered = current.filter(
         (it) => it.id !== targetId && it.mediaId !== targetId && getCanonicalSeriesKey(it) !== targetId
       );
-      saveWatchHistoryToDisk(filtered);
+      saveWatchHistoryToDisk(filtered, room);
       const wsMsg = JSON.stringify({ type: 'watchHistoryUpdated', items: filtered });
       globalDevices.forEach((client) => {
-        if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+        if (client.ws && client.ws.readyState === WebSocket.OPEN && (!room || client.roomId === room)) {
           try { client.ws.send(wsMsg); } catch (_) {}
         }
       });
@@ -150,15 +164,16 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
     }
   });
 
-  // ── Mi Lista (persistida en disco y sincronizada entre PC y celular) ──────
-  function getMyListFilePath(): string {
+  // ── Mi Lista (persistida en disco y sincronizada por sala entre PC y celular) ──────
+  function getMyListFilePath(room?: string): string {
+    const safeRoom = sanitizeRoom(room);
     const histPath = getWatchHistoryFilePath();
-    return path.join(path.dirname(histPath), 'my_list.json');
+    return path.join(path.dirname(histPath), safeRoom ? `my_list_${safeRoom}.json` : 'my_list.json');
   }
 
-  function loadMyListFromDisk(): any[] {
+  function loadMyListFromDisk(room?: string): any[] {
     try {
-      const fp = getMyListFilePath();
+      const fp = getMyListFilePath(room);
       if (fs.existsSync(fp)) {
         const parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
         if (Array.isArray(parsed)) return parsed;
@@ -167,9 +182,9 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
     return [];
   }
 
-  function saveMyListToDisk(items: any[]): boolean {
+  function saveMyListToDisk(items: any[], room?: string): boolean {
     try {
-      const fp = getMyListFilePath();
+      const fp = getMyListFilePath(room);
       fs.writeFileSync(fp, JSON.stringify((items || []).slice(0, 200)), 'utf8');
       return true;
     } catch (_) {
@@ -177,12 +192,14 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
     }
   }
 
-  router.get('/my-list', (_req, res) => {
-    res.json({ items: loadMyListFromDisk() });
+  router.get('/my-list', (req, res) => {
+    const room = sanitizeRoom(req.query.room);
+    res.json({ items: loadMyListFromDisk(room) });
   });
 
   router.post('/my-list', (req, res) => {
     try {
+      const room = sanitizeRoom(req.query.room);
       const body = req.body as { items?: unknown } | undefined;
       if (!body || !Array.isArray(body.items)) {
         res.status(400).json({ ok: false, error: 'items array required' });
@@ -198,10 +215,10 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
         seen.add(id);
         cleaned.push(it);
       }
-      saveMyListToDisk(cleaned);
+      saveMyListToDisk(cleaned, room);
       const wsMsg = JSON.stringify({ type: 'myListUpdated', items: cleaned });
       globalDevices.forEach((client) => {
-        if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+        if (client.ws && client.ws.readyState === WebSocket.OPEN && (!room || client.roomId === room)) {
           try { client.ws.send(wsMsg); } catch (_) {}
         }
       });
@@ -212,6 +229,7 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
   });
 
   router.post('/watch-history', (req, res) => {
+    const room = sanitizeRoom(req.query.room);
     const body = req.body as { items?: unknown; id?: string } | undefined;
     const incoming: unknown[] = Array.isArray(body?.items)
       ? body.items
@@ -223,7 +241,7 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
       return;
     }
 
-    const current = loadWatchHistoryFromDisk();
+    const current = loadWatchHistoryFromDisk(room);
     const map = new Map<string, WatchHistoryItem>();
     for (const it of current) {
       if (it && it.id) {
@@ -245,12 +263,12 @@ export function createHistoryRouter(options: HistoryOptions = {}): Router {
       .sort((a, b) => (b.lastWatchedAt || 0) - (a.lastWatchedAt || 0))
       .slice(0, 50);
 
-    saveWatchHistoryToDisk(merged);
+    saveWatchHistoryToDisk(merged, room);
 
-    // Broadcast WebSocket a todos los dispositivos conectados
+    // Broadcast WebSocket solo a dispositivos de la misma sala
     const wsMsg = JSON.stringify({ type: 'watchHistoryUpdated', items: merged });
     globalDevices.forEach((client) => {
-      if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+      if (client.ws && client.ws.readyState === WebSocket.OPEN && (!room || client.roomId === room)) {
         try {
           client.ws.send(wsMsg);
         } catch (_) {}

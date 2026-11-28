@@ -86,7 +86,7 @@ export function isAndroidTvDevice(): boolean {
     if (params.get('tv') === '1') return true;
   } catch (_) {}
   const ua = navigator.userAgent || '';
-  if (/Android TV|GoogleTV|AFT[A-Z0-9]|BRAVIA|SmartTV|MIBOX|SHIELD|Leanback|TV Safari|Tizen|Web0S/i.test(ua)) {
+  if (/CineCastTV|Android TV|GoogleTV|AFT[A-Z0-9]|BRAVIA|SmartTV|MIBOX|SHIELD|Leanback|TV Safari|Tizen|Web0S/i.test(ua)) {
     return true;
   }
   return false;
