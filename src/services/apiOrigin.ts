@@ -12,6 +12,7 @@ const LAN_SERVER_KEY = 'cinecast_lan_server_url';
 const CLOUD_SERVER_KEY = 'cinecast_cloud_server_url';
 const LEGACY_HOST_KEY = 'cinecast_last_server_host';
 const DEFAULT_LAN_FALLBACK = 'http://192.168.18.39:3000';
+const DEFAULT_CLOUD_FALLBACK = 'https://cinecast-server.onrender.com';
 
 export type BackendMode = 'same-origin' | 'lan' | 'cloud' | 'unconfigured';
 
@@ -102,11 +103,11 @@ export function getSavedLanServerUrl(): string {
 }
 
 export function getSavedCloudServerUrl(): string {
-  if (typeof localStorage === 'undefined') return '';
+  if (typeof localStorage === 'undefined') return DEFAULT_CLOUD_FALLBACK;
   const saved = normalizeServerUrl(localStorage.getItem(CLOUD_SERVER_KEY));
   if (saved) return saved;
   const envCloud = normalizeServerUrl((import.meta as any).env?.VITE_CLOUD_SERVER_URL);
-  return envCloud;
+  return envCloud || DEFAULT_CLOUD_FALLBACK;
 }
 
 let currentState: BackendConnectionState = {
@@ -272,7 +273,7 @@ export async function probeAndSelectBackend(): Promise<BackendConnectionState> {
     return getBackendState();
   }
 
-  if (cloud && (await probeServer(cloud, 3500))) {
+  if (cloud && (await probeServer(cloud, 8000))) {
     currentState = {
       ...currentState,
       mode: 'cloud',
