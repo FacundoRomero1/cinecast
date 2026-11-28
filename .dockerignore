@@ -1,0 +1,9 @@
+node_modules
+release
+android
+electron
+.git
+.cinecast-data
+*.apk
+*.exe
+*.log

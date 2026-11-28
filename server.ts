@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -64,10 +65,18 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
+    const distDir = path.resolve(__dirname, 'dist');
+    const distIndex = path.join(distDir, 'index.html');
+    if (fs.existsSync(distIndex)) {
+      app.use(express.static(distDir));
+      app.get('*', (_req, res) => {
+        res.sendFile(distIndex);
+      });
+    } else {
+      app.get('/', (_req, res) => {
+        res.json({ ok: true, service: 'cinecast-server', mode: 'api-only' });
+      });
+    }
   }
 
   server.listen(Number(PORT), '0.0.0.0', () => {
