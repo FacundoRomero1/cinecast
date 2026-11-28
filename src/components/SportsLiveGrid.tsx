@@ -10,6 +10,7 @@ interface SportsLiveGridProps {
   onCastChannel: (mediaItem: MediaItem) => void;
   connectedScreenName?: string;
   preferLocalPlay?: boolean;
+  showCastButton?: boolean;
 }
 
 export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
@@ -17,6 +18,7 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
   onCastChannel,
   connectedScreenName = 'TV Sala',
   preferLocalPlay = true,
+  showCastButton = true,
 }) => {
   const [channels, setChannels] = useState<LiveSportsChannel[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -340,24 +342,26 @@ export const SportsLiveGrid: React.FC<SportsLiveGridProps> = ({
                 </div>
 
                 {/* Botones de Acción */}
-                <div className="grid grid-cols-2 gap-1.5 pt-2 border-t border-zinc-800/80" onClick={(e) => e.stopPropagation()}>
+                <div className={`grid ${showCastButton ? 'grid-cols-2' : 'grid-cols-1'} gap-1.5 pt-2 border-t border-zinc-800/80`} onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={handleChannelAction}
                     className="py-2 px-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center justify-center gap-1 transition shadow-md shadow-red-900/30"
-                    title={isRemote ? `Transmitir directo a ${connectedScreenName}` : "Ver ahora en esta pantalla"}
+                    title={!preferLocalPlay && showCastButton ? `Transmitir directo a ${connectedScreenName}` : "Ver ahora"}
                   >
-                    {isRemote ? <Cast className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                    <span>{isRemote ? 'Transmitir' : 'Ver'}</span>
+                    {!preferLocalPlay && showCastButton ? <Cast className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                    <span>{!preferLocalPlay && showCastButton ? 'Transmitir' : 'Ver'}</span>
                   </button>
 
-                  <button
-                    onClick={() => onCastChannel(mediaItem)}
-                    className="py-2 px-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-1 transition border border-zinc-700/60"
-                    title={`Transmitir a ${connectedScreenName}`}
-                  >
-                    <Cast className="w-3.5 h-3.5 text-red-400" />
-                    <span className="hidden xs:inline">TV</span>
-                  </button>
+                  {showCastButton && (
+                    <button
+                      onClick={() => onCastChannel(mediaItem)}
+                      className="py-2 px-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-1 transition border border-zinc-700/60"
+                      title={`Transmitir a ${connectedScreenName}`}
+                    >
+                      <Cast className="w-3.5 h-3.5 text-red-400" />
+                      <span className="hidden xs:inline">TV</span>
+                    </button>
+                  )}
                 </div>
               </div>
             );

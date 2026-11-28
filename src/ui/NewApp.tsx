@@ -105,7 +105,7 @@ function buildTitleRoute(item: CardItem | MediaItem): string {
 interface HomeViewProps {
   onSelectItem: (item: CardItem) => void;
   onPlayItem: (item: CardItem) => void;
-  onCastItem: (item: CardItem) => void;
+  onCastItem?: ((item: CardItem) => void) | undefined;
 }
 
 const HomeView: React.FC<HomeViewProps> = ({
@@ -292,9 +292,9 @@ const HomeView: React.FC<HomeViewProps> = ({
           onPlay={(media, episode, initialTime) => {
             handlePlayLocal(media, episode, initialTime);
           }}
-          onCast={(media, episode, initialTime) => {
+          onCast={onCastItem ? (media, episode, initialTime) => {
             handleCastMediaToScreen(media, episode || undefined, initialTime);
-          }}
+          } : undefined}
           onOpenDetail={(media) => {
             saveScrollSnapshot('/inicio', '/inicio', window.scrollY);
             navigate(buildTitleRoute(media));
@@ -399,7 +399,7 @@ const HomeView: React.FC<HomeViewProps> = ({
 interface ExploreViewProps {
   onSelectItem: (item: CardItem) => void;
   onPlayItem: (item: CardItem) => void;
-  onCastItem: (item: CardItem) => void;
+  onCastItem?: ((item: CardItem) => void) | undefined;
 }
 
 const PAGE_SIZE = 48;
@@ -865,7 +865,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
 interface SearchViewProps {
   onSelectItem: (item: CardItem) => void;
   onPlayItem: (item: CardItem) => void;
-  onCastItem: (item: CardItem) => void;
+  onCastItem?: ((item: CardItem) => void) | undefined;
 }
 
 const SearchView: React.FC<SearchViewProps> = ({
@@ -1025,7 +1025,7 @@ const SearchView: React.FC<SearchViewProps> = ({
 interface MyListViewProps {
   onSelectItem: (item: CardItem) => void;
   onPlayItem: (item: CardItem) => void;
-  onCastItem: (item: CardItem) => void;
+  onCastItem?: ((item: CardItem) => void) | undefined;
 }
 
 function isRecordObj(val: unknown): val is Record<string, unknown> {
@@ -1198,9 +1198,9 @@ const MyListView: React.FC<MyListViewProps> = ({
             onPlay={(media, episode, initialTime) => {
               handlePlayLocal(media, episode, initialTime);
             }}
-            onCast={(media, episode, initialTime) => {
+            onCast={onCastItem ? (media, episode, initialTime) => {
               handleCastMediaToScreen(media, episode || undefined, initialTime);
-            }}
+            } : undefined}
             onOpenDetail={(media) => {
               navigate(buildTitleRoute(media));
             }}
@@ -1441,28 +1441,35 @@ const TitleDetailRouteView: React.FC = () => {
           : undefined;
         handlePlayLocal(m, enrichedEp, 0, false);
       }}
-      onCastToScreen={(m, ep) => {
-        const enrichedEp = ep
-          ? {
-              ...ep,
-              seasonNumber:
-                Number(
-                  ep.seasonNumber ??
-                    (ep as any).season ??
-                    (ep as any).season_number ??
-                    1
-                ) || 1,
-              episodeNumber:
-                Number(
-                  ep.episodeNumber ??
-                    (ep as any).episode ??
-                    (ep as any).episode_number ??
-                    1
-                ) || 1,
+      onCastToScreen={
+        connectedScreenName &&
+        connectedScreenName !== 'Sin pantalla' &&
+        connectedScreenName !== 'Ninguna' &&
+        (typeof localStorage === 'undefined' || localStorage.getItem('cinecast_mobile_play_target') === 'pc')
+          ? (m, ep) => {
+              const enrichedEp = ep
+                ? {
+                    ...ep,
+                    seasonNumber:
+                      Number(
+                        ep.seasonNumber ??
+                          (ep as any).season ??
+                          (ep as any).season_number ??
+                          1
+                      ) || 1,
+                    episodeNumber:
+                      Number(
+                        ep.episodeNumber ??
+                          (ep as any).episode ??
+                          (ep as any).episode_number ??
+                          1
+                      ) || 1,
+                  }
+                : undefined;
+              handleCastMediaToScreen(m, enrichedEp);
             }
-          : undefined;
-        handleCastMediaToScreen(m, enrichedEp);
-      }}
+          : undefined
+      }
       isMyList={Boolean(media && (myListIds.includes(media.id) || (media.tmdbId && myListIds.includes(String(media.tmdbId)))))}
       onToggleMyList={(mediaId) => {
         const adding = !myListIds.includes(mediaId);
@@ -2566,29 +2573,33 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                     setPlayerDetailMedia(null);
                     handlePlayLocal(m, enrichedEp, 0, false);
                   }}
-                  onCastToScreen={(m, ep) => {
-                    const enrichedEp = ep
-                      ? {
-                          ...ep,
-                          seasonNumber:
-                            Number(
-                              ep.seasonNumber ??
-                                (ep as any).season ??
-                                (ep as any).season_number ??
-                                1
-                            ) || 1,
-                          episodeNumber:
-                            Number(
-                              ep.episodeNumber ??
-                                (ep as any).episode ??
-                                (ep as any).episode_number ??
-                                1
-                            ) || 1,
+                  onCastToScreen={
+                    hasConnectedScreen && !preferLocalPlay
+                      ? (m, ep) => {
+                          const enrichedEp = ep
+                            ? {
+                                ...ep,
+                                seasonNumber:
+                                  Number(
+                                    ep.seasonNumber ??
+                                      (ep as any).season ??
+                                      (ep as any).season_number ??
+                                      1
+                                  ) || 1,
+                                episodeNumber:
+                                  Number(
+                                    ep.episodeNumber ??
+                                      (ep as any).episode ??
+                                      (ep as any).episode_number ??
+                                      1
+                                  ) || 1,
+                              }
+                            : undefined;
+                          setPlayerDetailMedia(null);
+                          handleCastMediaToScreen(m, enrichedEp);
                         }
-                      : undefined;
-                    setPlayerDetailMedia(null);
-                    handleCastMediaToScreen(m, enrichedEp);
-                  }}
+                      : undefined
+                  }
                   isMyList={myListIds.includes(playerDetailMedia.id) || Boolean(playerDetailMedia.tmdbId && myListIds.includes(String(playerDetailMedia.tmdbId)))}
                   onToggleMyList={(mediaId) => {
                     const adding = !myListIds.includes(mediaId);
@@ -2659,7 +2670,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                   <HomeView
                     onSelectItem={handleSelectCard}
                     onPlayItem={handlePlayCard}
-                    onCastItem={handleCastCard}
+                    onCastItem={hasConnectedScreen && !preferLocalPlay ? handleCastCard : undefined}
                   />
                 }
               />
@@ -2669,7 +2680,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                   <ExploreView
                     onSelectItem={handleSelectCard}
                     onPlayItem={handlePlayCard}
-                    onCastItem={handleCastCard}
+                    onCastItem={hasConnectedScreen && !preferLocalPlay ? handleCastCard : undefined}
                   />
                 }
               />
@@ -2679,7 +2690,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                   <SearchView
                     onSelectItem={handleSelectCard}
                     onPlayItem={handlePlayCard}
-                    onCastItem={handleCastCard}
+                    onCastItem={hasConnectedScreen && !preferLocalPlay ? handleCastCard : undefined}
                   />
                 }
               />
@@ -2689,7 +2700,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                   <MyListView
                     onSelectItem={handleSelectCard}
                     onPlayItem={handlePlayCard}
-                    onCastItem={handleCastCard}
+                    onCastItem={hasConnectedScreen && !preferLocalPlay ? handleCastCard : undefined}
                   />
                 }
               />
@@ -2751,6 +2762,7 @@ const NewAppContent: React.FC<NewAppContentProps> = ({ onSwitchToClassic }) => {
                     </div>
                     <SportsLiveGrid
                       preferLocalPlay={preferLocalPlay}
+                      showCastButton={hasConnectedScreen && !preferLocalPlay}
                       onPlayChannel={(mediaItem) => handlePlayLocal(mediaItem, undefined, 0, true)}
                       onCastChannel={(mediaItem) => handleCastMediaToScreen(mediaItem)}
                       connectedScreenName={connectedScreenName}

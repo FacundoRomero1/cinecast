@@ -40,7 +40,7 @@ interface DetailModalProps {
   media: MediaItem | null;
   onClose: () => void;
   onPlayLocal: (media: MediaItem, episode?: Episode) => void;
-  onCastToScreen: (media: MediaItem, episode?: Episode) => void;
+  onCastToScreen?: ((media: MediaItem, episode?: Episode) => void) | undefined;
   connectedScreenName?: string;
   isMyList: boolean;
   onToggleMyList: (mediaId: string) => void;
@@ -292,7 +292,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
           episode: targetEpisode?.episodeNumber || 1,
         }),
     };
-    onCastToScreen(enrichedMedia, targetEpisode || undefined);
+    onCastToScreen?.(enrichedMedia, targetEpisode || undefined);
     onClose();
   };
 
@@ -384,13 +384,15 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                       <span>Ver aquí</span>
                     </button>
 
-                    <button
-                      onClick={() => handleStartCast()}
-                      className="px-5 py-3 bg-zinc-800/90 hover:bg-zinc-700 text-white rounded-2xl font-bold text-xs sm:text-sm transition flex items-center gap-2 border border-zinc-700 shadow-lg"
-                    >
-                      <Tv className="w-4 h-4 text-emerald-400" />
-                      <span>Enviar a {connectedScreenName}</span>
-                    </button>
+                    {onCastToScreen && (
+                      <button
+                        onClick={() => handleStartCast()}
+                        className="px-5 py-3 bg-zinc-800/90 hover:bg-zinc-700 text-white rounded-2xl font-bold text-xs sm:text-sm transition flex items-center gap-2 border border-zinc-700 shadow-lg"
+                      >
+                        <Tv className="w-4 h-4 text-emerald-400" />
+                        <span>Enviar a {connectedScreenName}</span>
+                      </button>
+                    )}
 
                     {/* TAREA 5: Botón Capítulo Random para Series */}
                     {isSeries && (
@@ -718,13 +720,15 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                           >
                             Ver aquí
                           </button>
-                          <button
-                            onClick={() => handleStartCast(ep)}
-                            className="px-3.5 py-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shadow"
-                          >
-                            <Tv className="w-3.5 h-3.5" />
-                            <span>TV</span>
-                          </button>
+                          {onCastToScreen && (
+                            <button
+                              onClick={() => handleStartCast(ep)}
+                              className="px-3.5 py-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shadow"
+                            >
+                              <Tv className="w-3.5 h-3.5" />
+                              <span>TV</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
